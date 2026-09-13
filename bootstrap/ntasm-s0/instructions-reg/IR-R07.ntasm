@@ -1,0 +1,8 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+add rax, -2147483649
+section .rdata r
+section .data rw

@@ -1,0 +1,12 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+jmp 123
+section .rdata r
+ro:
+byte 1
+section .data rw
+rw:
+byte 0

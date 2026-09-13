@@ -1,0 +1,7 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+section .rdata r
+qword 0,18446744073709551615,-9223372036854775808,-1
+section .data rw

@@ -1,0 +1,7 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+align 8 a b c d e f g h i j k l m n o
+section .rdata r
+section .data rw

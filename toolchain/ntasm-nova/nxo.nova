@@ -1,0 +1,199 @@
+module ntasm_nxo;
+import ntasm_pe;
+// Flat metadata avoids one managed record per symbol or relocation.
+// Symbol words: nameOffset,nameLength,section,flags,offset,size,contractOffset,contractLength.
+// Relocation words: sourceSection,kind,offset,targetIndex,addendBits.
+export struct Object {
+    target:u64,entry:u64,text:buf<u8>,rdata:buf<u8>,data:buf<u8>,
+    symbols:buf<u64>,relocations:buf<u64>,strings:buf<u8>
+}
+export struct ReadResult { code:u64,object:Object }
+export struct WriteResult { code:u64,bytes:buf<u8> }
+fn bad_read()->ReadResult { return ReadResult{code:800,object:null}; }
+fn bad_write()->WriteResult {
+    let empty:buf<u8>=alloc(runtime(),0);
+    return WriteResult{code:800,bytes:empty};
+}
+fn r32(b:buf<u8>,at:u64)->u64 { return ntasm_pe.read32(b,at); }
+fn r64(b:buf<u8>,at:u64)->u64 { return ntasm_pe.read64(b,at); }
+fn w32(b:buf<u8>,at:u64,value:u64)->u64 { return ntasm_pe.put32(b,at,value); }
+fn w64(b:buf<u8>,at:u64,value:u64)->u64 { return ntasm_pe.put64(b,at,value); }
+fn aligned(value:u64)->u64 { return ntasm_pe.align(value,16); }
+fn span(at:u64,size:u64,bound:u64)->bool {
+    return at<=bound && size<=bound-at;
+}
+fn zeros(b:buf<u8>,at:u64,size:u64)->bool {
+    let mut i:u64=0;while i<(size){if b[at+i]!=0{return false;}i=i+1;}return true;
+}
+fn section_size(object:Object,id:u64)->u64 {
+    if id==1{return len(object.text);}if id==2{return len(object.rdata);}
+    if id==3{return len(object.data);}return 0;
+}
+fn name_before(strings:buf<u8>,a:u64,al:u64,b:u64,bl:u64)->bool {
+    let mut i:u64=0;
+    while i<(al) && i<(bl){
+        if strings[a+i]!=strings[b+i]{return strings[a+i]<strings[b+i];}
+        i=i+1;
+    }
+    return al<bl;
+}
+export fn validate(object:Object)->u64 {
+    if object==null{return 800;}
+    if object.target<1 || object.target>2{return 800;}
+    let s:buf<u64>=object.symbols;let r:buf<u64>=object.relocations;
+    let strings:buf<u8>=object.strings;
+    if len(s)%8!=0 || len(r)%5!=0 || len(s)/8>65536 || len(r)/5>1048576{return 800;}
+    if len(object.text)>67108864 || len(object.rdata)>67108864 ||
+       len(object.data)>67108864 || len(strings)>67108864{return 800;}
+    let ns:u64=len(s)/8;let nr:u64=len(r)/5;
+    let mut j:u64=0;let mut cursor:u64=0;
+    while j<(ns){
+        let at:u64=j*8;
+        let no:u64=s[at];let nl:u64=s[at+1];let sec:u64=s[at+2];let flags:u64=s[at+3];
+        let off:u64=s[at+4];let size:u64=s[at+5];let co:u64=s[at+6];let cl:u64=s[at+7];
+        if no!=(cursor) || nl==0 || nl>512 || cl==0 || cl>65536 ||
+           co!=no+nl || !span(no,nl,len(strings)) || !span(co,cl,len(strings)){return 800;}
+        if j>0 && !name_before(strings,s[at-8],s[at-7],no,nl){return 800;}
+        let role:u64=flags&6;
+        if (flags&~15)!=0 || (role!=2 && role!=4) || sec>3{return 800;}
+        if (flags&8)!=0 {
+            if sec!=0 || off!=0 || size!=0 || (flags&1)!=0{return 800;}
+        } else {
+            if sec==0 || !span(off,size,section_size(object,sec)){return 800;}
+            if role==2 && (sec!=1 || size==0){return 800;}
+        }
+        cursor=co+cl;j=j+1;
+    }
+    if cursor!=len(strings){return 800;}
+    j=0;while j<len(strings){if strings[j]==0 || strings[j]>=128{return 800;}j=j+1;}
+    if object.entry!=0 {
+        if object.entry>(ns){return 800;}
+        let at:u64=(object.entry-1)*8;
+        if s[at+2]!=1 || (s[at+3]&2)==0{return 800;}
+    }
+    j=0;
+    while j<(nr){
+        let at:u64=j*5;let sec:u64=r[at];let kind:u64=r[at+1];let off:u64=r[at+2];let target:u64=r[at+3];
+        if sec<1 || sec>3 || (kind!=1 && kind!=2) || target==0 || target>(ns){return 800;}
+        let mut width:u64=4;if kind==2{width=8;}
+        if !span(off,width,section_size(object,sec)){return 800;}
+        if j>0{
+            let prev:u64=at-5;let mut pw:u64=4;if r[prev+1]==2{pw=8;}
+            if sec<r[prev] || (sec==r[prev] && off<r[prev+2]+pw){return 800;}
+        }
+        j=j+1;
+    }
+    return 0;
+}
+// Releases all owned arrays/views returned by read; does not free its input file.
+// For objects constructed by callers, release only when every field is owned
+// separately. Input buffers to emit are never modified or freed.
+export fn release(object:Object)->u64 {
+    if object==null{return 0;}
+    let text:buf<u8>=object.text;let ro:buf<u8>=object.rdata;let data:buf<u8>=object.data;
+    let s:buf<u64>=object.symbols;let r:buf<u64>=object.relocations;let strings:buf<u8>=object.strings;
+    rt_free(runtime(),text);rt_free(runtime(),ro);rt_free(runtime(),data);
+    rt_free(runtime(),s);rt_free(runtime(),r);rt_free(runtime(),strings);
+    rt_free(runtime(),object);return 0;
+}
+export fn read(input:buf<u8>)->ReadResult {
+    let size:u64=len(input);
+    if size<240 || size>67108864{return bad_read();}
+    if input[0]!=78 || input[1]!=88 || input[2]!=79 || input[3]!=86 ||
+       input[4]!=48 || input[5]!=48 || input[6]!=48 || input[7]!=49{return bad_read();}
+    if r32(input,8)!=1 || r32(input,16)!=1 || r32(input,20)!=3 || r32(input,92)!=0{return bad_read();}
+    let ns:u64=r32(input,24);let nr:u64=r32(input,28);
+    if ns>65536 || nr>1048576{return bad_read();}
+    let sa:u64=r64(input,40);let ra:u64=r64(input,48);let ta:u64=r64(input,56);
+    let ts:u64=r64(input,64);let pa:u64=r64(input,72);
+    if r64(input,32)!=96 || sa!=240 || ra!=240+ns*64 || ta!=ra+nr*40 ||
+       !span(ta,ts,size) || pa!=aligned(ta+ts) || pa>(size) || r64(input,80)!=(size){return bad_read();}
+    if !zeros(input,ta+ts,pa-ta-ts){return bad_read();}
+    let mut raw:u64=pa;let mut j:u64=0;
+    while j<3 {
+        let at:u64=96+j*48;let len:u64=r64(input,at+16);let start:u64=r64(input,at+24);
+        let mut perms:u64=5;let mut alignment:u64=16;
+        if j==1{perms=1;alignment=8;}else if j==2{perms=3;alignment=8;}
+        if r32(input,at)!=j+1 || r32(input,at+4)!=(perms) || r64(input,at+8)!=(alignment) ||
+           r64(input,at+32)!=0 || r64(input,at+40)!=0 || start!=aligned(raw) ||
+           !span(start,len,size){return bad_read();}
+        if !zeros(input,raw,start-raw){return bad_read();}
+        raw=start+len;j=j+1;
+    }
+    if raw!=(size){return bad_read();}
+    // Validate fixed reserved words before allocating any record arrays.
+    j=0;while j<(ns){
+        let at:u64=sa+j*64;
+        if r32(input,at+40)!=1 || r32(input,at+44)!=0 || r64(input,at+48)!=0 || r64(input,at+56)!=0{return bad_read();}
+        j=j+1;
+    }
+    j=0;while j<(nr){
+        let at:u64=ra+j*40;
+        if r32(input,at+20)!=0 || r64(input,at+32)!=0{return bad_read();}
+        j=j+1;
+    }
+    let symbols:buf<u64>=alloc(runtime(),ns*8);
+    let relocs:buf<u64>=alloc(runtime(),nr*5);
+    j=0;while j<(ns){
+        let at:u64=sa+j*64;let to:u64=j*8;
+        symbols[to]=r32(input,at);symbols[to+1]=r32(input,at+4);
+        symbols[to+2]=r32(input,at+8);symbols[to+3]=r32(input,at+12);
+        symbols[to+4]=r64(input,at+16);symbols[to+5]=r64(input,at+24);
+        symbols[to+6]=r32(input,at+32);symbols[to+7]=r32(input,at+36);j=j+1;
+    }
+    j=0;while j<(nr){
+        let at:u64=ra+j*40;let to:u64=j*5;
+        relocs[to]=r32(input,at);relocs[to+1]=r32(input,at+4);relocs[to+2]=r64(input,at+8);
+        relocs[to+3]=r32(input,at+16);relocs[to+4]=r64(input,at+24);j=j+1;
+    }
+    let text:buf<u8>=slice(input,r64(input,120),r64(input,112));
+    let rdata:buf<u8>=slice(input,r64(input,168),r64(input,160));
+    let data:buf<u8>=slice(input,r64(input,216),r64(input,208));
+    let strings:buf<u8>=slice(input,ta,ts);
+    let object:Object=Object{
+        target:r32(input,12),entry:r32(input,88),
+        text:text,rdata:rdata,data:data,
+        symbols:symbols,relocations:relocs,strings:strings
+    };
+    if validate(object)!=0{release(object);return bad_read();}
+    return ReadResult{code:0,object:object};
+}
+export fn emit(object:Object)->WriteResult {
+    if validate(object)!=0{return bad_write();}
+    let text:buf<u8>=object.text;let ro:buf<u8>=object.rdata;let data:buf<u8>=object.data;
+    let s:buf<u64>=object.symbols;let r:buf<u64>=object.relocations;let strings:buf<u8>=object.strings;
+    let ns:u64=len(s)/8;let nr:u64=len(r)/5;
+    let sa:u64=240;let ra:u64=sa+ns*64;let ta:u64=ra+nr*40;let ts:u64=len(strings);
+    if ta>67108864 || ts>67108864-ta{return bad_write();}
+    let pa:u64=aligned(ta+ts);let mut size:u64=pa;let mut j:u64=1;
+    while j<4{
+        size=aligned(size);let length:u64=section_size(object,j);
+        if size>67108864 || length>67108864-size{return bad_write();}
+        size=size+length;j=j+1;
+    }
+    let out:buf<u8>=alloc(runtime(),size);
+    out[0]=78;out[1]=88;out[2]=79;out[3]=86;out[4]=48;out[5]=48;out[6]=48;out[7]=49;
+    w32(out,8,1);w32(out,12,object.target);w32(out,16,1);w32(out,20,3);
+    w32(out,24,ns);w32(out,28,nr);w64(out,32,96);w64(out,40,sa);w64(out,48,ra);
+    w64(out,56,ta);w64(out,64,ts);w64(out,72,pa);w64(out,80,size);w32(out,88,object.entry);
+    let mut raw:u64=pa;j=0;
+    while j<3{
+        raw=aligned(raw);let at:u64=96+j*48;let length:u64=section_size(object,j+1);
+        let mut perms:u64=5;let mut alignment:u64=16;
+        if j==1{perms=1;alignment=8;}else if j==2{perms=3;alignment=8;}
+        w32(out,at,j+1);w32(out,at+4,perms);w64(out,at+8,alignment);w64(out,at+16,length);w64(out,at+24,raw);
+        if j==0{ntasm_pe.copy(out,raw,text);}else if j==1{ntasm_pe.copy(out,raw,ro);}else{ntasm_pe.copy(out,raw,data);}
+        raw=raw+length;j=j+1;
+    }
+    j=0;while j<(ns){
+        let at:u64=sa+j*64;let from:u64=j*8;
+        w32(out,at,s[from]);w32(out,at+4,s[from+1]);w32(out,at+8,s[from+2]);w32(out,at+12,s[from+3]);
+        w64(out,at+16,s[from+4]);w64(out,at+24,s[from+5]);w32(out,at+32,s[from+6]);w32(out,at+36,s[from+7]);w32(out,at+40,1);j=j+1;
+    }
+    j=0;while j<(nr){
+        let at:u64=ra+j*40;let from:u64=j*5;
+        w32(out,at,r[from]);w32(out,at+4,r[from+1]);w64(out,at+8,r[from+2]);w32(out,at+16,r[from+3]);w64(out,at+24,r[from+4]);j=j+1;
+    }
+    ntasm_pe.copy(out,ta,strings);
+    return WriteResult{code:0,bytes:out};
+}

@@ -1,0 +1,14 @@
+format pe32
+abi efi_x64
+entry start
+section .text rx
+start:
+lea rdx, [rip + msg]
+ret
+section .rdata r
+anchor:
+qword addr(start)
+msg:
+utf16z "NG"
+section .data rw
+zero 8

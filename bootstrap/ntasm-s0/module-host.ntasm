@@ -1,0 +1,730 @@
+; Hote de preuve pour composants NTASM S0. Pas encore le writer.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rbp
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 56
+mov rbx, rdx
+mov r15, rcx
+lea rbp, [rip + state]
+mov r14, 0
+mov rax, 1
+store64 [rbp], rax
+cmp rbx, 0
+je host_return
+load64 r14, [rbx + 0x60]
+cmp r14, 0
+je host_finish
+mov rcx, r15
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 16]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 16]
+cmp rax, 0
+je host_cleanup
+load64 rcx, [rax + 24]
+lea rdx, [rip + fs_guid]
+lea r8, [rbp + 24]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rcx, [rbp + 24]
+cmp rcx, 0
+je host_cleanup
+lea rdx, [rbp + 32]
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rcx, [rbp + 32]
+cmp rcx, 0
+je host_cleanup
+mov rax, 2
+store64 [rbp + 128], rax
+store64 [rbp], rax
+lea rdx, [rbp + 40]
+lea r8, [rip + filename]
+mov r9, 1
+mov rax, 0
+store64 [rsp + 32], rax
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rsi, [rbp + 40]
+cmp rsi, 0
+je host_cleanup
+mov rax, 6
+store64 [rbp + 128], rax
+mov rax, 3
+store64 [rbp], rax
+mov rax, 512
+store64 [rbp + 56], rax
+mov rcx, rsi
+lea rdx, [rip + info_guid]
+lea r8, [rbp + 56]
+lea r9, [rip + file_info]
+load64 rax, [rsi + 0x40]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 56]
+cmp rax, 80
+jb host_cleanup
+cmp rax, 513
+jae host_cleanup
+lea rdx, [rip + file_info]
+load64 rax, [rdx + 72]
+and rax, 16
+jne host_cleanup
+load64 r12, [rdx + 8]
+cmp r12, 64
+jb host_cleanup
+cmp r12, 65537
+jae host_cleanup
+store64 [rbp + 136], r12
+mov rax, 4
+store64 [rbp], rax
+mov rcx, 2
+lea rdx, [r12 + 1]
+lea r8, [rbp + 48]
+load64 rax, [r14 + 0x40]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 48]
+cmp rax, 0
+je host_cleanup
+mov rax, 7
+store64 [rbp + 128], rax
+mov rax, 3
+store64 [rbp], rax
+mov rdi, 0
+; Lire jusqu'a EOF, en acceptant les lectures courtes sans depasser FileSize+1.
+host_read:
+lea r13, [r12 + 1]
+sub r13, rdi
+store64 [rbp + 56], r13
+mov rcx, rsi
+lea rdx, [rbp + 56]
+load64 r8, [rbp + 48]
+add r8, rdi
+load64 rax, [rsi + 0x20]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 56]
+cmp r13, rax
+jb host_cleanup
+cmp rax, 0
+je host_read_done
+add rdi, rax
+cmp r12, rdi
+jb host_cleanup
+jmp host_read
+host_read_done:
+cmp rdi, r12
+jne host_cleanup
+mov rax, 5
+store64 [rbp], rax
+mov rcx, 0
+mov rdx, r15
+mov r8, 0
+load64 r9, [rbp + 48]
+store64 [rsp + 32], r12
+lea rax, [rbp + 64]
+store64 [rsp + 40], rax
+load64 rax, [r14 + 0xC8]
+call rax
+mov r13, rax
+load64 rcx, [rbp + 64]
+cmp rcx, 0
+je host_cleanup
+load64 rax, [rbp + 128]
+or rax, 8
+store64 [rbp + 128], rax
+cmp r13, 0
+jne host_cleanup
+mov rax, 6
+store64 [rbp], rax
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 72]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 72]
+cmp rax, 0
+je host_cleanup
+load64 rsi, [rax + 64]
+load64 rdi, [rax + 72]
+cmp rsi, 0
+je host_cleanup
+cmp rdi, 1024
+jb host_cleanup
+cmp rdi, 131073
+jae host_cleanup
+mov rdx, rsi
+add rdx, rdi
+cmp rdx, rsi
+jb host_cleanup
+store64 [rbp + 80], rsi
+store64 [rbp + 88], rdi
+; Cette preuve exige une relocation reelle hors ImageBase prefere.
+mov rax, 0x140000000
+cmp rsi, rax
+je host_cleanup
+load16 rax, [rsi]
+cmp rax, 0x5A4D
+jne host_cleanup
+load32 rax, [rsi + 0x3C]
+cmp rax, 0x80
+jne host_cleanup
+load32 rax, [rsi + 0x80]
+cmp rax, 0x4550
+jne host_cleanup
+load16 rax, [rsi + 0x84]
+cmp rax, 0x8664
+jne host_cleanup
+load16 rax, [rsi + 0x86]
+cmp rax, 4
+jne host_cleanup
+load16 rax, [rsi + 0x94]
+cmp rax, 240
+jne host_cleanup
+load16 rax, [rsi + 0x98]
+cmp rax, 0x20B
+jne host_cleanup
+load64 rax, [rsi + 0x188]
+mov rdx, 0x747865742E
+cmp rax, rdx
+jne host_cleanup
+load32 rax, [rsi + 0x194]
+cmp rax, 4096
+jne host_cleanup
+add rax, rsi
+store64 [rbp + 96], rax
+load32 rdx, [rsi + 0x190]
+cmp rdx, 1
+jb host_cleanup
+cmp rdx, 32769
+jae host_cleanup
+add rax, rdx
+store64 [rbp + 104], rax
+sub rax, rsi
+cmp rdi, rax
+jb host_cleanup
+load64 rax, [rsi + 0x1B0]
+mov rdx, 0x61746164722E
+cmp rax, rdx
+jne host_cleanup
+load32 rax, [rsi + 0x1BC]
+load32 rdx, [rsi + 0x1B8]
+cmp rdx, 48
+jb host_cleanup
+store64 [rbp + 152], rdx
+add rdx, rax
+cmp rdi, rdx
+jb host_cleanup
+add rax, rsi
+load64 rdx, [rbp + 104]
+cmp rax, rdx
+jb host_cleanup
+store64 [rbp + 160], rax
+mov rax, 7
+store64 [rbp], rax
+load64 rcx, [rbp + 160]
+call host_exports
+cmp rax, 0
+je host_cleanup
+; WORK n'existe que pour le coeur; deux gardes de 16 octets l'encadrent.
+load64 rcx, [rbp + 160]
+load64 rax, [rcx + 24]
+cmp rax, 3
+jne host_options
+mov rax, 4
+store64 [rbp], rax
+mov rcx, 2
+mov rdx, 0x1D020
+lea r8, [rbp + 192]
+load64 rax, [r14 + 0x40]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rdx, [rbp + 192]
+cmp rdx, 0
+je host_cleanup
+load64 rax, [rbp + 128]
+or rax, 16
+store64 [rbp + 128], rax
+mov rax, 0xC0DEF00DABCD1234
+store64 [rdx], rax
+store64 [rdx + 8], rax
+store64 [rdx + 0x1D010], rax
+store64 [rdx + 0x1D018], rax
+add rdx, 16
+store64 [rbp + 168], rdx
+mov rcx, 0x3A00
+mov rax, 0
+host_zero_work:
+store64 [rdx], rax
+add rdx, 8
+sub rcx, 1
+jne host_zero_work
+host_options:
+; Contrat synchrone : aucun export ne survit a StartImage.
+load64 rax, [rbp + 72]
+mov rdx, 48
+store32 [rax + 48], rdx
+lea rdx, [rip + options]
+store64 [rax + 56], rdx
+mov rax, 8
+store64 [rbp], rax
+load64 rcx, [rbp + 64]
+mov rdx, 0
+mov r8, 0
+load64 rax, [r14 + 0xD0]
+call rax
+mov r13, rax
+cmp rax, 0
+je host_started
+mov rdx, 0x8000000000000015
+cmp rax, rdx
+jne host_cleanup
+; Le module normalise son retour en SUCCESS/ABORTED; l'application a quitte.
+host_started:
+load64 rax, [rbp + 128]
+and rax, -9
+store64 [rbp + 128], rax
+mov rax, 0
+store64 [rbp + 64], rax
+store64 [rbp + 72], rax
+store64 [rbp + 160], rax
+cmp r13, 0
+jne host_cleanup
+load64 rax, [rbp + 112]
+cmp rax, 1
+jne host_cleanup
+load64 rax, [rbp + 120]
+cmp rax, 2
+jne host_cleanup
+mov rax, 0
+store64 [rbp], rax
+host_cleanup:
+load64 rax, [rbp + 128]
+and rax, 8
+je host_close_file
+load64 rcx, [rbp + 64]
+load64 rax, [r14 + 0xE0]
+call rax
+call host_cleanup_status
+host_close_file:
+load64 rax, [rbp + 128]
+and rax, 4
+je host_close_root
+load64 rcx, [rbp + 40]
+load64 rax, [rcx + 0x10]
+call rax
+call host_cleanup_status
+host_close_root:
+load64 rax, [rbp + 128]
+and rax, 2
+je host_free
+load64 rcx, [rbp + 32]
+load64 rax, [rcx + 0x10]
+call rax
+call host_cleanup_status
+host_free:
+load64 rax, [rbp + 128]
+and rax, 16
+je host_free_source
+load64 rdx, [rbp + 192]
+mov rcx, 0xC0DEF00DABCD1234
+load64 rax, [rdx]
+cmp rax, rcx
+jne host_work_bad
+load64 rax, [rdx + 8]
+cmp rax, rcx
+jne host_work_bad
+load64 rax, [rdx + 0x1D010]
+cmp rax, rcx
+jne host_work_bad
+load64 rax, [rdx + 0x1D018]
+cmp rax, rcx
+je host_free_work
+host_work_bad:
+mov rax, 9
+store64 [rbp], rax
+host_free_work:
+load64 rcx, [rbp + 192]
+load64 rax, [r14 + 0x48]
+call rax
+call host_cleanup_status
+host_free_source:
+load64 rax, [rbp + 128]
+and rax, 1
+je host_finish
+load64 rcx, [rbp + 48]
+load64 rax, [r14 + 0x48]
+call rax
+call host_cleanup_status
+host_finish:
+load64 rax, [rbp]
+cmp rax, 0
+jne host_error_message
+lea rdx, [rip + message_ok]
+jmp host_print
+host_error_message:
+add rax, 48
+lea rdx, [rip + message_error]
+store16 [rdx + 38], rax
+host_print:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+host_return:
+load64 rax, [rbp]
+cmp rax, 0
+je host_restore
+mov rax, 0x8000000000000015
+host_restore:
+add rsp, 56
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbp
+pop rbx
+ret
+host_cleanup_status:
+cmp rax, 0
+je cleanup_done
+load64 rax, [rbp]
+cmp rax, 0
+jne cleanup_done
+mov rax, 9
+store64 [rbp], rax
+cleanup_done:
+ret
+; RCX=table exacte attendue, RBP=contexte. Retour export executable ou zero.
+host_exports:
+load64 rax, [rbp + 160]
+cmp rcx, rax
+jne exports_bad
+load64 rax, [rcx]
+mov rdx, 0x31303030424C544E
+cmp rax, rdx
+jne exports_bad
+load64 rax, [rcx + 8]
+cmp rax, 1
+jne exports_bad
+load64 r8, [rcx + 24]
+cmp r8, 1
+je exports_probe
+cmp r8, 3
+jne exports_bad
+mov rax, 0x200000064
+load64 rdx, [rcx + 32]
+cmp rdx, rax
+jne exports_bad
+; Verifier la taille disponible avant toute lecture des records suivants.
+load64 rdx, [rbp + 152]
+cmp rdx, 80
+jb exports_bad
+mov rax, 0x300000065
+load64 rdx, [rcx + 48]
+cmp rdx, rax
+jne exports_bad
+mov rax, 0x300000066
+load64 rdx, [rcx + 64]
+cmp rdx, rax
+jne exports_bad
+jmp exports_size
+exports_probe:
+mov rax, 0x100000001
+load64 rdx, [rcx + 32]
+cmp rdx, rax
+jne exports_bad
+exports_size:
+imul rdx, r8, 16
+add rdx, 32
+load64 rax, [rcx + 16]
+cmp rax, rdx
+jne exports_bad
+lea r9, [rcx + 40]
+mov r10, r8
+exports_pointer:
+load64 rax, [r9]
+load64 rdx, [rbp + 96]
+cmp rax, rdx
+jb exports_bad
+load64 rdx, [rbp + 104]
+cmp rax, rdx
+jae exports_bad
+add r9, 16
+sub r10, 1
+jne exports_pointer
+load64 rax, [rcx + 40]
+ret
+exports_bad:
+mov rax, 0
+ret
+; Callback du module : verifier le contexte puis appeler deux fois son export.
+host_callback:
+push rbp
+push rsi
+push rdi
+sub rsp, 32
+lea rax, [rip + state]
+cmp rdx, rax
+jne callback_bad
+mov rbp, rdx
+mov rsi, rcx
+mov rax, 0x6E747363616C6C31
+cmp r8, rax
+jne callback_bad
+load64 rax, [rbp + 64]
+cmp r9, rax
+jne callback_bad
+load64 rax, [rbp + 112]
+cmp rax, 0
+jne callback_bad
+mov rax, 1
+store64 [rbp + 112], rax
+call host_exports
+cmp rax, 0
+je callback_bad
+mov rdi, rax
+load64 rax, [rsi + 24]
+cmp rax, 3
+je callback_core
+mov rcx, 7
+mov rdx, 35
+call rdi
+store64 [rbp + 176], rax
+cmp rax, 45
+jne callback_bad
+mov rax, 1
+store64 [rbp + 120], rax
+mov rcx, 17
+mov rdx, 9
+call rdi
+store64 [rbp + 184], rax
+cmp rax, 29
+jne callback_bad
+mov rax, 2
+store64 [rbp + 120], rax
+mov rax, 0
+jmp callback_return
+; Conserver les registres du module appelant et un shadow space distinct.
+callback_core:
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+load64 r12, [rbp + 168]
+cmp r12, 0
+je core_bad
+mov r15, rdi
+lea r13, [rip + core_lines]
+mov r14, 14
+core_line_next:
+mov rcx, r12
+load64 rdx, [r13]
+load64 r8, [r13 + 8]
+lea r9, [r13 + 16]
+call r15
+cmp r10, 0
+jne core_bad
+load64 rdx, [r13 + 32]
+cmp rax, rdx
+jne core_bad
+load64 r8, [r13 + 40]
+cmp r8, 0
+je core_line_done
+load64 rax, [r12 + 0x20]
+cmp rax, r8
+jne core_bad
+load64 r9, [r13 + 48]
+lea rdx, [r12 + 0x1C500]
+core_byte:
+load8 rax, [rdx]
+mov rcx, r9
+and rcx, 255
+cmp rax, rcx
+jne core_bad
+shr r9, 8
+add rdx, 1
+sub r8, 1
+jne core_byte
+core_line_done:
+add r13, 56
+sub r14, 1
+jne core_line_next
+mov rcx, r12
+lea rdx, [rip + core_source]
+mov r8, 177
+load64 rax, [rsi + 56]
+call rax
+cmp rax, 0
+jne core_bad
+mov rcx, r12
+lea rdx, [rip + core_source]
+mov r8, 177
+load64 rax, [rsi + 72]
+call rax
+cmp rax, 0
+jne core_bad
+load64 rax, [r12]
+cmp rax, 3
+jne core_bad
+load64 rax, [r12 + 8]
+cmp rax, 8
+jne core_bad
+load64 rax, [r12 + 16]
+cmp rax, 8
+jne core_bad
+load64 rax, [r12 + 24]
+cmp rax, 16
+jne core_bad
+store64 [rbp + 176], rax
+load64 rax, [r12 + 0x30]
+cmp rax, 3
+jne core_bad
+load64 rax, [r12 + 0x40]
+cmp rax, 1
+jne core_bad
+load64 rax, [r12 + 0x60]
+cmp rax, 1
+jne core_bad
+load32 rax, [r12 + 0x6414]
+cmp rax, 10
+jne core_bad
+store64 [rbp + 184], rax
+load64 rax, [r12 + 0x50]
+cmp rax, 8192
+jne core_bad
+load64 rax, [r12 + 0x58]
+cmp rax, 12288
+jne core_bad
+load64 rax, [r12 + 0x80]
+cmp rax, 6
+jne core_bad
+mov rax, 2
+store64 [rbp + 120], rax
+mov rax, 0
+jmp core_return
+core_bad:
+mov rax, 0x8000000000000015
+core_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+jmp callback_return
+callback_bad:
+mov rax, 0x8000000000000015
+callback_return:
+add rsp, 32
+pop rdi
+pop rsi
+pop rbp
+ret
+section .rdata r
+loaded_guid:
+qword 0x11D295625B1B31A1, 0x3B7269C9A0003F8E
+fs_guid:
+qword 0x11D26459964E5B22, 0x3B7269C9A000398E
+info_guid:
+qword 0x11D26D3F09576E92, 0x3B7269C9A000398E
+filename:
+utf16z "NTASM1.NTASM"
+message_ok:
+utf16z "NG_NTASM_MODULE_OK\r\n"
+core_source:
+core_line_0:
+ascii "format pe64\n"
+core_line_1:
+ascii "abi efi_x64\n"
+core_line_2:
+ascii "entry entrypoint\n"
+core_line_3:
+ascii "section .text rx\n"
+core_line_4:
+ascii "entrypoint:\n"
+core_line_5:
+ascii "jmp finish\n"
+core_line_6:
+ascii "mov rax, 42\n"
+core_line_7:
+ascii "finish:\n"
+core_line_8:
+ascii "ret\n"
+core_line_9:
+ascii "section .rdata r\n"
+core_line_10:
+ascii "anchor:\n"
+core_line_11:
+ascii "qword addr(entrypoint)\n"
+core_line_12:
+ascii "section .data rw\n"
+core_line_13:
+ascii "zero 8\n"
+align 8
+core_lines:
+qword addr(core_line_0), 11, 0, 1
+qword 1, 0, 0
+qword addr(core_line_1), 11, 12, 2
+qword 2, 0, 0
+qword addr(core_line_2), 16, 24, 3
+qword 4, 0, 0
+qword addr(core_line_3), 16, 41, 4
+qword 5, 0, 0
+qword addr(core_line_4), 11, 58, 5
+qword 6, 0, 0
+qword addr(core_line_5), 10, 70, 6
+qword 11, 5, 233
+qword addr(core_line_6), 11, 81, 7
+qword 11, 10, 2799688
+qword addr(core_line_7), 7, 93, 8
+qword 6, 0, 0
+qword addr(core_line_8), 3, 101, 9
+qword 11, 1, 195
+qword addr(core_line_9), 16, 105, 10
+qword 5, 0, 0
+qword addr(core_line_10), 7, 122, 11
+qword 6, 0, 0
+qword addr(core_line_11), 22, 130, 12
+qword 9, 0, 0
+qword addr(core_line_12), 16, 153, 13
+qword 5, 0, 0
+qword addr(core_line_13), 6, 170, 14
+qword 8, 0, 0
+section .data rw
+state:
+zero 208
+options:
+qword 0x31303030434C544E, 1
+qword addr(host_callback), addr(state)
+qword 0x6E747363616C6C31, 0
+file_info:
+zero 512
+message_error:
+utf16z "NG_NTASM_MODULE_E000\r\n"

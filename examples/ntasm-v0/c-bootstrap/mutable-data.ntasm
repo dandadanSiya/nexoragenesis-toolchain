@@ -1,0 +1,16 @@
+module bootstrap.mutable_data
+target x86_64-nexora-uefi
+section .data {
+    data counter:u64=40
+}
+section .text {
+    export fn main()->u64
+    effects {reads_mem(user),writes_mem(user),changes_flags}
+    clobbers {rax,rflags} {
+        load rax,[counter]:ptr<user,u64>
+        add rax,2
+        store [counter]:ptr<user,u64>,rax
+        load rax,[counter]:ptr<user,u64>
+        return rax
+    }
+}

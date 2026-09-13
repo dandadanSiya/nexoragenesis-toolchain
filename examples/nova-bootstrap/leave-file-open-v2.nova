@@ -1,0 +1,7 @@
+// The context owns this handle and must close it before reporting success.
+fn main(path:buf<u8>)->u64 {
+    let writer:u64=rt_open_new(runtime(),path);
+    let bytes:buf<u8>="42";
+    rt_write(runtime(),writer,bytes);
+    return 42;
+}

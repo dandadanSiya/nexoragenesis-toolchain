@@ -1,0 +1,13 @@
+format pe64
+abi efi_x64
+const K = 1
+entry start
+section .text rx
+start:
+je K
+section .rdata r
+ro:
+byte 1
+section .data rw
+rw:
+byte 0

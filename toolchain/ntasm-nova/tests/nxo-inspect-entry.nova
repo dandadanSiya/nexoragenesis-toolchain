@@ -1,0 +1,8 @@
+module nxo_inspect_entry;
+import ntasm_nxo_inspect;
+
+fn main(input:buf<u8>,out:buf<u64>)->u64 {
+    let code:u64=ntasm_nxo_inspect.inspect(input,out);
+    if code!=0 { return 9223372036854775808+code; }
+    return 0;
+}

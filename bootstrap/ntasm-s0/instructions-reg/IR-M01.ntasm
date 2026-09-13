@@ -1,0 +1,8 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+mov rcx, r8
+section .rdata r
+section .data rw

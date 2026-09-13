@@ -1,0 +1,44 @@
+format pe64
+abi efi_x64
+const K = 8
+entry start
+section .text rx
+start:
+load64 rax, [rax]
+load64 rax, [rcx]
+load64 rax, [rdx]
+load64 rax, [rbx]
+load64 rax, [rsp]
+load64 rax, [rbp]
+load64 rax, [rsi]
+load64 rax, [rdi]
+load64 rax, [r8]
+load64 rax, [r9]
+load64 rax, [r10]
+load64 rax, [r11]
+load64 rax, [r12]
+load64 rax, [r13]
+load64 rax, [r14]
+load64 rax, [r15]
+lea r11, [r12 + rbx * 4 + 0x20]
+load8 rax, [rsi]
+load16 r9, [r13]
+load32 r10, [r11 + r9 * 8 - 128]
+store8 [rdi + 1], rax
+store16 [r13], r8
+store32 [rsp + 8], r10
+store64 [r12 + r15 * 2 + 128], r14
+lea rax, [rbx + 127]
+lea rax, [rbx + 128]
+lea rax, [rbx - 128]
+lea rax, [rbx - 129]
+lea rax, [rbx + 2147483647]
+lea rax, [rbx - 2147483648]
+lea rax, [rbx + 0]
+lea rax, [rbx - K]
+lea rax, [rax + rdx * 1]
+lea rax, [rax + rdx * 2]
+lea rax, [rax + rdx * 4]
+lea rax, [rax + rdx * 8]
+section .rdata r
+section .data rw

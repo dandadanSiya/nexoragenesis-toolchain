@@ -1,0 +1,499 @@
+; Consommateur AST externe NV0A0001 : charger, verifier, appeler, consommer, decharger.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rbp
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 56
+mov rbx, rdx
+mov r15, rcx
+lea rbp, [rip + module_state]
+store64 [rbp + 144], r15
+store64 [rbp + 200], rbx
+mov r14, 0
+mov rax, 1
+store64 [rbp], rax
+cmp rbx, 0
+je host_return
+load64 r14, [rbx + 0x60]
+cmp r14, 0
+je host_finish
+mov rcx, r15
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 16]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 16]
+cmp rax, 0
+je host_cleanup
+load64 rcx, [rax + 24]
+lea rdx, [rip + fs_guid]
+lea r8, [rbp + 24]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rcx, [rbp + 24]
+cmp rcx, 0
+je host_cleanup
+lea rdx, [rbp + 32]
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rcx, [rbp + 32]
+cmp rcx, 0
+je host_cleanup
+mov rax, 2
+store64 [rbp + 128], rax
+store64 [rbp], rax
+lea rdx, [rbp + 40]
+lea r8, [rip + filename]
+mov r9, 1
+mov rax, 0
+store64 [rsp + 32], rax
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rsi, [rbp + 40]
+cmp rsi, 0
+je host_cleanup
+mov rax, 6
+store64 [rbp + 128], rax
+mov rax, 3
+store64 [rbp], rax
+mov rax, 512
+store64 [rbp + 56], rax
+mov rcx, rsi
+lea rdx, [rip + info_guid]
+lea r8, [rbp + 56]
+lea r9, [rip + file_info]
+load64 rax, [rsi + 0x40]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 56]
+cmp rax, 80
+jb host_cleanup
+cmp rax, 513
+jae host_cleanup
+lea rdx, [rip + file_info]
+load64 rax, [rdx + 72]
+and rax, 16
+jne host_cleanup
+load64 r12, [rdx + 8]
+cmp r12, 64
+jb host_cleanup
+cmp r12, 65537
+jae host_cleanup
+store64 [rbp + 136], r12
+mov rax, 4
+store64 [rbp], rax
+mov rcx, 2
+lea rdx, [r12 + 1]
+lea r8, [rbp + 48]
+load64 rax, [r14 + 0x40]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 48]
+cmp rax, 0
+je host_cleanup
+mov rax, 7
+store64 [rbp + 128], rax
+mov rax, 3
+store64 [rbp], rax
+mov rdi, 0
+; Lire jusqu'a EOF, en acceptant les lectures courtes sans depasser FileSize+1.
+host_read:
+lea r13, [r12 + 1]
+sub r13, rdi
+store64 [rbp + 56], r13
+mov rcx, rsi
+lea rdx, [rbp + 56]
+load64 r8, [rbp + 48]
+add r8, rdi
+load64 rax, [rsi + 0x20]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 56]
+cmp r13, rax
+jb host_cleanup
+cmp rax, 0
+je host_read_done
+add rdi, rax
+cmp r12, rdi
+jb host_cleanup
+jmp host_read
+host_read_done:
+cmp rdi, r12
+jne host_cleanup
+mov rax, 5
+store64 [rbp], rax
+mov rcx, 0
+mov rdx, r15
+mov r8, 0
+load64 r9, [rbp + 48]
+store64 [rsp + 32], r12
+lea rax, [rbp + 64]
+store64 [rsp + 40], rax
+load64 rax, [r14 + 0xC8]
+call rax
+mov r13, rax
+load64 rcx, [rbp + 64]
+cmp rcx, 0
+je host_cleanup
+load64 rax, [rbp + 128]
+or rax, 8
+store64 [rbp + 128], rax
+cmp r13, 0
+jne host_cleanup
+mov rax, 6
+store64 [rbp], rax
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 72]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 72]
+cmp rax, 0
+je host_cleanup
+load64 rsi, [rax + 64]
+load64 rdi, [rax + 72]
+cmp rsi, 0
+je host_cleanup
+cmp rdi, 1024
+jb host_cleanup
+cmp rdi, 131073
+jae host_cleanup
+mov rdx, rsi
+add rdx, rdi
+cmp rdx, rsi
+jb host_cleanup
+store64 [rbp + 80], rsi
+store64 [rbp + 88], rdi
+; Cette preuve exige une relocation reelle hors ImageBase prefere.
+mov rax, 0x140000000
+cmp rsi, rax
+je host_cleanup
+load16 rax, [rsi]
+cmp rax, 0x5A4D
+jne host_cleanup
+load32 rax, [rsi + 0x3C]
+cmp rax, 0x80
+jne host_cleanup
+load32 rax, [rsi + 0x80]
+cmp rax, 0x4550
+jne host_cleanup
+load16 rax, [rsi + 0x84]
+cmp rax, 0x8664
+jne host_cleanup
+load16 rax, [rsi + 0x86]
+cmp rax, 4
+jne host_cleanup
+load16 rax, [rsi + 0x94]
+cmp rax, 240
+jne host_cleanup
+load16 rax, [rsi + 0x98]
+cmp rax, 0x20B
+jne host_cleanup
+load64 rax, [rsi + 0x188]
+mov rdx, 0x747865742E
+cmp rax, rdx
+jne host_cleanup
+load32 rax, [rsi + 0x194]
+cmp rax, 4096
+jne host_cleanup
+add rax, rsi
+store64 [rbp + 96], rax
+load32 rdx, [rsi + 0x190]
+cmp rdx, 1
+jb host_cleanup
+cmp rdx, 32769
+jae host_cleanup
+add rax, rdx
+store64 [rbp + 104], rax
+sub rax, rsi
+cmp rdi, rax
+jb host_cleanup
+load64 rax, [rsi + 0x1B0]
+mov rdx, 0x61746164722E
+cmp rax, rdx
+jne host_cleanup
+load32 rax, [rsi + 0x1BC]
+load32 rdx, [rsi + 0x1B8]
+cmp rdx, 64
+jb host_cleanup
+store64 [rbp + 152], rdx
+add rdx, rax
+cmp rdi, rdx
+jb host_cleanup
+add rax, rsi
+load64 rdx, [rbp + 104]
+cmp rax, rdx
+jb host_cleanup
+store64 [rbp + 160], rax
+mov rax, 7
+store64 [rbp], rax
+load64 rcx, [rbp + 160]
+call host_exports
+cmp rax, 0
+je host_cleanup
+host_options:
+call semantic_job
+cmp rax, 0
+jne host_cleanup
+mov rax, 0
+store64 [rbp], rax
+jmp host_cleanup
+host_cleanup:
+load64 rax, [rbp + 128]
+and rax, 8
+je host_close_file
+load64 rcx, [rbp + 64]
+load64 rax, [r14 + 0xE0]
+call rax
+call host_cleanup_status
+host_close_file:
+load64 rax, [rbp + 128]
+and rax, 4
+je host_close_root
+load64 rcx, [rbp + 40]
+load64 rax, [rcx + 0x10]
+call rax
+call host_cleanup_status
+host_close_root:
+load64 rax, [rbp + 128]
+and rax, 2
+je host_free
+load64 rcx, [rbp + 32]
+load64 rax, [rcx + 0x10]
+call rax
+call host_cleanup_status
+host_free:
+load64 rax, [rbp + 128]
+and rax, 16
+je host_free_input
+lea rcx, [rip + ast_descriptor]
+load64 rcx, [rcx + 8]
+load64 rax, [r14 + 0x48]
+call rax
+call host_cleanup_status
+host_free_input:
+load64 rax, [rbp + 128]
+and rax, 1
+je host_finish
+load64 rcx, [rbp + 48]
+load64 rax, [r14 + 0x48]
+call rax
+call host_cleanup_status
+host_finish:
+load64 rax, [rbp]
+cmp rax, 0
+jne host_bad
+lea rdx, [rip + pass_msg]
+jmp host_emit
+host_bad:
+lea rdx, [rip + fail_debug]
+load64 rax, [rbp]
+add rax, 48
+store16 [rdx + 38], rax
+load64 rax, [rbp + 176]
+cmp rax, 0
+je debug_code_done
+mov rcx, 48
+debug_hundreds:
+cmp rax, 100
+jb debug_tens_begin
+sub rax, 100
+add rcx, 1
+jmp debug_hundreds
+debug_tens_begin:
+store16 [rdx + 34], rcx
+mov rcx, 48
+debug_tens:
+cmp rax, 10
+jb debug_ones
+sub rax, 10
+add rcx, 1
+jmp debug_tens
+debug_ones:
+store16 [rdx + 36], rcx
+add rax, 48
+store16 [rdx + 38], rax
+debug_code_done:
+load64 rax, [rbp + 112]
+cmp rax, 1
+jne host_emit
+lea rdx, [rip + reached_msg]
+host_emit:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+host_return:
+add rsp, 56
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbp
+pop rbx
+mov rax, 0
+ret
+host_cleanup_status:
+cmp rax, 0
+je cleanup_done
+mov rax, 9
+store64 [rbp], rax
+cleanup_done:
+ret
+host_exports:
+load64 rax, [rcx]
+mov rdx, 0x313030304130564E
+cmp rax, rdx
+jne exports_bad
+load64 rax, [rcx + 8]
+cmp rax, 64
+jne exports_bad
+load64 rax, [rcx + 16]
+cmp rax, 1
+jne exports_bad
+load64 rax, [rcx + 24]
+cmp rax, 7
+jne exports_bad
+load64 rax, [rcx + 56]
+cmp rax, 0
+jne exports_bad
+load64 rax, [rcx + 48]
+load64 rdx, [rbp + 96]
+cmp rax, rdx
+jb exports_bad
+load64 rdx, [rbp + 104]
+cmp rax, rdx
+jae exports_bad
+ret
+exports_bad:
+mov rax, 0
+ret
+semantic_job:
+push r12
+push r13
+push r14
+push r15
+push rsi
+push rdi
+sub rsp, 40
+mov rcx, 2
+mov rdx, 32768
+lea r8, [rip + ast_descriptor]
+add r8, 8
+load64 rax, [r14 + 0x40]
+call rax
+cmp rax, 0
+jne sj_bad
+load64 rax, [rbp + 128]
+or rax, 16
+store64 [rbp + 128], rax
+lea r12, [rip + source_cases]
+mov r13, 2
+sj_next:
+mov rax, 8
+store64 [rbp], rax
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+lea r8, [rip + ast_context]
+lea r9, [rip + ast_descriptor]
+load64 rax, [rbp + 160]
+load64 rax, [rax + 48]
+call rax
+store64 [rbp + 176], rax
+store64 [rbp + 184], rdx
+cmp rax, 0
+jne sj_bad
+mov rax, 9
+store64 [rbp], rax
+lea r8, [rip + ast_descriptor]
+load64 rax, [r8 + 24]
+cmp rax, 1
+jb sj_bad
+cmp rax, 513
+jae sj_bad
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+call validate_ast_signature
+load64 rdx, [r12 + 16]
+cmp rax, rdx
+jne sj_bad
+add r12, 24
+sub r13, 1
+jne sj_next
+mov rax, 0
+jmp sj_return
+sj_bad:
+mov rax, 1
+sj_return:
+add rsp, 40
+pop rdi
+pop rsi
+pop r15
+pop r14
+pop r13
+pop r12
+ret
+validate_ast_signature:
+mov rax, 1
+store64 [rbp + 112], rax
+mov rax, 900
+ret
+section .rdata r
+loaded_guid:
+qword 0x11D295625B1B31A1, 0x3B7269C9A0003F8E
+fs_guid:
+qword 0x11D26459964E5B22, 0x3B7269C9A000398E
+info_guid:
+qword 0x11D26D3F09576E92, 0x3B7269C9A000398E
+filename:
+utf16z "NTCORE.EFI"
+source_good:
+ascii "module demo\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+source_bad:
+ascii "module demo\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @edi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+align 8
+source_cases:
+qword addr(source_good), 121, 0
+qword addr(source_bad), 121, 501
+pass_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_BAD\r\n"
+reached_msg:
+utf16z "NG_NTASM_MODULE_E950\r\n"
+section .data rw
+module_state:
+zero 208
+fail_debug:
+utf16z "NG_NTASM_MODULE_E900\r\n"
+align 8
+file_info:
+zero 512
+align 16
+ast_context:
+zero 256
+ast_descriptor:
+qword 1, 0, 512, 0
+qword -1, 0, 0, 0

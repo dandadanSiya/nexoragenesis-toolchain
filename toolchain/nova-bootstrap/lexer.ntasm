@@ -1,0 +1,226 @@
+; Nova Bootstrap : scanner natif, construit uniquement par NTASM-S0.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push r12
+push r13
+sub rsp, 32
+mov rbx, rdx
+lea r12, [rip + tests]
+mov r13, 8
+test_next:
+lea rcx, [rip + state]
+load64 rax, [r12]
+store64 [rcx], rax
+load64 rax, [r12 + 8]
+store64 [rcx + 8], rax
+load64 rax, [r12 + 16]
+store64 [rcx + 16], rax
+call next_token
+load64 rcx, [r12 + 24]
+cmp rax, rcx
+jne failed
+load64 rcx, [r12 + 32]
+cmp rdx, rcx
+jne failed
+load64 rcx, [r12 + 40]
+cmp r8, rcx
+jne failed
+load64 rcx, [r12 + 48]
+cmp r9, rcx
+jne failed
+lea rcx, [rip + state]
+load64 rax, [rcx + 16]
+load64 rcx, [r12 + 56]
+cmp rax, rcx
+jne failed
+add r12, 64
+sub r13, 1
+jne test_next
+lea rdx, [rip + passed_msg]
+jmp report
+failed:
+lea rdx, [rip + failed_msg]
+report:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 32
+pop r13
+pop r12
+pop rbx
+mov rax, 0
+ret
+; RCX=state {source,len,cursor}; RAX=kind, RDX=start, R8=len, R9=value.
+next_token:
+push rbx
+push rsi
+push r12
+push rdi
+push r13
+sub rsp, 32
+mov rbx, rcx
+load64 rsi, [rbx]
+load64 r12, [rbx + 8]
+load64 rdi, [rbx + 16]
+cmp r12, rdi
+jb nt_bad
+nt_space:
+cmp rdi, r12
+jae nt_eof
+load8 rax, [rsi + rdi * 1]
+cmp rax, 32
+je nt_skip
+cmp rax, 9
+je nt_skip
+cmp rax, 10
+je nt_skip
+cmp rax, 13
+jne nt_classify
+nt_skip:
+add rdi, 1
+jmp nt_space
+nt_classify:
+mov r13, rdi
+cmp rax, 32
+jb nt_bad
+cmp rax, 127
+jae nt_bad
+cmp rax, 48
+jb nt_identifier
+cmp rax, 58
+jb nt_number
+nt_identifier:
+call ident_start
+cmp rax, 1
+je nt_word
+mov r11, 3
+load8 r9, [rsi + rdi * 1]
+add rdi, 1
+jmp nt_commit
+nt_word:
+mov r11, 1
+mov r9, 0
+add rdi, 1
+nt_word_next:
+cmp rdi, r12
+jae nt_commit
+load8 rax, [rsi + rdi * 1]
+cmp rax, 48
+jb nt_word_letter
+cmp rax, 58
+jb nt_word_advance
+nt_word_letter:
+call ident_start
+cmp rax, 1
+jne nt_commit
+nt_word_advance:
+add rdi, 1
+jmp nt_word_next
+nt_number:
+mov r11, 2
+mov r9, 0
+nt_digit:
+cmp rdi, r12
+jae nt_commit
+load8 rax, [rsi + rdi * 1]
+sub rax, 48
+cmp rax, 10
+jae nt_commit
+mov r10, 1844674407370955161
+cmp r9, r10
+jb nt_accumulate
+cmp r9, r10
+jne nt_overflow
+cmp rax, 6
+jae nt_overflow
+nt_accumulate:
+imul r9, r9, 10
+add r9, rax
+add rdi, 1
+jmp nt_digit
+nt_eof:
+mov r13, rdi
+mov r11, 0
+mov r9, 0
+nt_commit:
+store64 [rbx + 16], rdi
+mov rax, r11
+mov rdx, r13
+mov r8, rdi
+sub r8, r13
+jmp nt_return
+nt_bad:
+mov rax, 100
+jmp nt_error
+nt_overflow:
+mov rax, 101
+nt_error:
+mov rdx, rdi
+mov r8, 0
+mov r9, 0
+nt_return:
+add rsp, 32
+pop r13
+pop rdi
+pop r12
+pop rsi
+pop rbx
+ret
+ident_start:
+cmp rax, 95
+je ids_yes
+or rax, 32
+cmp rax, 97
+jb ids_no
+cmp rax, 123
+jae ids_no
+ids_yes:
+mov rax, 1
+ret
+ids_no:
+mov rax, 0
+ret
+section .rdata r
+anchor:
+qword addr(start)
+word:
+ascii " \treturn\n"
+number:
+ascii "42"
+maximum:
+ascii "18446744073709551615"
+overflow:
+ascii "18446744073709551616"
+punct:
+ascii "("
+invalid:
+byte 0
+align 8
+tests:
+qword addr(word), 9, 0, 1
+qword 2, 6, 0, 8
+qword addr(word), 9, 8, 0
+qword 9, 0, 0, 9
+qword addr(number), 2, 0, 2
+qword 0, 2, 42, 2
+qword addr(maximum), 20, 0, 2
+qword 0, 20, 18446744073709551615, 20
+qword addr(overflow), 20, 0, 101
+qword 19, 0, 0, 0
+qword addr(punct), 1, 0, 3
+qword 0, 1, 40, 1
+qword addr(invalid), 1, 0, 100
+qword 0, 0, 0, 0
+qword 0, 0, 0, 0
+qword 0, 0, 0, 0
+passed_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_OK\r\n"
+failed_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_BAD\r\n"
+section .data rw
+state:
+zero 24

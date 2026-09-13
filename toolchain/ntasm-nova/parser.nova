@@ -1,0 +1,643 @@
+module ntasm_parser;
+import ntasm_lexer;
+import ntasm_ast;
+
+struct Parser {
+    source:buf<u8>,tokens:buf<u64>,token_count:u64,cursor:u64,split_gt:bool,
+    nodes:buf<u64>,node_count:u64,words:buf<u8>,
+    code:u64,reason:u64,error_source:u64,error_line:u64,error_column:u64,
+    error_start:u64,error_end:u64,optional_term:bool
+}
+
+fn tk(p:Parser)->u64 {
+    if (p.split_gt==true) { return 62; }
+    let tokens:buf<u64>=p.tokens;
+    return tokens[p.cursor*9];
+}
+fn ti(p:Parser)->u64 {
+    if (p.split_gt==true) { return p.cursor-1; }
+    return p.cursor;
+}
+fn tf(p:Parser,index:u64,field:u64)->u64 {
+    let tokens:buf<u64>=p.tokens;return tokens[index*9+field];
+}
+fn step(p:Parser)->u64 {
+    if (p.split_gt==true) { p.split_gt=false;return 0; }
+    if (p.cursor+1<(p.token_count)) { p.cursor=p.cursor+1; }
+    return 0;
+}
+fn error(p:Parser,reason:u64)->u64 {
+    if (p.code!=0) { return 0; }
+    let index:u64=ti(p);
+    p.code=200;p.reason=reason;p.error_source=tf(p,index,2);
+    p.error_line=tf(p,index,3);p.error_column=tf(p,index,4);
+    p.error_start=tf(p,index,5);p.error_end=tf(p,index,6);return 0;
+}
+fn accept(p:Parser,kind:u64)->bool {
+    if (tk(p)!=kind) { return false; }step(p);return true;
+}
+fn expect(p:Parser,kind:u64,reason:u64)->bool {
+    if (accept(p,kind)) { return true; }error(p,reason);return false;
+}
+fn keyword(p:Parser,id:u64)->bool {
+    if (tk(p)!=257) { return false; }
+    let words:buf<u8>=p.words;
+    let mut at:u64=0;let mut current:u64=1;
+    while (current<(id)) {
+        while (words[at]!=0) { at=at+1; }
+        at=at+1;current=current+1;
+    }
+    let mut length:u64=0;
+    while (words[at+length]!=0) { length=length+1; }
+    let token:u64=ti(p);
+    if (tf(p,token,8)!=length) { return false; }
+    let start:u64=tf(p,token,7);let source:buf<u8>=p.source;
+    let mut i:u64=0;
+    while (i<(length)) {
+        if (source[start+i]!=words[at+i]) { return false; }i=i+1;
+    }
+    return true;
+}
+fn take_word(p:Parser,id:u64,reason:u64)->bool {
+    if (keyword(p,id)) { step(p);return true; }error(p,reason);return false;
+}
+fn lines(p:Parser)->u64 { while (tk(p)==260) { step(p); }return 0; }
+fn term(p:Parser)->bool {
+    if (accept(p,59)) { lines(p);return true; }
+    if (p.optional_term==true && tk(p)==125) { return true; }
+    if (!accept(p,260)) { error(p,5);return false; }
+    lines(p);return true;
+}
+fn node(p:Parser,kind:u64,begin:u64)->u64 {
+    if (p.node_count>=p.token_count*2+16) { error(p,12);return 0; }
+    let id:u64=p.node_count+1;p.node_count=id;
+    let nodes:buf<u64>=p.nodes;let at:u64=(id-1)*12;
+    nodes[at]=kind;nodes[at+1]=begin;nodes[at+2]=begin;
+    nodes[at+3]=tf(p,begin,2);nodes[at+4]=tf(p,begin,3);
+    nodes[at+5]=tf(p,begin,4);nodes[at+6]=tf(p,begin,5);
+    nodes[at+7]=tf(p,begin,6);nodes[at+8]=0;nodes[at+9]=0;
+    nodes[at+10]=0;nodes[at+11]=0;return id;
+}
+fn aux(p:Parser,id:u64,value:u64)->u64 {
+    let nodes:buf<u64>=p.nodes;nodes[(id-1)*12+11]=value;return 0;
+}
+fn attach(p:Parser,parent:u64,child:u64)->u64 {
+    if (child==0) { return 0; }
+    let nodes:buf<u64>=p.nodes;let at:u64=(parent-1)*12;
+    let last:u64=nodes[at+9];
+    if (last==0) { nodes[at+8]=child; } else { nodes[(last-1)*12+10]=child; }
+    nodes[at+9]=child;return child;
+}
+fn finish(p:Parser,id:u64)->u64 {
+    let mut end_token:u64=ti(p);
+    if (p.split_gt==false && p.cursor>0) { end_token=p.cursor-1; }
+    let nodes:buf<u64>=p.nodes;let at:u64=(id-1)*12;
+    nodes[at+2]=end_token;nodes[at+7]=tf(p,end_token,6);return id;
+}
+fn name(p:Parser)->u64 {
+    let begin:u64=ti(p);if (!expect(p,257,3)) { return 0; }
+    return finish(p,node(p,90,begin));
+}
+fn qualified(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,91,begin);
+    attach(p,result,name(p));
+    while (accept(p,46)) { attach(p,result,name(p)); }
+    return finish(p,result);
+}
+fn dashed(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,92,begin);
+    attach(p,result,name(p));
+    while (accept(p,45)) { attach(p,result,name(p)); }
+    return finish(p,result);
+}
+fn section_name(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,93,begin);
+    if (!expect(p,46,4)) { return 0; }attach(p,result,name(p));
+    return finish(p,result);
+}
+fn type_close(p:Parser)->bool {
+    if (tk(p)==267) {
+        p.cursor=p.cursor+1;p.split_gt=true;return true;
+    }
+    return expect(p,62,10);
+}
+fn parse_type(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,36,begin);
+    if (keyword(p,38)) {
+        step(p);attach(p,result,name(p));
+        if (!expect(p,40,4)) { return 0; }
+        while (tk(p)!=41 && p.code==0) {
+            attach(p,result,parse_expression(p,0));
+            if (!accept(p,44)) { break; }lines(p);
+        }
+        if (!expect(p,41,4)) { return 0; }
+        aux(p,result,3);return finish(p,result);
+    }
+    if (keyword(p,40)) {
+        step(p);if (!expect(p,60,10)) { return 0; }
+        attach(p,result,name(p));if (!expect(p,44,10)) { return 0; }
+        lines(p);attach(p,result,parse_type(p));
+        if (!type_close(p)) { return 0; }aux(p,result,1);return finish(p,result);
+    }
+    if (keyword(p,41)) {
+        step(p);if (!expect(p,60,10)) { return 0; }
+        attach(p,result,parse_type(p));if (!expect(p,44,10)) { return 0; }
+        lines(p);if (tk(p)!=258) { error(p,10);return 0; }
+        attach(p,result,literal(p));if (!type_close(p)) { return 0; }
+        aux(p,result,2);return finish(p,result);
+    }
+    if (tk(p)==36) {
+        step(p);attach(p,result,name(p));aux(p,result,4);return finish(p,result);
+    }
+    if (tk(p)!=257) { error(p,10);return 0; }
+    // Scalar/bool/never names are validated by the later type checker.
+    attach(p,result,name(p));return finish(p,result);
+}
+fn literal(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,94,begin);
+    aux(p,result,tf(p,begin,1));step(p);return finish(p,result);
+}
+fn primary(p:Parser)->u64 {
+    let begin:u64=ti(p);
+    if (tk(p)==258 || tk(p)==259) { return literal(p); }
+    if (accept(p,40)) {
+        let result:u64=node(p,35,begin);aux(p,result,40);
+        attach(p,result,parse_expression(p,0));
+        if (!expect(p,41,9)) { return 0; }return finish(p,result);
+    }
+    if (accept(p,36)) {
+        let result:u64=node(p,35,begin);aux(p,result,36);
+        attach(p,result,name(p));return finish(p,result);
+    }
+    if (keyword(p,39)) {
+        let result:u64=node(p,35,begin);aux(p,result,40);step(p);
+        attach(p,result,qualified(p));
+        if (!expect(p,40,9)) { return 0; }lines(p);
+        while (tk(p)!=41 && p.code==0) {
+            attach(p,result,parse_expression(p,0));lines(p);
+            if (!accept(p,44)) { break; }lines(p);
+        }
+        if (!expect(p,41,9)) { return 0; }return finish(p,result);
+    }
+    if (keyword(p,38)) {
+        let result:u64=node(p,31,begin);step(p);attach(p,result,name(p));
+        if (!expect(p,40,9)) { return 0; }lines(p);
+        while (tk(p)!=41 && p.code==0) {
+            attach(p,result,meta_value(p));lines(p);
+            if (!accept(p,44)) { break; }lines(p);
+        }
+        if (!expect(p,41,9)) { return 0; }return finish(p,result);
+    }
+    if (tk(p)==257) {
+        let result:u64=node(p,35,begin);attach(p,result,qualified(p));
+        if (accept(p,40)) {
+            aux(p,result,1);lines(p);
+            while (tk(p)!=41 && p.code==0) {
+                attach(p,result,parse_expression(p,0));lines(p);
+                if (!accept(p,44)) { break; }lines(p);
+            }
+            if (!expect(p,41,9)) { return 0; }
+        }
+        return finish(p,result);
+    }
+    error(p,9);return 0;
+}
+fn precedence(kind:u64)->u64 {
+    if kind==262 || kind==263 || kind==264 || kind==265 ||
+       kind==60 || kind==62 { return 1; }
+    if (kind==124) { return 2; }if (kind==94) { return 3; }
+    if (kind==38) { return 4; }if (kind==266 || kind==267) { return 5; }
+    if (kind==43 || kind==45) { return 6; }
+    if (kind==42 || kind==47 || kind==37) { return 7; }
+    return 0;
+}
+fn parse_expression(p:Parser,min:u64)->u64 {
+    let begin:u64=ti(p);let mut left:u64=0;
+    let kind:u64=tk(p);
+    if (kind==43 || kind==45 || kind==126 || kind==33) {
+        step(p);left=node(p,35,begin);aux(p,left,kind);
+        attach(p,left,parse_expression(p,8));finish(p,left);
+    } else { left=primary(p); }
+    let mut used_comparison:bool=false;
+    while (p.code==0) {
+        let operation:u64=tk(p);let rank:u64=precedence(operation);
+        if (rank==0 || rank<(min)) { break; }
+        if (rank==1 && used_comparison==true) { break; }
+        if (rank==1) { used_comparison=true; }
+        step(p);let parent:u64=node(p,35,begin);aux(p,parent,operation);
+        attach(p,parent,left);attach(p,parent,parse_expression(p,rank+1));
+        left=finish(p,parent);
+    }
+    return left;
+}
+fn memory(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,34,begin);
+    if (!expect(p,91,4)) { return 0; }
+    if (keyword(p,75) || keyword(p,76)) {
+        attach(p,result,name(p));if (!expect(p,58,4)) { return 0; }
+    }
+    while (tk(p)!=93 && p.code==0) {
+        if (tk(p)==257) { attach(p,result,qualified(p)); }
+        else if (tk(p)==258) { attach(p,result,literal(p)); }
+        else { error(p,9);return 0; }
+        if (accept(p,42)) {
+            if (tk(p)!=258) { error(p,9);return 0; }attach(p,result,literal(p));
+        }
+        if (tk(p)!=43 && tk(p)!=45) { break; }step(p);
+    }
+    if (!expect(p,93,4) || !expect(p,58,4)) { return 0; }
+    attach(p,result,parse_type(p));return finish(p,result);
+}
+fn operand(p:Parser)->u64 {
+    if (tk(p)==91) { return memory(p); }return parse_expression(p,0);
+}
+fn set_node(p:Parser,kind:u64)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,kind,begin);
+    if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && p.code==0) {
+        attach(p,result,qualified(p));lines(p);
+        if (accept(p,40)) {
+            lines(p);attach(p,result,qualified(p));lines(p);
+            if (!expect(p,41,4)) { return 0; }lines(p);
+        }
+        if (!accept(p,44)) { break; }lines(p);
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn predicate_set(p:Parser,kind:u64)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,kind,begin);
+    if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && p.code==0) {
+        let pred:u64=node(p,33,ti(p));attach(p,pred,qualified(p));
+        if (!expect(p,40,4)) { return 0; }lines(p);
+        while (tk(p)!=41 && p.code==0) {
+            attach(p,pred,parse_expression(p,0));lines(p);
+            if (!accept(p,44)) { break; }lines(p);
+        }
+        if (!expect(p,41,4)) { return 0; }attach(p,result,finish(p,pred));
+        lines(p);if (!accept(p,44)) { break; }lines(p);
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn contracts(p:Parser,parent:u64)->bool {
+    if (keyword(p,28)) {
+        let n:u64=node(p,28,ti(p));step(p);attach(p,n,dashed(p));
+        if (!term(p)) { return false; }attach(p,parent,finish(p,n));
+    }
+    if (!take_word(p,24,4)) { return false; }
+    attach(p,parent,set_node(p,20));if (!term(p)) { return false; }
+    if (!take_word(p,25,4)) { return false; }
+    attach(p,parent,set_node(p,21));
+    if (tk(p)==59 || tk(p)==260) { if (!term(p)) { return false; } } else { lines(p); }
+    if (keyword(p,26)) {
+        let n:u64=node(p,22,ti(p));step(p);attach(p,n,predicate_set(p,22));
+        attach(p,parent,finish(p,n));
+        if tk(p)==59 || tk(p)==260 { if (!term(p)) { return false; } }
+        else { lines(p); }
+    }
+    if (keyword(p,27)) {
+        let n:u64=node(p,23,ti(p));step(p);attach(p,n,predicate_set(p,23));
+        attach(p,parent,finish(p,n));if (tk(p)==59 || tk(p)==260) { term(p); }
+    }
+    return p.code==0;
+}
+fn parameters(p:Parser,parent:u64)->bool {
+    if (!expect(p,40,4)) { return false; }lines(p);
+    while (tk(p)!=41 && p.code==0) {
+        let n:u64=node(p,19,ti(p));
+        if (keyword(p,29) || keyword(p,30) || keyword(p,31)) { step(p); }
+        else { error(p,4);return false; }
+        attach(p,n,name(p));if (!expect(p,58,4)) { return false; }
+        attach(p,n,parse_type(p));if (accept(p,64)) { attach(p,n,name(p)); }
+        attach(p,parent,finish(p,n));lines(p);
+        if (!accept(p,44)) { break; }lines(p);
+    }
+    return expect(p,41,4);
+}
+fn block(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,25,begin);
+    if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && tk(p)!=256 && p.code==0) {
+        attach(p,result,statement(p));lines(p);
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn statement(p:Parser)->u64 {
+    let begin:u64=ti(p);
+    if (keyword(p,32)) {
+        let n:u64=node(p,27,begin);step(p);attach(p,n,name(p));
+        if (!expect(p,58,4)) { return 0; }attach(p,n,parse_type(p));
+        if (!expect(p,61,4)) { return 0; }attach(p,n,parse_expression(p,0));
+        if (!term(p)) { return 0; }return finish(p,n);
+    }
+    if (keyword(p,33)) {
+        let n:u64=node(p,28,begin);step(p);attach(p,n,qualified(p));
+        if (accept(p,40)) { lines(p);while (tk(p)!=41 && p.code==0) {
+            attach(p,n,parse_expression(p,0));lines(p);
+            if (!accept(p,44)) { break; }lines(p);
+        }if (!expect(p,41,4)) { return 0; }}
+        if (!term(p)) { return 0; }return finish(p,n);
+    }
+    if (keyword(p,34)) {
+        let n:u64=node(p,29,begin);step(p);
+        if (tk(p)!=59 && tk(p)!=260) { attach(p,n,parse_expression(p,0)); }
+        if (!term(p)) { return 0; }return finish(p,n);
+    }
+    if (keyword(p,35)) {
+        let n:u64=node(p,30,begin);step(p);attach(p,n,parse_expression(p,0));
+        lines(p);attach(p,n,block(p));lines(p);
+        if (keyword(p,36)) { step(p);lines(p);attach(p,n,block(p)); }
+        return finish(p,n);
+    }
+    if (keyword(p,38)) {
+        let n:u64=node(p,31,begin);step(p);attach(p,n,name(p));
+        if (!expect(p,40,4)) { return 0; }lines(p);
+        while (tk(p)!=41 && p.code==0) { attach(p,n,meta_value(p));lines(p);
+            if (!accept(p,44)) { break; }lines(p); }
+        if (!expect(p,41,4) || !term(p)) { return 0; }return finish(p,n);
+    }
+    if (tk(p)==257) {
+        let n:u64=node(p,32,begin);attach(p,n,name(p));
+        if (accept(p,58)) { aux(p,n,1);if (!term(p)) { return 0; }return finish(p,n); }
+        while (tk(p)!=59 && tk(p)!=260 && tk(p)!=125 && p.code==0) {
+            attach(p,n,operand(p));if (!accept(p,44)) { break; }
+        }
+        if (!term(p)) { return 0; }return finish(p,n);
+    }
+    error(p,8);return 0;
+}
+fn function_decl(p:Parser,exported:bool)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,18,begin);
+    if (exported==true) { aux(p,result,1); }
+    if (!take_word(p,15,4)) { return 0; }attach(p,result,name(p));
+    if (!parameters(p,result) || !expect(p,261,4)) { return 0; }
+    attach(p,result,parse_type(p));if (!term(p)) { return 0; }
+    if (!contracts(p,result)) { return 0; }lines(p);attach(p,result,block(p));
+    return finish(p,result);
+}
+fn data_decl(p:Parser,exported:bool)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,24,begin);
+    if (exported==true) { aux(p,result,1); }
+    if (!take_word(p,17,4)) { return 0; }attach(p,result,name(p));
+    if (!expect(p,58,4)) { return 0; }attach(p,result,parse_type(p));
+    if (!expect(p,61,4)) { return 0; }attach(p,result,parse_expression(p,0));
+    if (!term(p)) { return 0; }return finish(p,result);
+}
+fn section_decl(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,17,begin);step(p);
+    attach(p,result,section_name(p));if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && p.code==0) {
+        let mut exported:bool=false;if (keyword(p,70)) { exported=true;step(p); }
+        if (keyword(p,15)) { attach(p,result,function_decl(p,exported)); }
+        else if (keyword(p,17)) { attach(p,result,data_decl(p,exported)); }
+        else if (keyword(p,38)) { attach(p,result,statement(p)); }
+        else { error(p,7);return 0; }
+        lines(p);
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn import_decl(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,9,begin);step(p);
+    attach(p,result,qualified(p));if (!take_word(p,14,4)) { return 0; }
+    attach(p,result,name(p));if (!expect(p,58,4) || !take_word(p,15,4)) { return 0; }
+    if (!parameters(p,result) || !expect(p,261,4)) { return 0; }
+    attach(p,result,parse_type(p));if (!term(p)) { return 0; }
+    if (!contracts(p,result)) { return 0; }return finish(p,result);
+}
+fn constant_decl(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,10,begin);step(p);
+    attach(p,result,name(p));if (!expect(p,58,4)) { return 0; }
+    attach(p,result,parse_type(p));if (!expect(p,61,4)) { return 0; }
+    attach(p,result,parse_expression(p,0));if (!term(p)) { return 0; }
+    return finish(p,result);
+}
+fn versions_decl(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,4,begin);step(p);
+    if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && p.code==0) {
+        let n:u64=node(p,5,ti(p));attach(p,n,name(p));
+        if (tk(p)!=258) { error(p,4);return 0; }attach(p,n,literal(p));
+        if (!expect(p,46,4) || tk(p)!=258) { error(p,4);return 0; }
+        attach(p,n,literal(p));if (!term(p)) { return 0; }
+        attach(p,result,finish(p,n));
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn simple_top(p:Parser,kind:u64,dashed_value:bool)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,kind,begin);step(p);
+    if (dashed_value==true) { attach(p,result,dashed(p)); }
+    else { attach(p,result,set_node(p,kind)); }
+    if (!term(p)) { return 0; }return finish(p,result);
+}
+fn comptime_decl(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,11,begin);step(p);
+    if (!expect(p,40,4)) { return 0; }lines(p);
+    while (tk(p)!=41 && p.code==0) {
+        let n:u64=node(p,12,ti(p));attach(p,n,name(p));
+        if (!expect(p,61,4) || tk(p)!=258) { error(p,4);return 0; }
+        attach(p,n,literal(p));attach(p,result,finish(p,n));lines(p);
+        if (!accept(p,44)) { break; }lines(p);
+    }
+    if (!expect(p,41,4)) { return 0; }lines(p);attach(p,result,meta_block(p));
+    return finish(p,result);
+}
+fn quote_value(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,43,begin);
+    if (!take_word(p,49,4) || !expect(p,40,4)) { return 0; }
+    let mut quote_kind:u64=0;
+    if (keyword(p,74)) { quote_kind=1; }
+    else if (keyword(p,51)) { quote_kind=2; }
+    else if (keyword(p,52)) { quote_kind=3; }
+    else if (keyword(p,53)) { quote_kind=4; }
+    else if (keyword(p,54)) { quote_kind=5; }
+    else { error(p,4);return 0; }
+    attach(p,result,name(p));aux(p,result,quote_kind);
+    if (!expect(p,41,4) || !expect(p,123,4)) { return 0; }
+    lines(p);
+    if (quote_kind==1) { attach(p,result,parse_expression(p,0)); }
+    else if (quote_kind==4) { attach(p,result,parse_type(p)); }
+    else if (quote_kind==2) {
+        if keyword(p,32) || keyword(p,34) || tk(p)==257 {
+            p.optional_term=true;attach(p,result,statement(p));
+            p.optional_term=false;
+        } else { error(p,8);return 0; }
+    }
+    else if (quote_kind==5) {
+        while (tk(p)!=125 && p.code==0) { attach(p,result,statement(p));lines(p); }
+    }
+    else {
+        let mut exported:bool=false;if (keyword(p,70)) { exported=true;step(p); }
+        if (keyword(p,15)) { attach(p,result,function_decl(p,exported)); }
+        else if (keyword(p,17)) { attach(p,result,data_decl(p,exported)); }
+        else if (keyword(p,16) && exported==false) {
+            attach(p,result,constant_decl(p));
+        }
+        else { error(p,7);return 0; }
+    }
+    lines(p);if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn meta_value(p:Parser)->u64 {
+    if (keyword(p,49)) { return quote_value(p); }return parse_expression(p,0);
+}
+fn meta_block(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,37,begin);
+    if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && p.code==0) {
+        let start:u64=ti(p);let mut n:u64=0;
+        if (keyword(p,32)) {
+            n=node(p,38,start);step(p);attach(p,n,name(p));
+            if (!expect(p,61,4)) { return 0; }attach(p,n,parse_expression(p,0));
+            if (!term(p)) { return 0; }
+        } else if (keyword(p,35)) {
+            n=node(p,39,start);step(p);attach(p,n,parse_expression(p,0));
+            lines(p);attach(p,n,meta_block(p));lines(p);
+            if (keyword(p,36)) { step(p);lines(p);attach(p,n,meta_block(p)); }
+        } else if (keyword(p,55)) {
+            n=node(p,40,start);step(p);attach(p,n,name(p));
+            if (!take_word(p,29,4)) { return 0; }
+            attach(p,n,parse_expression(p,0));lines(p);attach(p,n,meta_block(p));
+        } else if (keyword(p,34)) {
+            n=node(p,41,start);step(p);attach(p,n,meta_value(p));
+            if (!term(p)) { return 0; }
+        } else if (keyword(p,56)) {
+            n=node(p,42,start);step(p);attach(p,n,meta_value(p));
+            if (!term(p)) { return 0; }
+        } else if (keyword(p,38)) {
+            n=statement(p);
+        } else { error(p,8);return 0; }
+        attach(p,result,finish(p,n));lines(p);
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn macro_type(p:Parser)->u64 {
+    if (keyword(p,50)) {
+        let begin:u64=ti(p);let result:u64=node(p,36,begin);step(p);
+        if (!expect(p,46,10)) { return 0; }attach(p,result,name(p));
+        aux(p,result,5);return finish(p,result);
+    }
+    return parse_type(p);
+}
+fn macro_decl(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,13,begin);step(p);
+    attach(p,result,name(p));if (!expect(p,40,4)) { return 0; }lines(p);
+    while (tk(p)!=41 && p.code==0) {
+        let n:u64=node(p,14,ti(p));attach(p,n,name(p));
+        if (!expect(p,58,4)) { return 0; }attach(p,n,macro_type(p));
+        attach(p,result,finish(p,n));lines(p);
+        if (!accept(p,44)) { break; }lines(p);
+    }
+    if (!expect(p,41,4) || !expect(p,261,4)) { return 0; }
+    if (keyword(p,48)) {
+        let n:u64=node(p,36,ti(p));step(p);if (!expect(p,60,10)) { return 0; }
+        attach(p,n,macro_type(p));if (!type_close(p)) { return 0; }
+        attach(p,result,finish(p,n));
+    } else { attach(p,result,macro_type(p)); }
+    lines(p);attach(p,result,meta_block(p));return finish(p,result);
+}
+fn binding_set(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,44,begin);
+    if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && p.code==0) {
+        let binding:u64=node(p,96,ti(p));attach(p,binding,name(p));
+        if (!expect(p,58,4)) { return 0; }attach(p,binding,parse_type(p));
+        if (!expect(p,64,4)) { return 0; }attach(p,binding,name(p));
+        attach(p,result,finish(p,binding));lines(p);
+        if (!accept(p,44)) { break; }lines(p);
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn stub_field(p:Parser,keyword_id:u64,value_kind:u64)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,95,begin);
+    if (!take_word(p,keyword_id,4)) { return 0; }
+    if (value_kind==1) { attach(p,result,qualified(p)); }
+    else if (value_kind==2) { attach(p,result,dashed(p)); }
+    else if (value_kind==3) { attach(p,result,name(p)); }
+    else if (value_kind==4) { attach(p,result,binding_set(p)); }
+    else if (value_kind==5) { attach(p,result,set_node(p,95)); }
+    else if (value_kind==6) {
+        if (tk(p)!=258) { error(p,4);return 0; }attach(p,result,literal(p));
+    }
+    else if (value_kind==7) { attach(p,result,section_name(p)); }
+    else { error(p,4);return 0; }
+    if (!term(p)) { return 0; }return finish(p,result);
+}
+fn stub_table_decl(p:Parser)->u64 {
+    let begin:u64=ti(p);let result:u64=node(p,15,begin);step(p);
+    attach(p,result,name(p));if (!take_word(p,20,4)) { return 0; }
+    attach(p,result,name(p));if (!expect(p,123,4)) { return 0; }lines(p);
+    while (tk(p)!=125 && p.code==0) {
+        let n:u64=node(p,16,ti(p));attach(p,n,name(p));
+        if (tk(p)!=258) { error(p,4);return 0; }attach(p,n,literal(p));
+        if (!expect(p,123,4)) { return 0; }lines(p);
+        attach(p,n,stub_field(p,57,1));attach(p,n,stub_field(p,58,2));
+        attach(p,n,stub_field(p,59,2));attach(p,n,stub_field(p,60,3));
+        attach(p,n,stub_field(p,61,1));attach(p,n,stub_field(p,62,4));
+        attach(p,n,stub_field(p,63,3));attach(p,n,stub_field(p,64,5));
+        attach(p,n,stub_field(p,25,5));attach(p,n,stub_field(p,65,6));
+        attach(p,n,stub_field(p,66,3));attach(p,n,stub_field(p,67,3));
+        attach(p,n,stub_field(p,23,7));attach(p,n,stub_field(p,68,3));
+        attach(p,n,stub_field(p,73,3));
+        if (p.code!=0) { return 0; }
+        if (!expect(p,125,4)) { return 0; }attach(p,result,finish(p,n));lines(p);
+    }
+    if (!expect(p,125,4)) { return 0; }return finish(p,result);
+}
+fn source_tree(p:Parser)->u64 {
+    lines(p);let begin:u64=ti(p);let root:u64=node(p,1,begin);
+    if (!take_word(p,1,1)) { return 0; }
+    let m:u64=node(p,2,begin);attach(p,m,qualified(p));
+    if (!term(p)) { return 0; }attach(p,root,finish(p,m));
+    let target_begin:u64=ti(p);if (!take_word(p,2,2)) { return 0; }
+    let target:u64=node(p,3,target_begin);attach(p,target,dashed(p));
+    if (!term(p)) { return 0; }attach(p,root,finish(p,target));lines(p);
+    while (tk(p)!=256 && p.code==0) {
+        let mut child:u64=0;
+        if (keyword(p,3)) { child=versions_decl(p); }
+        else if (keyword(p,10)) { child=simple_top(p,6,true); }
+        else if (keyword(p,11)) { child=simple_top(p,7,true); }
+        else if (keyword(p,12)) {
+            let n:u64=node(p,8,ti(p));step(p);attach(p,n,set_node(p,8));
+            if (tk(p)==59 || tk(p)==260) { term(p); }child=finish(p,n);
+        }
+        else if (keyword(p,13)) { child=import_decl(p); }
+        else if (keyword(p,16)) { child=constant_decl(p); }
+        else if (keyword(p,18)) { child=comptime_decl(p); }
+        else if (keyword(p,37)) { child=macro_decl(p); }
+        else if (keyword(p,19)) { child=stub_table_decl(p); }
+        else if (keyword(p,23)) { child=section_decl(p); }
+        else { error(p,6);return 0; }
+        attach(p,root,child);lines(p);
+    }
+    return finish(p,root);
+}
+
+export fn parse(source:buf<u8>,source_index:u64)->ntasm_ast.Tree {
+    let lexed:ntasm_lexer.Result=ntasm_lexer.lex(source,source_index);
+    let empty_nodes:buf<u64>=alloc(runtime(),0);
+    if (lexed.ok==false) {
+        return ntasm_ast.Tree{ok:false,token_words:lexed.token_words,
+            token_count:0,node_words:empty_nodes,node_count:0,
+            code:lexed.diagnostic.code,reason:lexed.diagnostic.reason,
+            source:lexed.diagnostic.span.source,line:lexed.diagnostic.span.line,
+            column:lexed.diagnostic.span.column,start:lexed.diagnostic.span.start,
+            end:lexed.diagnostic.span.end};
+    }
+    rt_free(runtime(),empty_nodes);
+    let capacity:u64=(lexed.count*2+16)*12;
+    let nodes:buf<u64>=alloc(runtime(),capacity);
+    let words:buf<u8>="module\0target\0versions\0ntir\0machine_ir\0sections\0symbols\0relocations\0nxo\0default_abi\0output\0features\0import\0as\0fn\0const\0data\0comptime\0stub_table\0kind\0interrupt\0syscall\0section\0effects\0clobbers\0requires\0ensures\0abi\0in\0out\0inout\0let\0call\0return\0if\0else\0macro\0expand\0intrinsic\0ptr\0array\0bool\0never\0u8\0u16\0u32\0u64\0list\0quote\0ast\0stmt\0decl\0type\0block\0for\0emit\0handler\0entry_abi\0exit_abi\0exit\0frame\0bindings\0hardware_error_code\0save\0stack_align\0swapgs\0interrupts\0visibility\0local\0export\0true\0false\0symbol\0expr\0fs\0gs\0";
+    let p:Parser=Parser{source:source,tokens:lexed.token_words,
+        token_count:lexed.count,cursor:0,split_gt:false,nodes:nodes,
+        node_count:0,words:words,code:0,reason:0,error_source:source_index,
+        error_line:1,error_column:1,error_start:0,error_end:0,
+        optional_term:false};
+    let root:u64=source_tree(p);
+    rt_free(runtime(),words);
+    let ok:bool=root!=0 && p.code==0 && tk(p)==256;
+    if (ok==false && p.code==0) { error(p,11); }
+    let mut final_count:u64=0;if (ok==true) { final_count=p.node_count; }
+    return ntasm_ast.Tree{ok:ok,token_words:lexed.token_words,
+        token_count:lexed.count,node_words:nodes,node_count:final_count,
+        code:p.code,reason:p.reason,source:p.error_source,line:p.error_line,
+        column:p.error_column,start:p.error_start,end:p.error_end};
+}

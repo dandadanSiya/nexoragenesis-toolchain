@@ -1,0 +1,96 @@
+module ntasm_nxo_pe;
+import ntasm_nxo;
+import ntasm_pe;
+// Bounded NXO -> PE adapter. It mirrors the two frozen C stages that the
+// production pipeline applies after nt_object_read:
+//   * object_materialize.c builds an executable artifact (deep-copies the
+//     three section payloads, applies REL32/DIR64 relocation arithmetic and
+//     records the DIR64 sites as base relocations);
+//   * nt_make_pe (pe.nova here) lays the artifact out as an x86_64 UEFI PE.
+// It never mutates its input: text/rdata/data are copied before relocation
+// values are stored, so the caller's NXO bytes and the borrowed input buffer
+// stay intact. Any failure is transactional: code != 0 and an empty result.
+export struct ConvertResult { code:u64,bytes:buf<u8> }
+fn failed(code:u64)->ConvertResult {
+    let empty:buf<u8>=alloc(runtime(),0);
+    return ConvertResult{code:code,bytes:empty};
+}
+fn duplicate(source:buf<u8>)->buf<u8> {
+    let size:u64=len(source);
+    let out:buf<u8>=alloc(runtime(),size);
+    if size>0 { ntasm_pe.copy(out,0,source); }
+    return out;
+}
+// Logical module RVA of a section once the PE writer lays it out. Matches
+// nt_pe_layout / nt_pe_logical_rva: text=4096, rdata anchor excluded (+8),
+// data page-aligned. Used only for relocation source/target arithmetic.
+fn logical_rva(section:u64,text_size:u64,rdata_size:u64)->u64 {
+    if section==1 { return 4096; }
+    let rdata:u64=ntasm_pe.align(4096+text_size,4096);
+    if section==2 { return rdata+8; }
+    return ntasm_pe.align(rdata+8+rdata_size,4096);
+}
+export fn convert(object:ntasm_nxo.Object)->ConvertResult {
+    if ntasm_nxo.validate(object)!=0 { return failed(801); }
+    if object.target!=1 { return failed(802); }
+    if object.entry==0 { return failed(803); }
+    let s:buf<u64>=object.symbols;let ns:u64=len(s)/8;
+    let r:buf<u64>=object.relocations;let nr:u64=len(r)/5;
+    let mut j:u64=0;
+    while j<(ns) {
+        if (s[j*8+3]&8)!=0 { return failed(804); }
+        j=j+1;
+    }
+    let text_size:u64=len(object.text);let rdata_size:u64=len(object.rdata);
+    if text_size==0 || text_size>16777216 || rdata_size>16777216 ||
+       len(object.data)>16777216 { return failed(805); }
+    let entry:u64=s[(object.entry-1)*8+4];
+    let mut absolute:u64=0;let mut k:u64=0;
+    while k<(nr) {
+        if r[k*5+1]==2 { absolute=absolute+1; }
+        k=k+1;
+    }
+    let source_text:buf<u8>=object.text;
+    let source_rdata:buf<u8>=object.rdata;
+    let source_data:buf<u8>=object.data;
+    let text:buf<u8>=duplicate(source_text);
+    let rdata:buf<u8>=duplicate(source_rdata);
+    let data:buf<u8>=duplicate(source_data);
+    let bases:buf<u64>=alloc(runtime(),absolute*2);
+    let mut count:u64=0;k=0;
+    while k<(nr) {
+        let at:u64=k*5;
+        let sec:u64=r[at];let kind:u64=r[at+1];let off:u64=r[at+2];
+        let target:u64=r[at+3];let bits:u64=r[at+4];
+        let tsec:u64=s[(target-1)*8+2];let toff:u64=s[(target-1)*8+4];
+        let source:u64=logical_rva(sec,text_size,rdata_size)+off;
+        let place:u64=logical_rva(tsec,text_size,rdata_size)+toff;
+        let value:ntasm_pe.Value=ntasm_pe.relocation_value(kind,source,place,i64(bits));
+        if value.code!=0 {
+            rt_free(runtime(),text);rt_free(runtime(),rdata);rt_free(runtime(),data);
+            rt_free(runtime(),bases);return failed(806);
+        }
+        if kind==1 {
+            if sec==1 { ntasm_pe.put32(text,off,value.value); }
+            else if sec==2 { ntasm_pe.put32(rdata,off,value.value); }
+            else { ntasm_pe.put32(data,off,value.value); }
+        } else {
+            if sec==1 { ntasm_pe.put64(text,off,value.value); }
+            else if sec==2 { ntasm_pe.put64(rdata,off,value.value); }
+            else { ntasm_pe.put64(data,off,value.value); }
+            bases[count*2]=sec;bases[count*2+1]=off;count=count+1;
+        }
+        k=k+1;
+    }
+    let image:ntasm_pe.Image=ntasm_pe.Image{
+        text:text,rdata:rdata,data:data,entry:entry,error:0,base_relocations:bases
+    };
+    let result:ntasm_pe.Result=ntasm_pe.emit(image);
+    rt_free(runtime(),text);rt_free(runtime(),rdata);rt_free(runtime(),data);
+    rt_free(runtime(),bases);
+    if result.code!=0 {
+        let fault:buf<u8>=result.bytes;rt_free(runtime(),fault);return failed(807);
+    }
+    let bytes:buf<u8>=result.bytes;
+    return ConvertResult{code:0,bytes:bytes};
+}

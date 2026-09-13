@@ -1,0 +1,9 @@
+module pe_writer_main;
+import pe_writer;
+fn main(path:buf<u8>,value:u64)->u64 {
+    let out:buf<u8>=pe_writer.make_return(value);
+    let writer:u64=rt_open_new(runtime(),path);
+    let size:u64=rt_write(runtime(),writer,out);
+    rt_close(runtime(),writer);rt_free(runtime(),out);
+    return size;
+}

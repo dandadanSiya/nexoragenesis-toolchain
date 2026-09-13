@@ -1,0 +1,8 @@
+format pe64
+; pre
+abi	efi_x64
+const ZERO = 0
+
+entry	MiXeD_09 ; keep
+; between
+section	.text	rx ; open

@@ -1,0 +1,2 @@
+format pe64 ; commentaire B1.3
+abi efi_x64

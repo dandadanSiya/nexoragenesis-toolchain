@@ -1,0 +1,15 @@
+module bootstrap.comptime_macro
+target x86_64-nexora-uefi
+comptime(fuel=16,call_depth=4,arena_bytes=262144,ast_nodes=256,expansion_depth=4,constant_bytes=64) {
+    return (5+3)*4;
+}
+macro ret(v:ast.expr)->ast.stmt {
+    return quote(stmt) { return $v+1; };
+}
+section .text {
+    export fn main()->u64
+    effects {}
+    clobbers {} {
+        expand ret(41)
+    }
+}

@@ -1,0 +1,26 @@
+module nxo_pe_entry;
+import ntasm_nxo;
+import ntasm_nxo_pe;
+// Host-callable entry: reads an NXO image from `input` and writes the PE
+// produced by ntasm_nxo_pe.convert to `out`. Failure returns 2^63+code and
+// never writes to `out`, so the caller's guard bytes stay intact.
+fn main(input:buf<u8>,out:buf<u8>,mode:u64)->u64 {
+    let read_result:ntasm_nxo.ReadResult=ntasm_nxo.read(input);
+    if read_result.code!=0 { return 9223372036854775808+read_result.code; }
+    let object:ntasm_nxo.Object=read_result.object;
+    if mode==1 { object.entry=0; }
+    if mode==2 { object.entry=65537; }
+    if mode==3 && len(object.relocations)>=5 { object.relocations[1]=0; }
+    let converted:ntasm_nxo_pe.ConvertResult=ntasm_nxo_pe.convert(object);
+    ntasm_nxo.release(object);
+    if converted.code!=0 {
+        let fault:buf<u8>=converted.bytes;rt_free(runtime(),fault);
+        return 9223372036854775808+converted.code;
+    }
+    let bytes:buf<u8>=converted.bytes;
+    if len(out)<len(bytes) { rt_free(runtime(),bytes); return 9223372036854776509; }
+    let size:u64=len(bytes);
+    let mut i:u64=0;while i<(size){out[i]=bytes[i];i=i+1;}
+    rt_free(runtime(),bytes);
+    return size;
+}

@@ -1,0 +1,14 @@
+format pe64
+abi efi_x64
+entry gap
+section .text rx
+start:
+nop
+gap:
+align 16
+body:
+jmp missing
+section .rdata r
+qword addr(start)
+section .data rw
+zero 8

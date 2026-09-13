@@ -1,0 +1,9 @@
+fn drop(b:buf<u8>)->u8 {
+    rt_free(runtime(),b);
+    return 1;
+}
+fn main()->u64 {
+    let b:buf<u8>=alloc(runtime(),4);
+    b[0]=drop(b);
+    return 42;
+}

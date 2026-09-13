@@ -1,0 +1,54 @@
+format pe64
+abi efi_x64
+const K = -1
+entry start
+section .text rx
+start:
+nop
+ret
+push rax
+push r15
+pop rbp
+pop r12
+call rax
+call r10
+mov rax, rdi
+mov rcx, r8
+mov rdx, r9
+mov rbx, r10
+mov rsp, r11
+mov rbp, r12
+mov rsi, r13
+mov rdi, r14
+mov r8, r15
+mov r9, rax
+mov r10, rcx
+mov r11, rdx
+mov r12, rbx
+mov r13, rsp
+mov r14, rbp
+mov r15, rsi
+mov rax, 0
+mov r8, 81985529216486895
+mov r15, -1
+mov rcx, 18446744073709551615
+add r9, r10
+add r9, -2147483648
+sub r9, r10
+sub r9, -2147483648
+and r9, r10
+and r9, -2147483648
+or r9, r10
+or r9, -2147483648
+xor r9, r10
+xor r9, -2147483648
+cmp r9, r10
+cmp r9, -2147483648
+test rbx, r13
+shl r8, 63
+shr r15, 1
+shl rax, 0
+imul r8, r9, -2
+add rax, K
+section .rdata r
+section .data rw

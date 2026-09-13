@@ -1,0 +1,17 @@
+// Nova execution ABI2. Paths and data are checked generation-tagged buffers.
+fn main(path:buf<u8>)->u64 {
+    let bytes:buf<u8>=[52,50];
+    let writer:u64=rt_open_new(runtime(),path);
+    let wrote:u64=rt_write(runtime(),writer,bytes);
+    rt_close(runtime(),writer);
+    if wrote!=2 { return 10; }
+    bytes[0]=0;
+    bytes[1]=0;
+    let reader:u64=rt_open_read(runtime(),path);
+    let received:u64=rt_read(runtime(),reader,bytes);
+    rt_close(runtime(),reader);
+    if received!=2 { return 11; }
+    let result:u64=(bytes[0]-48)*10+bytes[1]-48;
+    rt_free(runtime(),bytes);
+    return result;
+}

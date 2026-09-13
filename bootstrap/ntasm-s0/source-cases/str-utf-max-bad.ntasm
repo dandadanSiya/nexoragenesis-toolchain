@@ -1,0 +1,10 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+align 16
+section .rdata r
+utf16z "\xFF"
+section .data rw
+zero 1

@@ -1,0 +1,6 @@
+module ntasm_pe_test;
+import ntasm_pe;
+fn main(text:buf<u8>,rdata:buf<u8>,data:buf<u8>,bases:buf<u64>,entry:u64,error:u64)->ntasm_pe.Result {
+    let image:ntasm_pe.Image=ntasm_pe.Image{text:text,rdata:rdata,data:data,entry:entry,error:error,base_relocations:bases};
+    return ntasm_pe.emit(image);
+}

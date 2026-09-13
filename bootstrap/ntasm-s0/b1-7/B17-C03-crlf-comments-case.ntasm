@@ -1,0 +1,4 @@
+format pe64
+abi efi_x64
+const A = 0
+entry	MiXeD_09 ; keep

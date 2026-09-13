@@ -1,0 +1,147 @@
+module ntasm_pe;
+// Inputs remain owned by the caller. Result bytes are replaced only on code0.
+// Base relocation metadata is a packed u64 array: section,offset pairs.
+export struct Image { text:buf<u8>,rdata:buf<u8>,data:buf<u8>,entry:u64,error:u64,base_relocations:buf<u64> }
+export struct Result { code:u64,bytes:buf<u8> }
+export struct Value { code:u64,value:u64 }
+fn bad(code:u64)->Result {
+    let empty:buf<u8>=alloc(runtime(),0);
+    return Result{code:code,bytes:empty};
+}
+export fn align(value:u64,amount:u64)->u64 { return (value+amount-1)&~(amount-1); }
+export fn put16(out:buf<u8>,at:u64,value:u64)->u64 {
+    out[at]=u8(value);out[at+1]=u8(value>>8);return 0;
+}
+export fn put32(out:buf<u8>,at:u64,value:u64)->u64 {
+    let mut i:u64=0;while i<4{out[at+i]=u8(value>>(i*8));i=i+1;}return 0;
+}
+export fn put64(out:buf<u8>,at:u64,value:u64)->u64 {
+    let mut i:u64=0;while i<8{out[at+i]=u8(value>>(i*8));i=i+1;}return 0;
+}
+export fn read16(input:buf<u8>,at:u64)->u64 { return u64(input[at])|(u64(input[at+1])<<8); }
+export fn read32(input:buf<u8>,at:u64)->u64 {
+    let mut result:u64=0;let mut i:u64=0;while i<4{result=result|(u64(input[at+i])<<(i*8));i=i+1;}return result;
+}
+export fn read64(input:buf<u8>,at:u64)->u64 {
+    let mut result:u64=0;let mut i:u64=0;while i<8{result=result|(u64(input[at+i])<<(i*8));i=i+1;}return result;
+}
+export fn copy(out:buf<u8>,at:u64,source:buf<u8>)->u64 {
+    let size:u64=len(source);if size==0{return 0;}
+    let destination:buf<u8>=slice(out,at,size);
+    rt_copy(runtime(),destination,source,size);rt_free(runtime(),destination);return 0;
+}
+// Contract matches nt_relocation_value in pe_layout.h. Errors never truncate.
+export fn relocation_value(kind:u64,source:u64,target:u64,addend:i64)->Value {
+    if source>9223372036854775803 || target>9223372036854775807{return Value{code:1,value:0};}
+    let minimum:i64=-9223372036854775808;let maximum:i64=9223372036854775807;
+    if kind==1 {
+        let mut t:i64=i64(target);let p:i64=i64(source)+4;
+        if addend>0 && t>maximum-addend{return Value{code:2,value:0};}
+        if addend<0 && t<minimum-addend{return Value{code:2,value:0};}
+        t=t+addend;
+        if t<minimum+p{return Value{code:2,value:0};}
+        t=t-p;
+        if t< -2147483648 || t>2147483647{return Value{code:3,value:0};}
+        return Value{code:0,value:u64(u32(t))};
+    }
+    if kind==2 {
+        if target>18446744068340842495{return Value{code:2,value:0};}
+        let mut t:u64=0x140000000+target;
+        if addend<0 {
+            let magnitude:u64=u64(-(addend+1))+1;
+            if magnitude>t{return Value{code:2,value:0};}
+            t=t-magnitude;
+        } else {
+            let positive:u64=u64(addend);
+            if positive>18446744073709551615-t{return Value{code:2,value:0};}
+            t=t+positive;
+        }
+        return Value{code:0,value:t};
+    }
+    return Value{code:4,value:0};
+}
+fn section(out:buf<u8>,at:u64,name:buf<u8>,size:u64,rva:u64,raw_size:u64,raw:u64,flags:u64)->u64 {
+    copy(out,at,name);put32(out,at+8,size);put32(out,at+12,rva);
+    put32(out,at+16,raw_size);put32(out,at+20,raw);put32(out,at+36,flags);return 0;
+}
+fn sift(values:buf<u64>,start:u64,end:u64)->u64 {
+    let mut root:u64=start;
+    while true {
+        let child:u64=root*2+1;if child>end{break;}
+        let mut larger:u64=child;
+        if child<end && values[child]<values[child+1]{larger=child+1;}
+        if values[root]>=values[larger]{break;}
+        let saved:u64=values[root];values[root]=values[larger];values[larger]=saved;root=larger;
+    }
+    return 0;
+}
+fn sort(values:buf<u64>)->u64 {
+    let count:u64=len(values);if count<2{return 0;}
+    let mut start:u64=count/2;while start>0{start=start-1;sift(values,start,count-1);}
+    let mut end:u64=count-1;while end>0{let saved:u64=values[0];values[0]=values[end];values[end]=saved;end=end-1;sift(values,0,end);}
+    return 0;
+}
+export fn emit(image:Image)->Result {
+    if image.error!=0{return bad(1);}
+    let text:buf<u8>=image.text;let rdata:buf<u8>=image.rdata;let data:buf<u8>=image.data;
+    let text_size:u64=len(text);let user_ro_size:u64=len(rdata);let user_data_size:u64=len(data);
+    if text_size==0 || text_size>16777216 || user_ro_size>16777216 || user_data_size>16777216{return bad(2);}
+    if image.entry>=text_size{return bad(3);}
+    let bases:buf<u64>=image.base_relocations;
+    if len(bases)%2!=0 || len(bases)/2>1048576{return bad(4);}
+    let count:u64=len(bases)/2;
+    let text_raw:u64=align(text_size,512);
+    let ro_size:u64=user_ro_size+8;
+    let mut data_size:u64=user_data_size;if data_size==0{data_size=8;}
+    let ro_rva:u64=align(4096+text_size,4096);
+    let data_rva:u64=align(ro_rva+ro_size,4096);
+    let reloc_rva:u64=align(data_rva+data_size,4096);
+    let rvas:buf<u64>=alloc(runtime(),count+1);rvas[0]=ro_rva;
+    let mut i:u64=0;
+    while i<count {
+        let id:u64=bases[i*2];let offset:u64=bases[i*2+1];
+        let mut limit:u64=0;let mut base:u64=0;
+        if id==1{limit=text_size;base=4096;}
+        else if id==2{limit=user_ro_size;base=ro_rva+8;}
+        else if id==3{limit=user_data_size;base=data_rva;}
+        else{rt_free(runtime(),rvas);return bad(5);}
+        if offset>limit || limit-offset<8{rt_free(runtime(),rvas);return bad(6);}
+        rvas[i+1]=base+offset;i=i+1;
+    }
+    sort(rvas);i=1;
+    while i<count+1{if rvas[i]-rvas[i-1]<8{rt_free(runtime(),rvas);return bad(7);}i=i+1;}
+    let mut reloc_size:u64=0;i=0;
+    while i<count+1 {
+        let mut end:u64=i+1;
+        while end<count+1 && (rvas[end]&~4095)==(rvas[i]&~4095){end=end+1;}
+        reloc_size=reloc_size+align(8+2*(end-i),4);i=end;
+    }
+    let reloc_raw_size:u64=align(reloc_size,512);let ro_raw_size:u64=align(ro_size,512);let data_raw_size:u64=align(data_size,512);
+    let ro_raw:u64=1024+text_raw;let data_raw:u64=ro_raw+ro_raw_size;let reloc_raw:u64=data_raw+data_raw_size;
+    let out:buf<u8>=alloc(runtime(),reloc_raw+reloc_raw_size);
+    put16(out,0,0x5a4d);put32(out,60,128);put32(out,128,0x4550);
+    put16(out,132,0x8664);put16(out,134,4);put16(out,148,240);put16(out,150,0x2022);
+    put16(out,152,0x20b);put32(out,156,text_raw);put32(out,160,ro_raw_size+data_raw_size+reloc_raw_size);
+    put32(out,168,4096+image.entry);put32(out,172,4096);put64(out,176,0x140000000);
+    put32(out,184,4096);put32(out,188,512);put16(out,192,6);put16(out,200,6);
+    put32(out,208,align(reloc_rva+reloc_size,4096));put32(out,212,1024);put16(out,220,10);put16(out,222,0x160);
+    put64(out,224,0x100000);put64(out,232,0x1000);put64(out,240,0x100000);put64(out,248,0x1000);
+    put32(out,260,16);put32(out,304,reloc_rva);put32(out,308,reloc_size);
+    let text_name:buf<u8>=".text";let ro_name:buf<u8>=".rdata";let data_name:buf<u8>=".data";let reloc_name:buf<u8>=".reloc";
+    section(out,392,text_name,text_size,4096,text_raw,1024,0x60000020);
+    section(out,432,ro_name,ro_size,ro_rva,ro_raw_size,ro_raw,0x40000040);
+    section(out,472,data_name,data_size,data_rva,data_raw_size,data_raw,0xc0000040);
+    section(out,512,reloc_name,reloc_size,reloc_rva,reloc_raw_size,reloc_raw,0x42000040);
+    rt_free(runtime(),text_name);rt_free(runtime(),ro_name);rt_free(runtime(),data_name);rt_free(runtime(),reloc_name);
+    copy(out,1024,text);put64(out,ro_raw,0x140001000+image.entry);
+    copy(out,ro_raw+8,rdata);copy(out,data_raw,data);
+    let mut at:u64=reloc_raw;i=0;
+    while i<count+1 {
+        let page:u64=rvas[i]&~4095;let mut end:u64=i+1;
+        while end<count+1 && (rvas[end]&~4095)==page{end=end+1;}
+        let block:u64=align(8+2*(end-i),4);put32(out,at,page);put32(out,at+4,block);
+        let mut j:u64=i;while j<end{put16(out,at+8+2*(j-i),0xa000|(rvas[j]&4095));j=j+1;}
+        at=at+block;i=end;
+    }
+    rt_free(runtime(),rvas);return Result{code:0,bytes:out};
+}

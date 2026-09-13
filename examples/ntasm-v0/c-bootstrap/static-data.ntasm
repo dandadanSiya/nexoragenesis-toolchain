@@ -1,0 +1,13 @@
+module bootstrap.static_data
+target x86_64-nexora-uefi
+section .rdata {
+    data answer:u64=42
+}
+section .text {
+    export fn main()->u64
+    effects {reads_mem(user)}
+    clobbers {rax} {
+        load rax,[answer]:ptr<user,u64>
+        return rax
+    }
+}

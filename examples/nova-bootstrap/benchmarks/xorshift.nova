@@ -1,0 +1,12 @@
+// Same unsigned 64-bit recurrence as bench/kernels.c; no runtime memory access.
+fn main(n:u64, seed:u64, data:buf<u8>) -> u64 {
+    let mut x:u64=seed;
+    let mut i:u64=0;
+    while (i<n) {
+        x=x^(x<<13);
+        x=x^(x>>7);
+        x=x^(x<<17);
+        i=i+1;
+    }
+    return x;
+}

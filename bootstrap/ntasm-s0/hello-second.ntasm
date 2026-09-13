@@ -1,0 +1,31 @@
+; Seconde verticale : constante, branche avant, align, ZERO long et deux pages de reloc.
+format pe64
+abi efi_x64
+const SHADOW = 32
+entry start
+section .text rx
+start:
+push rbx
+sub rsp, SHADOW
+mov rbx, rdx
+jmp print
+nop
+align 16
+print:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+lea rdx, [rip + message]
+call rax
+add rsp, SHADOW
+pop rbx
+mov rax, 0
+ret
+section .rdata r
+anchor:
+qword addr(start)
+zero 4096
+align 16
+message:
+utf16z "NG_NTASM_SECOND_OK\r\n"
+section .data rw
+qword addr(message), addr(print)

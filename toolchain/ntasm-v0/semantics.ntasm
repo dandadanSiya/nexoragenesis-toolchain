@@ -1,0 +1,3078 @@
+; Consommateur AST externe NV0A0001 : charger, verifier, appeler, consommer, decharger.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rbp
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 56
+mov rbx, rdx
+mov r15, rcx
+lea rbp, [rip + module_state]
+store64 [rbp + 144], r15
+store64 [rbp + 200], rbx
+mov r14, 0
+mov rax, 1
+store64 [rbp], rax
+cmp rbx, 0
+je host_return
+load64 r14, [rbx + 0x60]
+cmp r14, 0
+je host_finish
+mov rcx, r15
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 16]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 16]
+cmp rax, 0
+je host_cleanup
+load64 rcx, [rax + 24]
+lea rdx, [rip + fs_guid]
+lea r8, [rbp + 24]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rcx, [rbp + 24]
+cmp rcx, 0
+je host_cleanup
+lea rdx, [rbp + 32]
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rcx, [rbp + 32]
+cmp rcx, 0
+je host_cleanup
+mov rax, 2
+store64 [rbp + 128], rax
+store64 [rbp], rax
+lea rdx, [rbp + 40]
+lea r8, [rip + filename]
+mov r9, 1
+mov rax, 0
+store64 [rsp + 32], rax
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rsi, [rbp + 40]
+cmp rsi, 0
+je host_cleanup
+mov rax, 6
+store64 [rbp + 128], rax
+mov rax, 3
+store64 [rbp], rax
+mov rax, 512
+store64 [rbp + 56], rax
+mov rcx, rsi
+lea rdx, [rip + info_guid]
+lea r8, [rbp + 56]
+lea r9, [rip + file_info]
+load64 rax, [rsi + 0x40]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 56]
+cmp rax, 80
+jb host_cleanup
+cmp rax, 513
+jae host_cleanup
+lea rdx, [rip + file_info]
+load64 rax, [rdx + 72]
+and rax, 16
+jne host_cleanup
+load64 r12, [rdx + 8]
+cmp r12, 64
+jb host_cleanup
+cmp r12, 65537
+jae host_cleanup
+store64 [rbp + 136], r12
+mov rax, 4
+store64 [rbp], rax
+mov rcx, 2
+lea rdx, [r12 + 1]
+lea r8, [rbp + 48]
+load64 rax, [r14 + 0x40]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 48]
+cmp rax, 0
+je host_cleanup
+mov rax, 7
+store64 [rbp + 128], rax
+mov rax, 3
+store64 [rbp], rax
+mov rdi, 0
+; Lire jusqu'a EOF, en acceptant les lectures courtes sans depasser FileSize+1.
+host_read:
+lea r13, [r12 + 1]
+sub r13, rdi
+store64 [rbp + 56], r13
+mov rcx, rsi
+lea rdx, [rbp + 56]
+load64 r8, [rbp + 48]
+add r8, rdi
+load64 rax, [rsi + 0x20]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 56]
+cmp r13, rax
+jb host_cleanup
+cmp rax, 0
+je host_read_done
+add rdi, rax
+cmp r12, rdi
+jb host_cleanup
+jmp host_read
+host_read_done:
+cmp rdi, r12
+jne host_cleanup
+mov rax, 5
+store64 [rbp], rax
+mov rcx, 0
+mov rdx, r15
+mov r8, 0
+load64 r9, [rbp + 48]
+store64 [rsp + 32], r12
+lea rax, [rbp + 64]
+store64 [rsp + 40], rax
+load64 rax, [r14 + 0xC8]
+call rax
+mov r13, rax
+load64 rcx, [rbp + 64]
+cmp rcx, 0
+je host_cleanup
+load64 rax, [rbp + 128]
+or rax, 8
+store64 [rbp + 128], rax
+cmp r13, 0
+jne host_cleanup
+mov rax, 6
+store64 [rbp], rax
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 72]
+load64 rax, [r14 + 0x98]
+call rax
+cmp rax, 0
+jne host_cleanup
+load64 rax, [rbp + 72]
+cmp rax, 0
+je host_cleanup
+load64 rsi, [rax + 64]
+load64 rdi, [rax + 72]
+cmp rsi, 0
+je host_cleanup
+cmp rdi, 1024
+jb host_cleanup
+cmp rdi, 131073
+jae host_cleanup
+mov rdx, rsi
+add rdx, rdi
+cmp rdx, rsi
+jb host_cleanup
+store64 [rbp + 80], rsi
+store64 [rbp + 88], rdi
+; Cette preuve exige une relocation reelle hors ImageBase prefere.
+mov rax, 0x140000000
+cmp rsi, rax
+je host_cleanup
+load16 rax, [rsi]
+cmp rax, 0x5A4D
+jne host_cleanup
+load32 rax, [rsi + 0x3C]
+cmp rax, 0x80
+jne host_cleanup
+load32 rax, [rsi + 0x80]
+cmp rax, 0x4550
+jne host_cleanup
+load16 rax, [rsi + 0x84]
+cmp rax, 0x8664
+jne host_cleanup
+load16 rax, [rsi + 0x86]
+cmp rax, 4
+jne host_cleanup
+load16 rax, [rsi + 0x94]
+cmp rax, 240
+jne host_cleanup
+load16 rax, [rsi + 0x98]
+cmp rax, 0x20B
+jne host_cleanup
+load64 rax, [rsi + 0x188]
+mov rdx, 0x747865742E
+cmp rax, rdx
+jne host_cleanup
+load32 rax, [rsi + 0x194]
+cmp rax, 4096
+jne host_cleanup
+add rax, rsi
+store64 [rbp + 96], rax
+load32 rdx, [rsi + 0x190]
+cmp rdx, 1
+jb host_cleanup
+cmp rdx, 32769
+jae host_cleanup
+add rax, rdx
+store64 [rbp + 104], rax
+sub rax, rsi
+cmp rdi, rax
+jb host_cleanup
+load64 rax, [rsi + 0x1B0]
+mov rdx, 0x61746164722E
+cmp rax, rdx
+jne host_cleanup
+load32 rax, [rsi + 0x1BC]
+load32 rdx, [rsi + 0x1B8]
+cmp rdx, 64
+jb host_cleanup
+store64 [rbp + 152], rdx
+add rdx, rax
+cmp rdi, rdx
+jb host_cleanup
+add rax, rsi
+load64 rdx, [rbp + 104]
+cmp rax, rdx
+jb host_cleanup
+store64 [rbp + 160], rax
+mov rax, 7
+store64 [rbp], rax
+load64 rcx, [rbp + 160]
+call host_exports
+cmp rax, 0
+je host_cleanup
+host_options:
+call semantic_job
+cmp rax, 0
+jne host_cleanup
+mov rax, 0
+store64 [rbp], rax
+jmp host_cleanup
+host_cleanup:
+load64 rax, [rbp + 128]
+and rax, 8
+je host_close_file
+load64 rcx, [rbp + 64]
+load64 rax, [r14 + 0xE0]
+call rax
+call host_cleanup_status
+host_close_file:
+load64 rax, [rbp + 128]
+and rax, 4
+je host_close_root
+load64 rcx, [rbp + 40]
+load64 rax, [rcx + 0x10]
+call rax
+call host_cleanup_status
+host_close_root:
+load64 rax, [rbp + 128]
+and rax, 2
+je host_free
+load64 rcx, [rbp + 32]
+load64 rax, [rcx + 0x10]
+call rax
+call host_cleanup_status
+host_free:
+load64 rax, [rbp + 128]
+and rax, 16
+je host_free_input
+lea rcx, [rip + ast_descriptor]
+load64 rcx, [rcx + 8]
+load64 rax, [r14 + 0x48]
+call rax
+call host_cleanup_status
+host_free_input:
+load64 rax, [rbp + 128]
+and rax, 1
+je host_finish
+load64 rcx, [rbp + 48]
+load64 rax, [r14 + 0x48]
+call rax
+call host_cleanup_status
+host_finish:
+load64 rax, [rbp]
+cmp rax, 0
+jne host_bad
+lea rdx, [rip + pass_msg]
+jmp host_emit
+host_bad:
+lea rdx, [rip + fail_debug]
+load64 rax, [rbp]
+add rax, 48
+store16 [rdx + 38], rax
+load64 rax, [rbp + 176]
+cmp rax, 0
+je debug_code_done
+mov rcx, 48
+debug_hundreds:
+cmp rax, 100
+jb debug_tens_begin
+sub rax, 100
+add rcx, 1
+jmp debug_hundreds
+debug_tens_begin:
+store16 [rdx + 34], rcx
+mov rcx, 48
+debug_tens:
+cmp rax, 10
+jb debug_ones
+sub rax, 10
+add rcx, 1
+jmp debug_tens
+debug_ones:
+store16 [rdx + 36], rcx
+add rax, 48
+store16 [rdx + 38], rax
+debug_code_done:
+load64 rax, [rbp + 112]
+cmp rax, 1
+jne host_emit
+lea rdx, [rip + reached_msg]
+host_emit:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+host_return:
+add rsp, 56
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbp
+pop rbx
+mov rax, 0
+ret
+host_cleanup_status:
+cmp rax, 0
+je cleanup_done
+mov rax, 9
+store64 [rbp], rax
+cleanup_done:
+ret
+host_exports:
+load64 rax, [rcx]
+mov rdx, 0x313030304130564E
+cmp rax, rdx
+jne exports_bad
+load64 rax, [rcx + 8]
+cmp rax, 64
+jne exports_bad
+load64 rax, [rcx + 16]
+cmp rax, 1
+jne exports_bad
+load64 rax, [rcx + 24]
+cmp rax, 7
+jne exports_bad
+load64 rax, [rcx + 56]
+cmp rax, 0
+jne exports_bad
+load64 rax, [rcx + 48]
+load64 rdx, [rbp + 96]
+cmp rax, rdx
+jb exports_bad
+load64 rdx, [rbp + 104]
+cmp rax, rdx
+jae exports_bad
+ret
+exports_bad:
+mov rax, 0
+ret
+semantic_job:
+push r12
+push r13
+push r14
+push r15
+push rsi
+push rdi
+sub rsp, 40
+mov rcx, 2
+mov rdx, 32768
+lea r8, [rip + ast_descriptor]
+add r8, 8
+load64 rax, [r14 + 0x40]
+call rax
+cmp rax, 0
+jne sj_bad
+load64 rax, [rbp + 128]
+or rax, 16
+store64 [rbp + 128], rax
+lea r12, [rip + cases]
+mov r13, 11
+case_next:
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+call check_bindings
+load64 rcx, [r12 + 16]
+cmp rax, rcx
+jne sj_bad
+load64 rcx, [r12 + 24]
+cmp rdx, rcx
+jne sj_bad
+add r12, 32
+sub r13, 1
+jne case_next
+lea r12, [rip + type_cases]
+mov r13, 13
+type_case_next:
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+call resolve_scalar_type
+load64 rcx, [r12 + 16]
+cmp rax, rcx
+jne sj_bad
+load64 rcx, [r12 + 24]
+cmp rdx, rcx
+jne sj_bad
+load64 rcx, [r12 + 32]
+cmp r8, rcx
+jne sj_bad
+add r12, 40
+sub r13, 1
+jne type_case_next
+lea r12, [rip + register_cases]
+mov r13, 14
+register_case_next:
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+call resolve_gpr
+load64 rcx, [r12 + 16]
+cmp rax, rcx
+jne sj_bad
+load64 rcx, [r12 + 24]
+cmp rdx, rcx
+jne sj_bad
+load64 rcx, [r12 + 32]
+cmp r8, rcx
+jne sj_bad
+add r12, 40
+sub r13, 1
+jne register_case_next
+lea r12, [rip + source_cases]
+mov r13, 41
+sj_next:
+mov rax, 8
+store64 [rbp], rax
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+lea r8, [rip + ast_context]
+lea r9, [rip + ast_descriptor]
+load64 rax, [rbp + 160]
+load64 rax, [rax + 48]
+call rax
+store64 [rbp + 176], rax
+store64 [rbp + 184], rdx
+cmp rax, 0
+jne sj_bad
+mov rax, 9
+store64 [rbp], rax
+lea r8, [rip + ast_descriptor]
+load64 rax, [r8 + 24]
+cmp rax, 1
+jb sj_bad
+cmp rax, 513
+jae sj_bad
+lea r9, [rip + parser_name_range]
+load64 rax, [rbp + 160]
+store64 [r9], rax
+load64 rax, [rbp + 152]
+store64 [r9 + 8], rax
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+lea r8, [rip + ast_descriptor]
+lea rax, [rip + semantic_exports]
+load64 rax, [rax + 32]
+call rax
+cmp rax, 0
+jne sj_error_mask
+cmp rdx, 63
+jne sj_bad
+jmp sj_semantic_result
+sj_error_mask:
+cmp rdx, 0
+jne sj_bad
+sj_semantic_result:
+store64 [rbp + 176], rax
+load64 rdx, [r12 + 16]
+cmp rax, rdx
+jne sj_bad
+add r12, 24
+sub r13, 1
+jne sj_next
+; L'API ne doit pas accepter un descripteur AST d'une autre version ou incoherent.
+lea r13, [rip + descriptor_mutations]
+mov r14, 8
+sj_descriptor_next:
+lea rsi, [rip + ast_descriptor]
+load64 rdi, [r13]
+add rsi, rdi
+load64 r15, [rsi]
+load64 rax, [r13 + 8]
+store64 [rsi], rax
+load64 rcx, [r12 - 24]
+load64 rdx, [r12 - 16]
+lea r8, [rip + ast_descriptor]
+lea r9, [rip + parser_name_range]
+lea rax, [rip + semantic_exports]
+load64 rax, [rax + 32]
+call rax
+store64 [rsi], r15
+cmp rax, 508
+jne sj_bad
+cmp rdx, 0
+jne sj_bad
+add r13, 16
+sub r14, 1
+jne sj_descriptor_next
+mov rax, 0
+jmp sj_return
+sj_bad:
+mov rax, 1
+sj_return:
+add rsp, 40
+pop rdi
+pop rsi
+pop r15
+pop r14
+pop r13
+pop r12
+ret
+; Deux passes de noms : definitions puis appels, donc references avant definition.
+validate_module:
+push rbp
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov r13, rdx
+mov r14, r8
+mov rbp, r9
+cmp r12, 0
+je vm_bad_input
+cmp r13, 0
+je vm_bad_input
+cmp r13, 65536
+jae vm_bad_input
+cmp r14, 0
+je vm_bad_input
+cmp rbp, 0
+je vm_bad_input
+mov rax, rbp
+and rax, 7
+jne vm_bad_input
+mov rax, r14
+and rax, 7
+jne vm_bad_input
+load64 rax, [r14]
+cmp rax, 1
+jne vm_bad_input
+load64 rax, [r14 + 40]
+load64 rdx, [r14 + 48]
+or rax, rdx
+load64 rdx, [r14 + 56]
+or rax, rdx
+cmp rax, 0
+jne vm_bad_input
+load64 rax, [r14 + 32]
+cmp rax, 0
+jne vm_bad_input
+load64 rax, [r14 + 16]
+cmp rax, 1
+jb vm_bad_input
+cmp rax, 65536
+jae vm_bad_input
+load64 rdx, [r14 + 24]
+cmp rdx, 1
+jb vm_bad_input
+cmp rax, rdx
+jb vm_bad_input
+load64 rax, [r14 + 8]
+cmp rax, 0
+je vm_bad_input
+mov rcx, rax
+and rcx, 7
+jne vm_bad_input
+shl rdx, 6
+add rdx, rax
+cmp rdx, rax
+jb vm_bad_input
+load64 rax, [rbp]
+cmp rax, 0
+je vm_bad_input
+load64 rdx, [rbp + 8]
+cmp rdx, 64
+jb vm_bad_input
+add rdx, rax
+cmp rdx, rax
+jb vm_bad_input
+mov rcx, r12
+mov rdx, r13
+mov r8, r14
+call validate_ast_signature
+cmp rax, 0
+jne vm_failed
+mov rcx, r12
+mov rdx, r13
+mov r8, r14
+call validate_local_bindings
+cmp rax, 0
+jne vm_failed
+mov rcx, r12
+mov rdx, r13
+mov r8, r14
+call validate_callable_names
+cmp rax, 0
+jne vm_failed
+mov rcx, r12
+mov rdx, r13
+mov r8, r14
+call validate_return_types
+cmp rax, 0
+jne vm_failed
+mov rcx, r12
+mov rdx, r13
+mov r8, r14
+call validate_return_paths
+cmp rax, 0
+jne vm_failed
+mov rdx, 63
+jmp vm_return
+vm_bad_input:
+mov rax, 508
+vm_failed:
+mov rdx, 0
+vm_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rbp
+ret
+validate_return_paths:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov r13, rdx
+load64 r14, [r8 + 8]
+load64 r15, [r8 + 24]
+mov rsi, 0
+vrp_next:
+lea rax, [rip + callable_count]
+load64 rax, [rax]
+cmp rsi, rax
+jae vrp_ok
+mov rax, rsi
+shl rax, 5
+lea rdi, [rip + callable_table]
+add rdi, rax
+load64 rcx, [rdi + 16]
+lea rdx, [rip + name_function_block]
+mov r8, 14
+call count_named_children
+cmp rax, 1
+jne vrp_shape
+mov rcx, rdx
+mov rdx, 0
+call block_terminates
+cmp rax, 2
+je vrp_capacity
+cmp rax, 1
+jne vrp_missing
+add rsi, 1
+jmp vrp_next
+vrp_ok:
+mov rax, 0
+jmp vrp_return
+vrp_missing:
+mov rax, 519
+jmp vrp_return
+vrp_shape:
+mov rax, 508
+jmp vrp_return
+vrp_capacity:
+mov rax, 505
+vrp_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+; Analyse structuree : sequence, return, deux branches terminales.
+; 0=chute possible,1=terminal,2=budget profondeur depasse.
+block_terminates:
+push rbx
+push rsi
+push rdi
+sub rsp, 64
+mov rbx, rcx
+mov rdi, rdx
+cmp rdi, 64
+jae bt_capacity
+mov rsi, 0
+bt_next:
+mov rcx, rbx
+lea rdx, [rip + name_statement]
+mov r8, 9
+mov r9, rsi
+call next_named_child
+cmp rax, -1
+je bt_no
+store64 [rsp + 32], rax
+mov rcx, rax
+lea rdx, [rip + name_return]
+mov r8, 6
+call count_named_children
+cmp rax, 1
+je bt_yes
+load64 rcx, [rsp + 32]
+lea rdx, [rip + name_runtime_if]
+mov r8, 10
+call count_named_children
+cmp rax, 1
+jne bt_advance
+store64 [rsp + 40], rdx
+mov rcx, rdx
+lea rdx, [rip + name_function_block]
+mov r8, 14
+call count_named_children
+cmp rax, 2
+jne bt_advance
+load64 rcx, [rsp + 40]
+lea rdx, [rip + name_function_block]
+mov r8, 14
+mov r9, 0
+call next_named_child
+cmp rax, -1
+je bt_no
+store64 [rsp + 48], rax
+mov rcx, rax
+lea rdx, [rdi + 1]
+call block_terminates
+cmp rax, 2
+je bt_return
+cmp rax, 1
+jne bt_advance
+load64 rcx, [rsp + 40]
+lea rdx, [rip + name_function_block]
+mov r8, 14
+load64 r9, [rsp + 48]
+add r9, 1
+call next_named_child
+cmp rax, -1
+je bt_no
+mov rcx, rax
+lea rdx, [rdi + 1]
+call block_terminates
+cmp rax, 2
+je bt_return
+cmp rax, 1
+je bt_yes
+bt_advance:
+load64 rsi, [rsp + 32]
+add rsi, 1
+jmp bt_next
+bt_yes:
+mov rax, 1
+jmp bt_return
+bt_no:
+mov rax, 0
+jmp bt_return
+bt_capacity:
+mov rax, 2
+bt_return:
+add rsp, 64
+pop rdi
+pop rsi
+pop rbx
+ret
+validate_local_bindings:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 64
+mov r12, rcx
+mov r13, rdx
+load64 r14, [r8 + 8]
+load64 r15, [r8 + 24]
+mov rsi, 0
+vlb_next:
+cmp rsi, r15
+jae vlb_ok
+mov rcx, rsi
+shl rcx, 6
+add rcx, r14
+lea rdx, [rip + name_let]
+mov r8, 3
+call ast_name_equals
+cmp rax, 1
+jne vlb_advance
+mov rcx, rsi
+call enclosing_function
+cmp rax, -1
+je vlb_shape
+store64 [rsp + 32], rax
+mov rcx, rsi
+call let_name_span
+mov r8, rdx
+mov rdx, rax
+mov rcx, rsi
+load64 r9, [rsp + 32]
+call lookup_local_type
+cmp rax, 515
+je vlb_unique
+cmp rax, 0
+jne vlb_return
+store64 [rsp + 56], r9
+mov rcx, rsi
+call enclosing_block
+store64 [rsp + 48], rax
+load64 rcx, [rsp + 56]
+call enclosing_block
+load64 rdx, [rsp + 48]
+cmp rax, rdx
+je vlb_duplicate
+vlb_unique:
+mov rcx, rsi
+lea rdx, [rip + name_type]
+mov r8, 4
+call count_named_children
+cmp rax, 1
+jne vlb_shape
+mov rcx, rdx
+call resolve_ast_type
+cmp rax, 0
+jne vlb_return
+cmp rdx, 10
+je vlb_shape
+store64 [rsp + 40], rdx
+mov rcx, rsi
+lea rdx, [rip + name_expression]
+mov r8, 10
+call count_named_children
+cmp rax, 1
+jne vlb_shape
+mov rcx, rdx
+load64 rdx, [rsp + 32]
+load64 r8, [rsp + 40]
+call check_expression_type
+cmp rax, 0
+jne vlb_return
+vlb_advance:
+add rsi, 1
+jmp vlb_next
+vlb_ok:
+mov rax, 0
+jmp vlb_return
+vlb_shape:
+mov rax, 508
+jmp vlb_return
+vlb_duplicate:
+mov rax, 518
+vlb_return:
+add rsp, 64
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+; Noms locaux : declarations achevees avant usage et bloc ancetre accessible.
+lookup_local_type:
+push rbx
+push rsi
+push rdi
+sub rsp, 80
+mov rbx, rcx
+store64 [rsp + 32], rdx
+store64 [rsp + 40], r8
+store64 [rsp + 48], r9
+mov rax, -1
+store64 [rsp + 56], rax
+mov rax, rbx
+shl rax, 6
+add rax, r14
+load64 rax, [rax + 16]
+store64 [rsp + 64], rax
+mov rsi, 0
+llt_next:
+cmp rsi, r15
+jae llt_done
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+load64 rax, [rdi + 24]
+load64 rdx, [rsp + 64]
+cmp rdx, rax
+jb llt_advance
+mov rcx, rdi
+lea rdx, [rip + name_let]
+mov r8, 3
+call ast_name_equals
+cmp rax, 1
+jne llt_advance
+mov rcx, rsi
+call enclosing_function
+load64 rdx, [rsp + 48]
+cmp rax, rdx
+jne llt_advance
+mov rcx, rsi
+call enclosing_block
+cmp rax, -1
+je llt_advance
+mov rdx, rax
+mov rcx, rbx
+call node_has_ancestor
+cmp rax, 1
+jne llt_advance
+mov rcx, rsi
+call let_name_span
+mov rcx, rax
+load64 r8, [rsp + 32]
+load64 r9, [rsp + 40]
+call equal_name_spans
+cmp rax, 1
+jne llt_advance
+store64 [rsp + 56], rsi
+llt_advance:
+add rsi, 1
+jmp llt_next
+llt_done:
+load64 rcx, [rsp + 56]
+cmp rcx, -1
+je llt_absent
+lea rdx, [rip + name_type]
+mov r8, 4
+call count_named_children
+cmp rax, 1
+jne llt_absent
+mov rcx, rdx
+call resolve_ast_type
+load64 r9, [rsp + 56]
+jmp llt_return
+llt_absent:
+mov rax, 515
+llt_return:
+add rsp, 80
+pop rdi
+pop rsi
+pop rbx
+ret
+enclosing_block:
+push rbx
+sub rsp, 32
+mov rbx, rcx
+eb_next:
+cmp rbx, r15
+jae eb_absent
+mov rcx, rbx
+shl rcx, 6
+add rcx, r14
+lea rdx, [rip + name_function_block]
+mov r8, 14
+call ast_name_equals
+cmp rax, 1
+je eb_found
+mov rax, rbx
+shl rax, 6
+add rax, r14
+load64 rcx, [rax + 32]
+cmp rcx, rbx
+jae eb_absent
+mov rbx, rcx
+jmp eb_next
+eb_found:
+mov rax, rbx
+jmp eb_return
+eb_absent:
+mov rax, -1
+eb_return:
+add rsp, 32
+pop rbx
+ret
+node_has_ancestor:
+cmp rcx, r15
+jae nha_no
+cmp rcx, rdx
+je nha_yes
+mov r8, rcx
+shl r8, 6
+add r8, r14
+load64 rax, [r8 + 32]
+cmp rax, rcx
+jae nha_no
+mov rcx, rax
+jmp node_has_ancestor
+nha_no:
+mov rax, 0
+ret
+nha_yes:
+mov rax, 1
+ret
+let_name_span:
+shl rcx, 6
+add rcx, r14
+load64 r9, [rcx + 40]
+mov r10, 0
+lns_next:
+cmp r9, r15
+jae pns_bad
+mov r8, r9
+shl r8, 6
+add r8, r14
+load64 rax, [r8 + 56]
+cmp rax, 1
+jne lns_advance
+cmp r10, 1
+je pns_found
+mov r10, 1
+lns_advance:
+load64 r9, [r8 + 48]
+jmp lns_next
+validate_return_types:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 64
+mov r12, rcx
+mov r13, rdx
+load64 r14, [r8 + 8]
+load64 r15, [r8 + 24]
+mov rsi, 0
+vrt_next:
+cmp rsi, r15
+jae vrt_ok
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+mov rcx, rdi
+lea rdx, [rip + name_return]
+mov r8, 6
+call ast_name_equals
+cmp rax, 1
+jne vrt_advance
+mov rcx, rsi
+call enclosing_function
+cmp rax, -1
+je vrt_shape
+store64 [rsp + 32], rax
+mov rcx, rax
+lea rdx, [rip + name_type]
+mov r8, 4
+call count_named_children
+cmp rax, 1
+jne vrt_shape
+mov rcx, rdx
+call resolve_ast_type
+cmp rax, 0
+jne vrt_return
+cmp rdx, 10
+je vrt_never
+store64 [rsp + 40], rdx
+mov rcx, rsi
+lea rdx, [rip + name_expression]
+mov r8, 10
+call count_named_children
+cmp rax, 1
+jne vrt_missing
+mov rcx, rdx
+load64 rdx, [rsp + 32]
+load64 r8, [rsp + 40]
+call check_expression_type
+cmp rax, 0
+jne vrt_return
+vrt_advance:
+add rsi, 1
+jmp vrt_next
+vrt_ok:
+mov rax, 0
+jmp vrt_return
+vrt_shape:
+mov rax, 508
+jmp vrt_return
+vrt_never:
+mov rax, 516
+jmp vrt_return
+vrt_missing:
+mov rax, 517
+vrt_return:
+add rsp, 64
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+enclosing_function:
+push rbx
+sub rsp, 32
+mov rbx, rcx
+efn_next:
+cmp rbx, r15
+jae efn_absent
+mov rcx, rbx
+shl rcx, 6
+add rcx, r14
+lea rdx, [rip + name_function]
+mov r8, 8
+call ast_name_equals
+cmp rax, 1
+je efn_found
+mov rax, rbx
+shl rax, 6
+add rax, r14
+load64 rcx, [rax + 32]
+cmp rcx, rbx
+jae efn_absent
+mov rbx, rcx
+jmp efn_next
+efn_found:
+mov rax, rbx
+jmp efn_return
+efn_absent:
+mov rax, -1
+efn_return:
+add rsp, 32
+pop rbx
+ret
+; Expression scalaire simple : nom de parametre ou litteral contraint par type.
+check_expression_type:
+push rbx
+push rsi
+push rdi
+sub rsp, 80
+store64 [rsp + 48], rdx
+store64 [rsp + 56], r8
+store64 [rsp + 72], rcx
+shl rcx, 6
+add rcx, r14
+load64 rdx, [rcx + 24]
+load64 rcx, [rcx + 16]
+call source_trim_span
+store64 [rsp + 32], rcx
+store64 [rsp + 40], rdx
+cmp rdx, 0
+je cet_unknown
+load8 rax, [rcx]
+cmp rax, 45
+je cet_number
+cmp rax, 48
+jb cet_name
+cmp rax, 58
+jb cet_number
+cet_name:
+; Booleens : identite bool, jamais conversion implicite vers u8.
+load64 rcx, [rsp + 32]
+load64 rdx, [rsp + 40]
+cmp rdx, 4
+jne cet_false
+load32 rax, [rcx]
+cmp rax, 0x65757274
+je cet_boolean
+jmp cet_parameter_lookup
+cet_false:
+cmp rdx, 5
+jne cet_parameter_lookup
+load32 rax, [rcx]
+cmp rax, 0x736C6166
+jne cet_parameter_lookup
+load8 rax, [rcx + 4]
+cmp rax, 101
+jne cet_parameter_lookup
+cet_boolean:
+load64 rax, [rsp + 56]
+cmp rax, 9
+jne cet_mismatch
+mov rdx, 9
+mov rax, 0
+jmp cet_return
+cet_parameter_lookup:
+load64 rcx, [rsp + 72]
+load64 rdx, [rsp + 32]
+load64 r8, [rsp + 40]
+load64 r9, [rsp + 48]
+call lookup_local_type
+cmp rax, 515
+je cet_parameters_only
+cmp rax, 0
+jne cet_return
+load64 rax, [rsp + 56]
+cmp rdx, rax
+jne cet_mismatch
+mov rax, 0
+jmp cet_return
+cet_parameters_only:
+load64 rcx, [rsp + 48]
+lea rdx, [rip + name_parameters]
+mov r8, 10
+call count_named_children
+cmp rax, 1
+jne cet_unknown
+mov rbx, rdx
+mov rsi, 0
+cet_param:
+cmp rsi, r15
+jae cet_unknown
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+load64 rax, [rdi + 32]
+cmp rax, rbx
+jne cet_param_next
+mov rcx, rdi
+lea rdx, [rip + name_parameter]
+mov r8, 9
+call ast_name_equals
+cmp rax, 1
+jne cet_param_next
+load64 r9, [rdi + 40]
+cet_param_name:
+cmp r9, r15
+jae cet_unknown
+mov r8, r9
+shl r8, 6
+add r8, r14
+load64 rax, [r8 + 56]
+cmp rax, 1
+je cet_compare_name
+load64 r9, [r8 + 48]
+jmp cet_param_name
+cet_compare_name:
+load64 rcx, [r8 + 16]
+load64 rdx, [r8 + 24]
+call source_trim_span
+load64 rax, [rsp + 40]
+cmp rax, rdx
+jne cet_param_next
+load64 r9, [rsp + 32]
+mov r8, 0
+cet_name_char:
+cmp r8, rdx
+jae cet_variable_type
+load8 r10, [rcx + r8 * 1]
+load8 r11, [r9 + r8 * 1]
+cmp r10, r11
+jne cet_param_next
+add r8, 1
+jmp cet_name_char
+cet_variable_type:
+mov rcx, rsi
+lea rdx, [rip + name_type]
+mov r8, 4
+call count_named_children
+cmp rax, 1
+jne cet_unknown
+mov rcx, rdx
+call resolve_ast_type
+cmp rax, 0
+jne cet_return
+load64 rax, [rsp + 56]
+cmp rdx, rax
+jne cet_mismatch
+mov rax, 0
+jmp cet_return
+cet_param_next:
+add rsi, 1
+jmp cet_param
+cet_number:
+load64 rax, [rsp + 56]
+cmp rax, 1
+jb cet_mismatch
+cmp rax, 9
+jae cet_mismatch
+sub rax, 1
+shl rax, 4
+lea r8, [rip + integer_bounds]
+add r8, rax
+load64 rcx, [rsp + 32]
+load64 rdx, [rsp + 40]
+load8 rax, [rcx]
+cmp rax, 45
+jne cet_positive
+load64 rax, [rsp + 56]
+cmp rax, 5
+jb cet_mismatch
+add rcx, 1
+sub rdx, 1
+load64 r8, [r8 + 8]
+jmp cet_parse_number
+cet_positive:
+load64 r8, [r8]
+cet_parse_number:
+call native_parse_u64
+cmp r10, 0
+jne cet_mismatch
+load64 rdx, [rsp + 56]
+mov rax, 0
+jmp cet_return
+cet_mismatch:
+mov rax, 514
+jmp cet_return
+cet_unknown:
+mov rax, 515
+cet_return:
+add rsp, 80
+pop rdi
+pop rsi
+pop rbx
+ret
+validate_callable_names:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 112
+mov r12, rcx
+mov r13, rdx
+load64 r14, [r8 + 8]
+load64 r15, [r8 + 24]
+lea rax, [rip + callable_count]
+mov rdx, 0
+store64 [rax], rdx
+mov rsi, 0
+vcn_def_next:
+cmp rsi, r15
+jae vcn_calls_begin
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+mov rcx, rdi
+lea rdx, [rip + name_function]
+mov r8, 8
+call ast_name_equals
+cmp rax, 1
+jne vcn_def_advance
+load64 rbx, [rdi + 40]
+mov rax, 0
+store64 [rsp + 56], rax
+vcn_name_child:
+cmp rbx, r15
+jae vcn_shape
+mov rdi, rbx
+shl rdi, 6
+add rdi, r14
+load64 rax, [rdi + 56]
+cmp rax, 1
+jne vcn_name_advance
+load64 rax, [rsp + 56]
+cmp rax, 1
+je vcn_name_found
+; Les tokens litteraux fn/export ont aussi kind IDENT dans cet AST concret.
+load64 rcx, [rdi + 16]
+load64 rdx, [rdi + 24]
+call source_trim_span
+cmp rdx, 2
+jne vcn_name_advance
+load16 rax, [rcx]
+cmp rax, 0x6E66
+jne vcn_name_advance
+mov rax, 1
+store64 [rsp + 56], rax
+vcn_name_advance:
+load64 rbx, [rdi + 48]
+jmp vcn_name_child
+vcn_name_found:
+load64 rcx, [rdi + 16]
+load64 rdx, [rdi + 24]
+call source_trim_span
+store64 [rsp + 32], rcx
+store64 [rsp + 40], rdx
+call lookup_callable
+cmp rax, -1
+jne vcn_duplicate
+mov rcx, rsi
+lea rdx, [rip + name_parameters]
+mov r8, 10
+call count_named_children
+cmp rax, 1
+jne vcn_shape
+mov rcx, rdx
+lea rdx, [rip + name_parameter]
+mov r8, 9
+call count_named_children
+store64 [rsp + 48], rax
+lea r8, [rip + callable_count]
+load64 rax, [r8]
+cmp rax, 64
+jae vcn_capacity
+mov rdx, rax
+add rdx, 1
+store64 [r8], rdx
+shl rax, 5
+lea r8, [rip + callable_table]
+add r8, rax
+load64 rax, [rsp + 32]
+store64 [r8], rax
+load64 rax, [rsp + 40]
+store64 [r8 + 8], rax
+store64 [r8 + 16], rsi
+load64 rax, [rsp + 48]
+store64 [r8 + 24], rax
+vcn_def_advance:
+add rsi, 1
+jmp vcn_def_next
+vcn_calls_begin:
+mov rsi, 0
+vcn_call_next:
+cmp rsi, r15
+jae vcn_ok
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+mov rcx, rdi
+lea rdx, [rip + name_call]
+mov r8, 4
+call ast_name_equals
+cmp rax, 1
+jne vcn_call_advance
+load64 rbx, [rdi + 40]
+vcn_target_child:
+cmp rbx, r15
+jae vcn_shape
+mov rdi, rbx
+shl rdi, 6
+add rdi, r14
+mov rcx, rdi
+lea rdx, [rip + name_qualified]
+mov r8, 9
+call ast_name_equals
+cmp rax, 1
+je vcn_target_found
+load64 rbx, [rdi + 48]
+jmp vcn_target_child
+vcn_target_found:
+load64 rcx, [rdi + 16]
+load64 rdx, [rdi + 24]
+call source_trim_span
+call lookup_callable
+cmp rax, -1
+je vcn_unknown
+shl rax, 5
+lea r8, [rip + callable_table]
+add r8, rax
+load64 rax, [r8 + 24]
+store64 [rsp + 48], rax
+load64 rax, [r8 + 16]
+store64 [rsp + 56], rax
+; Les arguments explicites sont les enfants expression du noeud call.
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+load64 rbx, [rdi + 40]
+vcn_parenthesis:
+cmp rbx, -1
+je vcn_call_advance
+cmp rbx, r15
+jae vcn_shape
+mov rdi, rbx
+shl rdi, 6
+add rdi, r14
+load64 rax, [rdi]
+cmp rax, 0
+jne vcn_paren_next
+load64 rcx, [rdi + 16]
+load64 rdx, [rdi + 24]
+sub rdx, rcx
+cmp rdx, 1
+jne vcn_paren_next
+load8 rax, [r12 + rcx * 1]
+cmp rax, 40
+je vcn_arguments
+vcn_paren_next:
+load64 rbx, [rdi + 48]
+jmp vcn_parenthesis
+vcn_arguments:
+mov rcx, rsi
+lea rdx, [rip + name_expression]
+mov r8, 10
+call count_named_children
+load64 rdx, [rsp + 48]
+cmp rax, rdx
+jne vcn_arity
+load64 rcx, [rsp + 56]
+lea rdx, [rip + name_parameters]
+mov r8, 10
+call count_named_children
+cmp rax, 1
+jne vcn_shape
+store64 [rsp + 64], rdx
+mov rcx, rsi
+call enclosing_function
+cmp rax, -1
+je vcn_shape
+store64 [rsp + 72], rax
+mov rax, 0
+store64 [rsp + 80], rax
+store64 [rsp + 88], rax
+store64 [rsp + 96], rax
+vcn_pair_next:
+load64 rax, [rsp + 96]
+load64 rdx, [rsp + 48]
+cmp rax, rdx
+jae vcn_call_advance
+mov rcx, rsi
+lea rdx, [rip + name_expression]
+mov r8, 10
+load64 r9, [rsp + 80]
+call next_named_child
+cmp rax, -1
+je vcn_shape
+store64 [rsp + 104], rax
+add rax, 1
+store64 [rsp + 80], rax
+load64 rcx, [rsp + 64]
+lea rdx, [rip + name_parameter]
+mov r8, 9
+load64 r9, [rsp + 88]
+call next_named_child
+cmp rax, -1
+je vcn_shape
+mov rcx, rax
+add rax, 1
+store64 [rsp + 88], rax
+lea rdx, [rip + name_type]
+mov r8, 4
+call count_named_children
+cmp rax, 1
+jne vcn_shape
+mov rcx, rdx
+call resolve_ast_type
+cmp rax, 0
+jne vcn_return
+mov r8, rdx
+load64 rcx, [rsp + 104]
+load64 rdx, [rsp + 72]
+call check_expression_type
+cmp rax, 0
+jne vcn_return
+load64 rax, [rsp + 96]
+add rax, 1
+store64 [rsp + 96], rax
+jmp vcn_pair_next
+vcn_call_advance:
+add rsi, 1
+jmp vcn_call_next
+vcn_ok:
+mov rax, 0
+jmp vcn_return
+vcn_duplicate:
+mov rax, 509
+jmp vcn_return
+vcn_unknown:
+mov rax, 510
+jmp vcn_return
+vcn_arity:
+mov rax, 511
+jmp vcn_return
+vcn_capacity:
+mov rax, 505
+jmp vcn_return
+vcn_shape:
+mov rax, 508
+vcn_return:
+add rsp, 112
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+; Parent index + production name -> count and last matching node index.
+next_named_child:
+push rbx
+push rsi
+sub rsp, 56
+mov rbx, rcx
+mov rsi, r9
+store64 [rsp + 32], rdx
+store64 [rsp + 40], r8
+nnc_next:
+cmp rsi, r15
+jae nnc_absent
+mov rcx, rsi
+shl rcx, 6
+add rcx, r14
+load64 rax, [rcx + 32]
+cmp rax, rbx
+jne nnc_advance
+load64 rdx, [rsp + 32]
+load64 r8, [rsp + 40]
+call ast_name_equals
+cmp rax, 1
+je nnc_found
+nnc_advance:
+add rsi, 1
+jmp nnc_next
+nnc_found:
+mov rax, rsi
+jmp nnc_return
+nnc_absent:
+mov rax, -1
+nnc_return:
+add rsp, 56
+pop rsi
+pop rbx
+ret
+count_named_children:
+push rbx
+push rsi
+push rdi
+sub rsp, 64
+mov rbx, rcx
+store64 [rsp + 32], rdx
+store64 [rsp + 40], r8
+mov rax, -1
+store64 [rsp + 48], rax
+mov rsi, 0
+mov rdi, 0
+cnc_next:
+cmp rsi, r15
+jae cnc_done
+mov rcx, rsi
+shl rcx, 6
+add rcx, r14
+load64 rax, [rcx + 32]
+cmp rax, rbx
+jne cnc_advance
+load64 rdx, [rsp + 32]
+load64 r8, [rsp + 40]
+call ast_name_equals
+cmp rax, 1
+jne cnc_advance
+add rdi, 1
+store64 [rsp + 48], rsi
+cnc_advance:
+add rsi, 1
+jmp cnc_next
+cnc_done:
+mov rax, rdi
+load64 rdx, [rsp + 48]
+add rsp, 64
+pop rdi
+pop rsi
+pop rbx
+ret
+lookup_callable:
+push rbx
+push rsi
+push rdi
+sub rsp, 32
+mov rbx, rcx
+mov rsi, rdx
+mov rdi, 0
+lea r8, [rip + callable_count]
+load64 r8, [r8]
+lea r9, [rip + callable_table]
+lc_next:
+cmp rdi, r8
+jae lc_absent
+load64 rax, [r9 + 8]
+cmp rax, rsi
+jne lc_other
+load64 rdx, [r9]
+mov rcx, 0
+lc_char:
+cmp rcx, rsi
+jae lc_found
+load8 r10, [rbx + rcx * 1]
+load8 r11, [rdx + rcx * 1]
+cmp r10, r11
+jne lc_other
+add rcx, 1
+jmp lc_char
+lc_other:
+add rdi, 1
+add r9, 32
+jmp lc_next
+lc_found:
+mov rax, rdi
+jmp lc_return
+lc_absent:
+mov rax, -1
+lc_return:
+add rsp, 32
+pop rdi
+pop rsi
+pop rbx
+ret
+validate_ast_signature:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 112
+mov r12, rcx
+mov r13, rdx
+load64 r14, [r8 + 8]
+load64 r15, [r8 + 24]
+call validate_target
+cmp rax, 0
+jne vas_return
+mov rax, 0
+lea rdx, [rip + type_count]
+store64 [rdx], rax
+lea rdx, [rip + type_depth]
+store64 [rdx], rax
+store64 [rsp + 32], rax
+mov rsi, 0
+vas_find:
+cmp rsi, r15
+jae vas_found
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+load64 rax, [rdi + 16]
+load64 rdx, [rdi + 24]
+cmp rdx, rax
+jb vas_shape
+cmp r13, rdx
+jb vas_shape
+mov rcx, rdi
+lea rdx, [rip + name_parameter]
+mov r8, 9
+call ast_name_equals
+cmp rax, 1
+jne vas_find_next
+load64 rax, [rsp + 32]
+cmp rax, 64
+jae vas_capacity
+lea r8, [rip + parameter_indices]
+store64 [r8 + rax * 8], rsi
+add rax, 1
+store64 [rsp + 32], rax
+mov rbx, rsi
+vas_find_next:
+add rsi, 1
+jmp vas_find
+vas_found:
+mov rax, 0
+store64 [rsp + 80], rax
+store64 [rsp + 88], rax
+mov rax, -1
+store64 [rsp + 96], rax
+vas_parameter_next:
+load64 rax, [rsp + 80]
+load64 rdx, [rsp + 32]
+cmp rax, rdx
+jae vas_success
+lea r8, [rip + parameter_indices]
+load64 rbx, [r8 + rax * 8]
+mov rax, rbx
+shl rax, 6
+add rax, r14
+load64 rax, [rax + 32]
+load64 rdx, [rsp + 96]
+cmp rax, rdx
+je vas_same_signature
+; La liste parameters est distincte pour chaque fonction : pas de conflit interfonction.
+store64 [rsp + 96], rax
+mov rax, 0
+store64 [rsp + 88], rax
+vas_same_signature:
+mov rcx, rbx
+call parameter_name_span
+cmp rax, 0
+je vas_shape
+store64 [rsp + 104], rax
+store64 [rsp + 64], rdx
+load64 rsi, [rsp + 80]
+load64 rax, [rsp + 88]
+sub rsi, rax
+vas_prior_name:
+load64 rax, [rsp + 80]
+cmp rsi, rax
+jae vas_name_unique
+lea r8, [rip + parameter_indices]
+load64 rcx, [r8 + rsi * 8]
+call parameter_name_span
+mov rcx, rax
+load64 r8, [rsp + 104]
+load64 r9, [rsp + 64]
+call equal_name_spans
+cmp rax, 1
+je vas_duplicate_name
+add rsi, 1
+jmp vas_prior_name
+vas_name_unique:
+mov rax, 0
+store64 [rsp + 40], rax
+store64 [rsp + 72], rax
+mov rsi, 0
+vas_type_next:
+cmp rsi, r15
+jae vas_type_done
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+load64 rax, [rdi + 32]
+cmp rax, rbx
+jne vas_type_advance
+mov rcx, rdi
+lea rdx, [rip + name_type]
+mov r8, 4
+call ast_name_equals
+cmp rax, 1
+jne vas_direction
+load64 rcx, [rdi + 16]
+load64 rdx, [rdi + 24]
+store64 [rsp + 48], rdx
+mov rcx, rsi
+call resolve_ast_type
+cmp rax, 0
+jne vas_return
+store64 [rsp + 40], r8
+store64 [rsp + 56], rdx
+jmp vas_type_advance
+vas_direction:
+mov rcx, rdi
+lea rdx, [rip + name_direction]
+mov r8, 9
+call ast_name_equals
+cmp rax, 1
+jne vas_type_advance
+load64 rcx, [rdi + 16]
+load64 rdx, [rdi + 24]
+call source_trim_span
+mov rax, 1
+cmp rdx, 2
+je vas_save_direction
+mov rax, 2
+cmp rdx, 3
+je vas_save_direction
+mov rax, 3
+cmp rdx, 5
+jne vas_shape
+vas_save_direction:
+store64 [rsp + 72], rax
+vas_type_advance:
+add rsi, 1
+jmp vas_type_next
+vas_type_done:
+load64 rax, [rsp + 40]
+cmp rax, 0
+je vas_bad_width
+load64 rax, [rsp + 72]
+cmp rax, 0
+je vas_shape
+mov rsi, 0
+vas_reg_next:
+cmp rsi, r15
+jae vas_scope
+mov rdi, rsi
+shl rdi, 6
+add rdi, r14
+load64 rax, [rdi + 32]
+cmp rax, rbx
+jne vas_reg_advance
+load64 rax, [rdi + 56]
+cmp rax, 1
+jne vas_reg_advance
+load64 rcx, [rdi + 16]
+load64 rax, [rsp + 48]
+cmp rcx, rax
+jb vas_reg_advance
+load64 rdx, [rdi + 24]
+call source_trim_span
+call resolve_gpr
+cmp rax, 0
+jne vas_return
+lea rcx, [rip + resolved_binding]
+load64 rax, [rsp + 88]
+imul rax, rax, 40
+add rcx, rax
+load64 rax, [rsp + 40]
+store64 [rcx], rax
+store64 [rcx + 8], r8
+store64 [rcx + 16], rdx
+load64 rax, [rsp + 72]
+store64 [rcx + 24], rax
+load64 rax, [rdi + 16]
+store64 [rcx + 32], rax
+load64 rax, [rsp + 56]
+load64 rdx, [rsp + 88]
+lea r8, [rip + resolved_type_ids]
+store64 [r8 + rdx * 8], rax
+load64 rdx, [rsp + 88]
+add rdx, 1
+store64 [rsp + 88], rdx
+lea rcx, [rip + resolved_binding]
+call check_bindings
+cmp rax, 0
+jne vas_return
+load64 rax, [rsp + 80]
+add rax, 1
+store64 [rsp + 80], rax
+jmp vas_parameter_next
+vas_reg_advance:
+add rsi, 1
+jmp vas_reg_next
+vas_bad_width:
+mov rax, 501
+jmp vas_return
+vas_shape:
+mov rax, 508
+jmp vas_return
+vas_scope:
+; Liaison explicite requise dans cette phase, aucune allocation implicite.
+mov rax, 507
+jmp vas_return
+vas_capacity:
+mov rax, 505
+jmp vas_return
+vas_duplicate_name:
+mov rax, 518
+jmp vas_return
+vas_success:
+mov rax, 0
+vas_return:
+add rsp, 112
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+; Premier IDENT direct du parametre : son nom, pas le registre apres @.
+validate_target:
+sub rsp, 40
+lea rax, [rip + module_target]
+mov rdx, 0
+store64 [rax], rdx
+mov rcx, 0
+lea rdx, [rip + name_dashed]
+mov r8, 6
+call count_named_children
+cmp rax, 1
+jne vt_bad
+cmp rdx, r15
+jae vt_bad
+shl rdx, 6
+add rdx, r14
+load64 rcx, [rdx + 16]
+load64 rdx, [rdx + 24]
+cmp rdx, rcx
+jb vt_bad
+cmp r13, rdx
+jb vt_bad
+call source_trim_span
+lea r8, [rip + target_none]
+lea r9, [rip + target_none_end]
+sub r9, r8
+call equal_name_spans
+cmp rax, 1
+je vt_none
+lea r8, [rip + target_uefi]
+lea r9, [rip + target_uefi_end]
+sub r9, r8
+call equal_name_spans
+cmp rax, 1
+jne vt_bad
+mov rax, 2
+jmp vt_store
+vt_none:
+mov rax, 1
+vt_store:
+lea rcx, [rip + module_target]
+store64 [rcx], rax
+mov rax, 0
+jmp vt_return
+vt_bad:
+mov rax, 520
+vt_return:
+add rsp, 40
+ret
+parameter_name_span:
+shl rcx, 6
+add rcx, r14
+load64 r9, [rcx + 40]
+pns_next:
+cmp r9, r15
+jae pns_bad
+mov r8, r9
+shl r8, 6
+add r8, r14
+load64 rax, [r8 + 56]
+cmp rax, 1
+je pns_found
+load64 r9, [r8 + 48]
+jmp pns_next
+pns_found:
+load64 rax, [r8 + 16]
+load64 rdx, [r8 + 24]
+sub rdx, rax
+add rax, r12
+ret
+pns_bad:
+mov rax, 0
+mov rdx, 0
+ret
+equal_name_spans:
+cmp rdx, r9
+jne ens_no
+mov rax, 0
+ens_next:
+cmp rax, rdx
+jae ens_yes
+load8 r10, [rcx + rax * 1]
+load8 r11, [r8 + rax * 1]
+cmp r10, r11
+jne ens_no
+add rax, 1
+jmp ens_next
+ens_yes:
+mov rax, 1
+ret
+ens_no:
+mov rax, 0
+ret
+; Type AST -> identite canonique privee. Un pointeur conserve espace et type pointe.
+resolve_ast_type:
+push rbx
+push rsi
+push rdi
+sub rsp, 64
+mov rbx, rcx
+lea rax, [rip + type_depth]
+load64 rdx, [rax]
+cmp rdx, 32
+jae rat_depth_bad
+add rdx, 1
+store64 [rax], rdx
+mov rdi, rbx
+shl rdi, 6
+add rdi, r14
+load64 rcx, [rdi + 16]
+load64 rdx, [rdi + 24]
+call source_trim_span
+call resolve_scalar_type
+cmp rax, 0
+je rat_return
+mov rcx, rbx
+lea rdx, [rip + name_pointer]
+mov r8, 7
+call count_named_children
+cmp rax, 1
+jne rat_unknown
+mov rsi, rdx
+mov rcx, rsi
+lea rdx, [rip + name_address_space]
+mov r8, 13
+call count_named_children
+cmp rax, 1
+jne rat_unknown
+shl rdx, 6
+add rdx, r14
+load64 rcx, [rdx + 16]
+load64 rdx, [rdx + 24]
+call source_trim_span
+lea r8, [rip + address_spaces]
+call rt_next
+cmp rax, 0
+jne rat_return
+store64 [rsp + 32], rdx
+mov rcx, rsi
+lea rdx, [rip + name_type]
+mov r8, 4
+call count_named_children
+cmp rax, 1
+jne rat_unknown
+mov rcx, rdx
+call resolve_ast_type
+cmp rax, 0
+jne rat_return
+store64 [rsp + 40], rdx
+lea r8, [rip + type_count]
+load64 r9, [r8]
+lea r10, [rip + composite_types]
+mov r11, 0
+rat_intern:
+cmp r11, r9
+jae rat_insert
+load64 rax, [r10]
+load64 rdx, [rsp + 32]
+cmp rax, rdx
+jne rat_other
+load64 rax, [r10 + 8]
+load64 rdx, [rsp + 40]
+cmp rax, rdx
+je rat_found
+rat_other:
+add r11, 1
+add r10, 32
+jmp rat_intern
+rat_insert:
+cmp r9, 32
+jae rat_capacity
+load64 rax, [rsp + 32]
+store64 [r10], rax
+load64 rax, [rsp + 40]
+store64 [r10 + 8], rax
+mov rax, 1
+store64 [r10 + 16], rax
+mov rax, 0
+store64 [r10 + 24], rax
+add r9, 1
+store64 [r8], r9
+rat_found:
+lea rdx, [r11 + 16]
+mov r8, 64
+mov rax, 0
+jmp rat_return
+rat_unknown:
+mov rax, 506
+jmp rat_return
+rat_capacity:
+mov rax, 505
+rat_return:
+lea r10, [rip + type_depth]
+load64 r11, [r10]
+sub r11, 1
+store64 [r10], r11
+jmp rat_restore
+rat_depth_bad:
+mov rax, 505
+rat_restore:
+add rsp, 64
+pop rdi
+pop rsi
+pop rbx
+ret
+ast_name_equals:
+load64 rax, [rcx + 8]
+cmp rax, r8
+jne ane_no
+load64 r9, [rcx]
+cmp r9, 0
+je ane_no
+load64 rax, [rbp]
+cmp r9, rax
+jb ane_no
+load64 r10, [rbp + 8]
+add rax, r10
+lea r11, [r9 + r8 * 1]
+cmp r11, r9
+jb ane_no
+cmp rax, r11
+jb ane_no
+mov r10, 0
+ane_loop:
+cmp r10, r8
+jae ane_yes
+load8 rax, [r9 + r10 * 1]
+load8 r11, [rdx + r10 * 1]
+cmp rax, r11
+jne ane_no
+add r10, 1
+jmp ane_loop
+ane_yes:
+mov rax, 1
+ret
+ane_no:
+mov rax, 0
+ret
+source_trim_span:
+; Bornes des nodes deja verifiees. Les espaces appartiennent parfois au node.
+sts_start:
+cmp rcx, rdx
+jae sts_done
+load8 rax, [r12 + rcx * 1]
+cmp rax, 32
+je sts_skip
+cmp rax, 9
+je sts_skip
+cmp rax, 10
+je sts_skip
+cmp rax, 13
+jne sts_end
+sts_skip:
+add rcx, 1
+jmp sts_start
+sts_end:
+cmp rcx, rdx
+jae sts_done
+lea r10, [rdx - 1]
+load8 rax, [r12 + r10 * 1]
+cmp rax, 32
+je sts_back
+cmp rax, 9
+je sts_back
+cmp rax, 10
+je sts_back
+cmp rax, 13
+jne sts_done
+sts_back:
+sub rdx, 1
+jmp sts_end
+sts_done:
+sub rdx, rcx
+add rcx, r12
+ret
+check_bindings:
+; Table bornee fournie par le resolver; aucune ecriture dans les entrees.
+cmp rdx, 65
+jae cb_capacity
+mov r8, rcx
+mov r9, rdx
+mov r10, 0
+cb_next:
+cmp r10, r9
+jae cb_ok
+load64 rax, [rcx]
+cmp rax, 8
+je cb_width
+cmp rax, 16
+je cb_width
+cmp rax, 32
+je cb_width
+cmp rax, 64
+jne cb_bad_width
+cb_width:
+load64 rdx, [rcx + 8]
+cmp rax, rdx
+jne cb_bad_width
+load64 r11, [rcx + 16]
+cmp r11, 16
+jae cb_bad_register
+load64 rax, [rcx + 24]
+cmp rax, 1
+jb cb_bad_direction
+cmp rax, 4
+jae cb_bad_direction
+; Les alias partagent le meme numero de registre physique, quelle que soit largeur.
+mov rdx, 0
+cb_prior:
+cmp rdx, r10
+jae cb_advance
+mov rax, rdx
+imul rax, rax, 40
+add rax, r8
+load64 rax, [rax + 16]
+cmp rax, r11
+je cb_alias
+add rdx, 1
+jmp cb_prior
+cb_advance:
+add rcx, 40
+add r10, 1
+jmp cb_next
+cb_ok:
+mov rax, 0
+mov rdx, -1
+ret
+cb_bad_width:
+mov rax, 501
+jmp cb_error
+cb_bad_register:
+mov rax, 502
+jmp cb_error
+cb_bad_direction:
+mov rax, 503
+jmp cb_error
+cb_alias:
+mov rax, 504
+cb_error:
+mov rdx, r10
+ret
+cb_capacity:
+mov rax, 505
+mov rdx, -1
+ret
+; Span de nom de type -> code, identite canonique, largeur machine.
+resolve_scalar_type:
+lea r8, [rip + scalar_types]
+rt_next:
+load64 rax, [r8 + 8]
+cmp rax, 0
+je rt_unknown
+cmp rax, rdx
+jne rt_other
+load64 r9, [r8]
+mov r10, 0
+rt_char:
+cmp r10, rdx
+jae rt_found
+load8 rax, [rcx + r10 * 1]
+load8 r11, [r9 + r10 * 1]
+cmp rax, r11
+jne rt_other
+add r10, 1
+jmp rt_char
+rt_other:
+add r8, 32
+jmp rt_next
+rt_found:
+load64 rdx, [r8 + 16]
+load64 r8, [r8 + 24]
+mov rax, 0
+ret
+rt_unknown:
+load64 rax, [r8 + 16]
+mov rdx, 0
+mov r8, 0
+ret
+resolve_gpr:
+lea r8, [rip + gpr_names]
+jmp rt_next
+native_parse_u64:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rsi, rcx
+mov rdi, rdx
+mov r12, 0
+mov r15, 0
+cmp rdi, 0
+je np_bad
+load8 rax, [rsi]
+cmp rax, 48
+jne np_decimal
+cmp rdi, 1
+je np_ok
+mov r15, 1
+load8 rax, [rsi + 1]
+cmp rax, 120
+jne np_bad
+mov r15, 2
+cmp r15, rdi
+jae np_bad
+mov rbx, 16
+mov r13, r8
+shr r13, 4
+mov r14, r8
+and r14, 15
+jmp np_digit
+np_decimal:
+mov rbx, 10
+mov r13, 0
+mov r14, 0
+mov r9, 64
+; Division binaire par 10 (pas de DIV S0).
+; Reste <=19; jamais de shift 64.
+np_divide:
+mov rax, r8
+shr rax, 63
+shl r8, 1
+shl r13, 1
+shl r14, 1
+or r14, rax
+cmp r14, 10
+jb np_divide_next
+sub r14, 10
+or r13, 1
+np_divide_next:
+sub r9, 1
+jne np_divide
+np_digit:
+cmp r15, rdi
+jae np_ok
+load8 rax, [rsi + r15 * 1]
+; Separateurs deja valides par le lexer v0; ne changent pas la valeur.
+cmp rax, 95
+jne np_real_digit
+add r15, 1
+jmp np_digit
+np_real_digit:
+cmp rbx, 16
+je np_hex
+sub rax, 48
+cmp rax, 10
+jae np_bad
+jmp np_bound
+np_hex:
+mov rcx, rax
+sub rax, 48
+cmp rax, 10
+jb np_bound
+mov rax, rcx
+or rax, 32
+sub rax, 97
+cmp rax, 6
+jae np_bad
+add rax, 10
+np_bound:
+; Verifier borne/base avant multiplication.
+cmp r12, r13
+jb np_accumulate
+cmp r12, r13
+jne np_bad
+cmp r14, rax
+jb np_bad
+np_accumulate:
+cmp rbx, 16
+je np_accumulate_hex
+imul r12, r12, 10
+jmp np_accumulate_digit
+np_accumulate_hex:
+shl r12, 4
+np_accumulate_digit:
+add r12, rax
+add r15, 1
+jmp np_digit
+np_ok:
+mov rax, r12
+mov r10, 0
+mov r11, 0
+jmp np_return
+np_bad:
+mov rax, 0
+mov r10, 102
+mov r11, r15
+np_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+section .rdata r
+semantic_exports:
+ascii "NV0S0001"
+qword 64, 1, 63
+qword addr(validate_module), addr(check_bindings)
+qword addr(resolve_scalar_type), addr(resolve_gpr)
+name_dashed:
+ascii "dashed"
+target_none:
+ascii "x86_64-nexora-none"
+target_none_end:
+target_uefi:
+ascii "x86_64-nexora-uefi"
+target_uefi_end:
+name_statement:
+ascii "statement"
+name_runtime_if:
+ascii "runtime_if"
+name_let:
+ascii "let"
+name_function_block:
+ascii "function_block"
+name_return:
+ascii "return"
+align 8
+integer_bounds:
+qword 255, 0
+qword 65535, 0
+qword 4294967295, 0
+qword 18446744073709551615, 0
+qword 127, 128
+qword 32767, 32768
+qword 2147483647, 2147483648
+qword 9223372036854775807, 9223372036854775808
+good_param:
+qword 64, 64, 7, 1, 23
+bad_width:
+qword 64, 32, 7, 1, 23
+bad_type:
+qword 7, 7, 7, 1, 23
+bad_register:
+qword 64, 64, 16, 1, 23
+bad_direction:
+qword 64, 64, 7, 0, 23
+aliased_params:
+qword 64, 64, 0, 1, 23
+qword 32, 32, 0, 2, 47
+different_params:
+qword 8, 8, 0, 1, 23
+qword 16, 16, 1, 2, 47
+qword 32, 32, 2, 3, 65
+qword 64, 64, 3, 1, 80
+bad_second:
+qword 64, 64, 7, 1, 23
+qword 64, 32, 6, 1, 47
+bad_dir_high:
+qword 64, 64, 7, 4, 23
+cases:
+qword addr(good_param), 1, 0, -1
+qword addr(bad_width), 1, 501, 0
+qword addr(bad_type), 1, 501, 0
+qword addr(bad_register), 1, 502, 0
+qword addr(bad_direction), 1, 503, 0
+qword addr(aliased_params), 2, 504, 1
+qword addr(different_params), 4, 0, -1
+qword addr(bad_second), 2, 501, 1
+qword 0, 0, 0, -1
+qword addr(bad_dir_high), 1, 503, 0
+qword 0, 65, 505, -1
+type_u8:
+ascii "u8"
+type_u16:
+ascii "u16"
+type_u32:
+ascii "u32"
+type_u64:
+ascii "u64"
+type_i8:
+ascii "i8"
+type_i16:
+ascii "i16"
+type_i32:
+ascii "i32"
+type_i64:
+ascii "i64"
+type_bool:
+ascii "bool"
+type_never:
+ascii "never"
+type_upper:
+ascii "U64"
+type_suffix:
+ascii "u64x"
+align 8
+; Identites privees distinctes : u8 et bool ne deviennent pas interchangeables.
+scalar_types:
+qword addr(type_u8), 2, 1, 8
+qword addr(type_u16), 3, 2, 16
+qword addr(type_u32), 3, 3, 32
+qword addr(type_u64), 3, 4, 64
+qword addr(type_i8), 2, 5, 8
+qword addr(type_i16), 3, 6, 16
+qword addr(type_i32), 3, 7, 32
+qword addr(type_i64), 3, 8, 64
+qword addr(type_bool), 4, 9, 8
+qword addr(type_never), 5, 10, 0
+qword 0, 0, 506, 0
+type_cases:
+qword addr(type_u8), 2, 0, 1, 8
+qword addr(type_u16), 3, 0, 2, 16
+qword addr(type_u32), 3, 0, 3, 32
+qword addr(type_u64), 3, 0, 4, 64
+qword addr(type_i8), 2, 0, 5, 8
+qword addr(type_i16), 3, 0, 6, 16
+qword addr(type_i32), 3, 0, 7, 32
+qword addr(type_i64), 3, 0, 8, 64
+qword addr(type_bool), 4, 0, 9, 8
+qword addr(type_never), 5, 0, 10, 0
+qword addr(type_upper), 3, 506, 0, 0
+qword addr(type_suffix), 4, 506, 0, 0
+qword 0, 0, 506, 0, 0
+reg_test_0:
+ascii "rax"
+reg_test_1:
+ascii "eax"
+reg_test_2:
+ascii "ax"
+reg_test_3:
+ascii "al"
+reg_test_4:
+ascii "rcx"
+reg_test_5:
+ascii "spl"
+reg_test_6:
+ascii "dil"
+reg_test_7:
+ascii "r8"
+reg_test_8:
+ascii "r8d"
+reg_test_9:
+ascii "r8w"
+reg_test_10:
+ascii "r15b"
+reg_test_11:
+ascii "r15"
+reg_test_12:
+ascii "RAX"
+reg_test_13:
+ascii "raxq"
+align 8
+register_cases:
+qword addr(reg_test_0), 3, 0, 0, 64
+qword addr(reg_test_1), 3, 0, 0, 32
+qword addr(reg_test_2), 2, 0, 0, 16
+qword addr(reg_test_3), 2, 0, 0, 8
+qword addr(reg_test_4), 3, 0, 1, 64
+qword addr(reg_test_5), 3, 0, 4, 8
+qword addr(reg_test_6), 3, 0, 7, 8
+qword addr(reg_test_7), 2, 0, 8, 64
+qword addr(reg_test_8), 3, 0, 8, 32
+qword addr(reg_test_9), 3, 0, 8, 16
+qword addr(reg_test_10), 4, 0, 15, 8
+qword addr(reg_test_11), 3, 0, 15, 64
+qword addr(reg_test_12), 3, 502, 0, 0
+qword addr(reg_test_13), 4, 502, 0, 0
+gpr_name_0:
+ascii "rax"
+gpr_name_1:
+ascii "eax"
+gpr_name_2:
+ascii "ax"
+gpr_name_3:
+ascii "al"
+gpr_name_4:
+ascii "rcx"
+gpr_name_5:
+ascii "ecx"
+gpr_name_6:
+ascii "cx"
+gpr_name_7:
+ascii "cl"
+gpr_name_8:
+ascii "rdx"
+gpr_name_9:
+ascii "edx"
+gpr_name_10:
+ascii "dx"
+gpr_name_11:
+ascii "dl"
+gpr_name_12:
+ascii "rbx"
+gpr_name_13:
+ascii "ebx"
+gpr_name_14:
+ascii "bx"
+gpr_name_15:
+ascii "bl"
+gpr_name_16:
+ascii "rsp"
+gpr_name_17:
+ascii "esp"
+gpr_name_18:
+ascii "sp"
+gpr_name_19:
+ascii "spl"
+gpr_name_20:
+ascii "rbp"
+gpr_name_21:
+ascii "ebp"
+gpr_name_22:
+ascii "bp"
+gpr_name_23:
+ascii "bpl"
+gpr_name_24:
+ascii "rsi"
+gpr_name_25:
+ascii "esi"
+gpr_name_26:
+ascii "si"
+gpr_name_27:
+ascii "sil"
+gpr_name_28:
+ascii "rdi"
+gpr_name_29:
+ascii "edi"
+gpr_name_30:
+ascii "di"
+gpr_name_31:
+ascii "dil"
+gpr_name_32:
+ascii "r8"
+gpr_name_33:
+ascii "r8d"
+gpr_name_34:
+ascii "r8w"
+gpr_name_35:
+ascii "r8b"
+gpr_name_36:
+ascii "r9"
+gpr_name_37:
+ascii "r9d"
+gpr_name_38:
+ascii "r9w"
+gpr_name_39:
+ascii "r9b"
+gpr_name_40:
+ascii "r10"
+gpr_name_41:
+ascii "r10d"
+gpr_name_42:
+ascii "r10w"
+gpr_name_43:
+ascii "r10b"
+gpr_name_44:
+ascii "r11"
+gpr_name_45:
+ascii "r11d"
+gpr_name_46:
+ascii "r11w"
+gpr_name_47:
+ascii "r11b"
+gpr_name_48:
+ascii "r12"
+gpr_name_49:
+ascii "r12d"
+gpr_name_50:
+ascii "r12w"
+gpr_name_51:
+ascii "r12b"
+gpr_name_52:
+ascii "r13"
+gpr_name_53:
+ascii "r13d"
+gpr_name_54:
+ascii "r13w"
+gpr_name_55:
+ascii "r13b"
+gpr_name_56:
+ascii "r14"
+gpr_name_57:
+ascii "r14d"
+gpr_name_58:
+ascii "r14w"
+gpr_name_59:
+ascii "r14b"
+gpr_name_60:
+ascii "r15"
+gpr_name_61:
+ascii "r15d"
+gpr_name_62:
+ascii "r15w"
+gpr_name_63:
+ascii "r15b"
+align 8
+gpr_names:
+qword addr(gpr_name_0), 3, 0, 64
+qword addr(gpr_name_1), 3, 0, 32
+qword addr(gpr_name_2), 2, 0, 16
+qword addr(gpr_name_3), 2, 0, 8
+qword addr(gpr_name_4), 3, 1, 64
+qword addr(gpr_name_5), 3, 1, 32
+qword addr(gpr_name_6), 2, 1, 16
+qword addr(gpr_name_7), 2, 1, 8
+qword addr(gpr_name_8), 3, 2, 64
+qword addr(gpr_name_9), 3, 2, 32
+qword addr(gpr_name_10), 2, 2, 16
+qword addr(gpr_name_11), 2, 2, 8
+qword addr(gpr_name_12), 3, 3, 64
+qword addr(gpr_name_13), 3, 3, 32
+qword addr(gpr_name_14), 2, 3, 16
+qword addr(gpr_name_15), 2, 3, 8
+qword addr(gpr_name_16), 3, 4, 64
+qword addr(gpr_name_17), 3, 4, 32
+qword addr(gpr_name_18), 2, 4, 16
+qword addr(gpr_name_19), 3, 4, 8
+qword addr(gpr_name_20), 3, 5, 64
+qword addr(gpr_name_21), 3, 5, 32
+qword addr(gpr_name_22), 2, 5, 16
+qword addr(gpr_name_23), 3, 5, 8
+qword addr(gpr_name_24), 3, 6, 64
+qword addr(gpr_name_25), 3, 6, 32
+qword addr(gpr_name_26), 2, 6, 16
+qword addr(gpr_name_27), 3, 6, 8
+qword addr(gpr_name_28), 3, 7, 64
+qword addr(gpr_name_29), 3, 7, 32
+qword addr(gpr_name_30), 2, 7, 16
+qword addr(gpr_name_31), 3, 7, 8
+qword addr(gpr_name_32), 2, 8, 64
+qword addr(gpr_name_33), 3, 8, 32
+qword addr(gpr_name_34), 3, 8, 16
+qword addr(gpr_name_35), 3, 8, 8
+qword addr(gpr_name_36), 2, 9, 64
+qword addr(gpr_name_37), 3, 9, 32
+qword addr(gpr_name_38), 3, 9, 16
+qword addr(gpr_name_39), 3, 9, 8
+qword addr(gpr_name_40), 3, 10, 64
+qword addr(gpr_name_41), 4, 10, 32
+qword addr(gpr_name_42), 4, 10, 16
+qword addr(gpr_name_43), 4, 10, 8
+qword addr(gpr_name_44), 3, 11, 64
+qword addr(gpr_name_45), 4, 11, 32
+qword addr(gpr_name_46), 4, 11, 16
+qword addr(gpr_name_47), 4, 11, 8
+qword addr(gpr_name_48), 3, 12, 64
+qword addr(gpr_name_49), 4, 12, 32
+qword addr(gpr_name_50), 4, 12, 16
+qword addr(gpr_name_51), 4, 12, 8
+qword addr(gpr_name_52), 3, 13, 64
+qword addr(gpr_name_53), 4, 13, 32
+qword addr(gpr_name_54), 4, 13, 16
+qword addr(gpr_name_55), 4, 13, 8
+qword addr(gpr_name_56), 3, 14, 64
+qword addr(gpr_name_57), 4, 14, 32
+qword addr(gpr_name_58), 4, 14, 16
+qword addr(gpr_name_59), 4, 14, 8
+qword addr(gpr_name_60), 3, 15, 64
+qword addr(gpr_name_61), 4, 15, 32
+qword addr(gpr_name_62), 4, 15, 16
+qword addr(gpr_name_63), 4, 15, 8
+qword 0, 0, 502, 0
+name_pointer:
+ascii "pointer"
+name_address_space:
+ascii "address_space"
+space_user:
+ascii "user"
+space_kernel:
+ascii "kernel"
+space_physical:
+ascii "physical"
+space_mmio:
+ascii "mmio"
+space_device:
+ascii "device"
+space_firmware:
+ascii "firmware"
+align 8
+address_spaces:
+qword addr(space_user), 4, 1, 0
+qword addr(space_kernel), 6, 2, 0
+qword addr(space_physical), 8, 3, 0
+qword addr(space_mmio), 4, 4, 0
+qword addr(space_device), 6, 5, 0
+qword addr(space_firmware), 8, 6, 0
+qword 0, 0, 513, 0
+name_parameters:
+ascii "parameters"
+name_expression:
+ascii "expression"
+name_function:
+ascii "function"
+name_call:
+ascii "call"
+name_qualified:
+ascii "qualified"
+name_parameter:
+ascii "parameter"
+name_type:
+ascii "type"
+name_direction:
+ascii "direction"
+align 8
+loaded_guid:
+qword 0x11D295625B1B31A1, 0x3B7269C9A0003F8E
+fs_guid:
+qword 0x11D26459964E5B22, 0x3B7269C9A000398E
+info_guid:
+qword 0x11D26D3F09576E92, 0x3B7269C9A000398E
+filename:
+utf16z "NTCORE.EFI"
+source_good:
+ascii "module demo\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+source_bad:
+ascii "module demo\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @edi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+align 8
+source_multi:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi, in y: u32 @esi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+source_alias:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi, in y: u32 @edi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+source_bad_second:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi, in y: u64 @esi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+source_empty:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { return 0; }\n}\n"
+source_functions:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi) -> u64\neffects {}\nclobbers {} { return x; }\nfn g(in y: u64 @rdi) -> u64\neffects {}\nclobbers {} { return y; }\n}\n"
+align 8
+source_duplicate:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { return 0; }\nfn f() -> u64\neffects {}\nclobbers {} { return 1; }\n}\n"
+source_forward:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { call g(); return 0; }\nfn g() -> u64\neffects {}\nclobbers {} { return 1; }\n}\n"
+source_unknown_call:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { call absent(); return 0; }\n}\n"
+align 8
+source_missing_arg:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { call g(); return 0; }\nfn g(in x: u64 @rdi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+source_extra_arg:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { call g(1); return 0; }\nfn g() -> u64\neffects {}\nclobbers {} { return 1; }\n}\n"
+source_one_arg:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { call g(1); return 0; }\nfn g(in x: u64 @rdi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+align 8
+source_pointer:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in p: ptr<kernel,u64> @rdi) -> u64\neffects {}\nclobbers {} { return 0; }\n}\n"
+source_pointer_width:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in p: ptr<kernel,u64> @edi) -> u64\neffects {}\nclobbers {} { return 0; }\n}\n"
+source_nested_pointer:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in p: ptr<user,ptr<kernel,u8>> @rdi) -> u64\neffects {}\nclobbers {} { return 0; }\n}\n"
+align 8
+source_return_width:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u32 @edi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+source_return_unknown:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { return absent; }\n}\n"
+source_return_range:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u8\neffects {}\nclobbers {} { return 256; }\n}\n"
+source_return_pointer:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in p: ptr<user,u8> @rdi) -> ptr<kernel,u8>\neffects {}\nclobbers {} { return p; }\n}\n"
+source_return_pointer_ok:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in p: ptr<user,u8> @rdi) -> ptr<user,u8>\neffects {}\nclobbers {} { return p; }\n}\n"
+align 8
+source_arg_type:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u32 @edi) -> u64\neffects {}\nclobbers {} { call g(x); return 0; }\nfn g(in y: u64 @rdi) -> u64\neffects {}\nclobbers {} { return y; }\n}\n"
+source_arg_range:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { call g(256); return 0; }\nfn g(in y: u8 @dil) -> u8\neffects {}\nclobbers {} { return y; }\n}\n"
+source_arg_ok:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u32 @edi) -> u64\neffects {}\nclobbers {} { call g(x); return 0; }\nfn g(in y: u32 @edi) -> u32\neffects {}\nclobbers {} { return y; }\n}\n"
+align 8
+source_bool_true:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> bool\neffects {}\nclobbers {} { return true; }\n}\n"
+source_bool_false:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> bool\neffects {}\nclobbers {} { return false; }\n}\n"
+source_hex_separator:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u16\neffects {}\nclobbers {} { return 0xFF_FF; }\n}\n"
+source_bool_integer:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u8\neffects {}\nclobbers {} { return true; }\n}\n"
+align 8
+source_duplicate_parameter:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi, in x: u64 @rsi) -> u64\neffects {}\nclobbers {} { return x; }\n}\n"
+align 8
+source_local:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi) -> u64\neffects {}\nclobbers {} { let y: u64 = x; return y; }\n}\n"
+source_local_range:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { let y: u8 = 256; return 0; }\n}\n"
+source_local_before:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { return y; let y: u64 = 1; }\n}\n"
+align 8
+source_local_duplicate:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { let y: u64 = 1; let y: u64 = 2; return y; }\n}\n"
+source_local_scope:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { if feature(sse2) { let y: u64 = 1; } return y; }\n}\n"
+source_local_self:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { let y: u64 = y; return y; }\n}\n"
+source_local_shadow:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { let y: u64 = 1; if feature(sse2) { let y: u8 = 2; } return y; }\n}\n"
+align 8
+source_fallthrough:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} {}\n}\n"
+source_branches_return:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { if feature(sse2) { return 1; } else { return 2; } }\n}\n"
+source_branch_fallthrough:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { if feature(sse2) { return 1; } }\n}\n"
+align 8
+source_unknown_target:
+ascii "module m\ntarget unknown-machine\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { return 0; }\n}\n"
+align 8
+source_target_uefi:
+ascii "module m\ntarget x86_64-nexora-uefi\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {} { return 0; }\n}\n"
+align 8
+source_cases:
+qword addr(source_good), 121, 0
+qword addr(source_bad), 121, 501
+qword addr(source_multi), 134, 0
+qword addr(source_alias), 134, 504
+qword addr(source_bad_second), 134, 501
+qword addr(source_empty), 104, 0
+qword addr(source_functions), 183, 0
+qword addr(source_duplicate), 155, 509
+qword addr(source_forward), 165, 0
+qword addr(source_unknown_call), 119, 510
+qword addr(source_missing_arg), 179, 511
+qword addr(source_extra_arg), 166, 511
+qword addr(source_one_arg), 180, 0
+qword addr(source_pointer), 130, 0
+qword addr(source_pointer_width), 130, 501
+qword addr(source_nested_pointer), 139, 0
+qword addr(source_return_width), 118, 514
+qword addr(source_return_unknown), 109, 515
+qword addr(source_return_range), 105, 514
+qword addr(source_return_pointer), 138, 514
+qword addr(source_return_pointer_ok), 136, 0
+qword addr(source_arg_type), 194, 514
+qword addr(source_arg_range), 180, 514
+qword addr(source_arg_ok), 194, 0
+qword addr(source_bool_true), 108, 0
+qword addr(source_bool_false), 109, 0
+qword addr(source_hex_separator), 110, 0
+qword addr(source_bool_integer), 106, 514
+qword addr(source_duplicate_parameter), 134, 518
+qword addr(source_local), 134, 0
+qword addr(source_local_range), 121, 514
+qword addr(source_local_before), 120, 515
+qword addr(source_local_duplicate), 136, 518
+qword addr(source_local_scope), 141, 515
+qword addr(source_local_self), 120, 515
+qword addr(source_local_shadow), 156, 0
+qword addr(source_fallthrough), 93, 519
+qword addr(source_branches_return), 144, 0
+qword addr(source_branch_fallthrough), 125, 519
+qword addr(source_unknown_target), 101, 520
+qword addr(source_target_uefi), 104, 0
+descriptor_mutations:
+qword 0, 2
+qword 40, 1
+qword 48, 1
+qword 56, 1
+qword 32, 1
+qword 24, 0
+qword 24, 513
+qword 8, 0
+pass_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_BAD\r\n"
+reached_msg:
+utf16z "NG_NTASM_MODULE_E950\r\n"
+section .data rw
+module_state:
+zero 208
+fail_debug:
+utf16z "NG_NTASM_MODULE_E900\r\n"
+align 8
+file_info:
+zero 512
+align 16
+ast_context:
+zero 256
+ast_descriptor:
+qword 1, 0, 512, 0
+qword -1, 0, 0, 0
+
+resolved_binding:
+zero 2560
+parameter_indices:
+zero 512
+callable_count:
+qword 0
+callable_table:
+zero 2048
+type_count:
+qword 0
+type_depth:
+qword 0
+composite_types:
+zero 1024
+resolved_type_ids:
+zero 512
+module_target:
+qword 0
+parser_name_range:
+qword 0, 0

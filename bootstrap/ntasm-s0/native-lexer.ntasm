@@ -1,0 +1,945 @@
+; Lexer natif reutilisable, avec driver UEFI de preuve.
+; Une ligne sans EOL, ASCII imprimable/TAB, 255 octets, 16 tranches max.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rbx, rdx
+lea r12, [rip + test_vectors]
+mov r13, 32
+test_next:
+lea r14, [rip + token_buffer]
+mov rcx, 32
+mov rax, 0xA5A5A5A5A5A5A5A5
+poison:
+store64 [r14], rax
+add r14, 8
+sub rcx, 1
+cmp rcx, 0
+jne poison
+mov rsi, 17
+mov rdi, 19
+mov r14, 23
+mov r15, 29
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+lea r8, [rip + token_buffer]
+call native_lex_line
+mov rdx, r9
+cmp rsi, 17
+jne failed
+cmp rdi, 19
+jne failed
+cmp r14, 23
+jne failed
+cmp r15, 29
+jne failed
+load64 r9, [r12 + 16]
+cmp rax, r9
+jne failed
+load64 r9, [r12 + 24]
+cmp r10, r9
+jne failed
+load64 r9, [r12 + 32]
+cmp r11, r9
+jne failed
+load64 r9, [r12 + 40]
+cmp rdx, r9
+jne failed
+lea r8, [rip + pre_guard]
+load64 r9, [r8]
+cmp r9, 31
+jne failed
+lea r8, [rip + post_guard]
+load64 r9, [r8]
+cmp r9, 37
+jne failed
+load64 rsi, [r12 + 48]
+imul rdi, rax, 16
+lea r14, [rip + token_buffer]
+mov r15, 0
+compare_byte:
+load8 r9, [r14 + r15 * 1]
+cmp r15, rdi
+jae compare_poison
+load8 rcx, [rsi + r15 * 1]
+jmp compare_value
+compare_poison:
+mov rcx, 165
+compare_value:
+cmp r9, rcx
+jne failed
+add r15, 1
+cmp r15, 256
+jne compare_byte
+add r12, 64
+sub r13, 1
+cmp r13, 0
+jne test_next
+; Phases suivantes : chacun des 256 octets seul, puis comme chiffre hex echappe.
+lea r8, [rip + test_phase]
+load64 rax, [r8]
+cmp rax, 0
+jne advance_exhaustive
+mov rax, 1
+store64 [r8], rax
+lea r8, [rip + byte_counter]
+mov rax, 0
+store64 [r8], rax
+jmp prepare_exhaustive
+advance_exhaustive:
+lea r8, [rip + byte_counter]
+load64 rax, [r8]
+add rax, 1
+store64 [r8], rax
+cmp rax, 256
+jb prepare_exhaustive
+lea r8, [rip + test_phase]
+load64 rax, [r8]
+cmp rax, 2
+je all_passed
+mov rax, 2
+store64 [r8], rax
+lea r8, [rip + byte_counter]
+mov rax, 0
+store64 [r8], rax
+prepare_exhaustive:
+lea r8, [rip + byte_counter]
+load64 rdx, [r8]
+lea r8, [rip + test_phase]
+load64 rax, [r8]
+cmp rax, 2
+je prepare_hex
+lea r8, [rip + byte_input]
+store8 [r8], rdx
+lea r8, [rip + byte_expected]
+imul r9, rdx, 3
+add r8, r9
+load8 rax, [r8]
+load8 r10, [r8 + 1]
+load8 r11, [r8 + 2]
+lea r12, [rip + byte_vector]
+jmp store_exhaustive
+prepare_hex:
+lea r8, [rip + hex_input]
+store8 [r8 + 9], rdx
+lea r8, [rip + hex_expected]
+imul r9, rdx, 4
+add r8, r9
+load8 rax, [r8]
+load8 r10, [r8 + 1]
+load8 r11, [r8 + 2]
+load8 r9, [r8 + 3]
+lea r12, [rip + hex_vector]
+store64 [r12 + 40], r9
+store_exhaustive:
+store64 [r12 + 16], rax
+store64 [r12 + 24], r10
+store64 [r12 + 32], r11
+mov r13, 1
+jmp test_next
+all_passed:
+lea rdx, [rip + pass_msg]
+jmp emit
+failed:
+lea rdx, [rip + fail_msg]
+emit:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+mov rax, 0
+ret
+
+; RCX=ligne sans EOL, RDX=taille lisible, R8=tampon de 16 records de 16 octets.
+; RAX=records complets, R10=0/100/101/102, R11=index faute, R9=debut token fautif.
+; Tous les offsets sont locaux a la ligne; aucune valeur du source n'est reecrite.
+native_lex_line:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rsi, rcx
+mov rdi, rdx
+mov r12, r8
+mov r13, 0
+mov r14, 0
+mov r15, 0
+; Gate physique : lire seulement les octets declares, y compris ceux des commentaires.
+nl_physical:
+cmp r13, rdi
+jae nl_physical_done
+cmp r13, 255
+jae nl_physical_limit
+load8 rax, [rsi + r13 * 1]
+cmp rax, 9
+je nl_physical_next
+cmp rax, 32
+jb nl_physical_bad
+cmp rax, 127
+jae nl_physical_bad
+nl_physical_next:
+add r13, 1
+jmp nl_physical
+nl_physical_done:
+mov r13, 0
+nl_next:
+cmp r13, rdi
+jae nl_ok
+load8 rax, [rsi + r13 * 1]
+cmp rax, 32
+je nl_space
+cmp rax, 9
+je nl_space
+cmp rax, 59
+je nl_ok
+mov r15, r13
+cmp r14, 16
+jae nl_limit
+cmp rax, 34
+je nl_string_start
+mov rbx, 0
+cmp rax, 46
+je nl_section
+cmp rax, 48
+jb nl_first_letter
+cmp rax, 58
+jb nl_word
+nl_first_letter:
+cmp rax, 95
+je nl_identifier
+or rax, 32
+cmp rax, 97
+jb nl_punctuation
+cmp rax, 123
+jae nl_punctuation
+nl_identifier:
+mov rbx, 1
+jmp nl_word
+nl_section:
+add r13, 1
+jmp nl_word
+nl_punctuation:
+add r13, 1
+jmp nl_record
+nl_space:
+add r13, 1
+jmp nl_next
+; Un entier reste un candidat lexical; native_parse_u64 verifiera ses chiffres.
+nl_word:
+cmp r13, rdi
+jae nl_record
+load8 rax, [rsi + r13 * 1]
+cmp rax, 95
+je nl_word_char
+cmp rax, 48
+jb nl_word_letter
+cmp rax, 58
+jb nl_word_char
+nl_word_letter:
+or rax, 32
+cmp rax, 97
+jb nl_record
+cmp rax, 123
+jae nl_record
+nl_word_char:
+cmp rbx, 1
+jne nl_word_advance
+mov rax, r13
+sub rax, r15
+cmp rax, 31
+jae nl_limit
+nl_word_advance:
+add r13, 1
+jmp nl_word
+nl_string_start:
+add r13, 1
+nl_string:
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+cmp rax, 34
+je nl_string_closed
+cmp rax, 32
+jb nl_escape_bad
+cmp rax, 92
+jne nl_string_advance
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+cmp rax, 92
+je nl_string_advance
+cmp rax, 34
+je nl_string_advance
+cmp rax, 114
+je nl_string_advance
+cmp rax, 110
+je nl_string_advance
+cmp rax, 116
+je nl_string_advance
+cmp rax, 48
+je nl_string_advance
+cmp rax, 120
+jne nl_escape_bad
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+call nl_hex_digit
+cmp rax, -1
+je nl_escape_bad
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+call nl_hex_digit
+cmp rax, -1
+je nl_escape_bad
+nl_string_advance:
+add r13, 1
+jmp nl_string
+nl_string_closed:
+add r13, 1
+nl_record:
+; Publier apres validation : aucun record partiel ni octet au-dela des 256.
+store64 [r12], r15
+mov rax, r13
+sub rax, r15
+store64 [r12 + 8], rax
+add r12, 16
+add r14, 1
+jmp nl_next
+nl_ok:
+mov r10, 0
+mov r11, 0
+mov r9, 0
+jmp nl_return
+nl_physical_bad:
+mov r15, r13
+mov r10, 100
+jmp nl_error
+nl_physical_limit:
+mov r15, r13
+nl_limit:
+mov r10, 101
+jmp nl_error
+nl_escape_bad:
+mov r10, 102
+nl_error:
+mov r11, r13
+mov r9, r15
+nl_return:
+mov rax, r14
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RAX=octet ASCII; RAX=chiffre 0..15 ou -1, RCX volatile.
+nl_hex_digit:
+mov rcx, rax
+sub rax, 48
+cmp rax, 10
+jb nl_hex_return
+mov rax, rcx
+or rax, 32
+sub rax, 97
+cmp rax, 6
+jae nl_hex_bad
+add rax, 10
+nl_hex_return:
+ret
+nl_hex_bad:
+mov rax, -1
+ret
+
+section .rdata r
+pass_msg:
+utf16z "NG_NTASM_NATIVE_LEX_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_LEX_BAD\r\n"
+line0:
+ascii ""
+align 8
+pairs0:
+qword 0
+line1:
+ascii " \x09 "
+align 8
+pairs1:
+qword 0
+line2:
+ascii "; \"bad\\q"
+align 8
+pairs2:
+qword 0
+line3:
+ascii "mov rax,1"
+align 8
+pairs3:
+qword 0, 3
+qword 4, 3
+qword 7, 1
+qword 8, 1
+line4:
+ascii " load64 rax,[rbx+r9*8-16] ; xx"
+align 8
+pairs4:
+qword 1, 6
+qword 8, 3
+qword 11, 1
+qword 12, 1
+qword 13, 3
+qword 16, 1
+qword 17, 2
+qword 19, 1
+qword 20, 1
+qword 21, 1
+qword 22, 2
+qword 24, 1
+line5:
+ascii "ascii \"A;B\""
+align 8
+pairs5:
+qword 0, 5
+qword 6, 5
+line6:
+ascii "ascii \"A\\\"B\\\\C\\n\""
+align 8
+pairs6:
+qword 0, 5
+qword 6, 11
+line7:
+ascii "section .text rx"
+align 8
+pairs7:
+qword 0, 7
+qword 8, 5
+qword 14, 2
+line8:
+ascii "const VALUE=-0xFF"
+align 8
+pairs8:
+qword 0, 5
+qword 6, 5
+qword 11, 1
+qword 12, 1
+qword 13, 4
+line9:
+ascii "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+align 8
+pairs9:
+qword 0, 31
+line10:
+ascii "a a a a a a a a a a a a a a a a"
+align 8
+pairs10:
+qword 0, 1
+qword 2, 1
+qword 4, 1
+qword 6, 1
+qword 8, 1
+qword 10, 1
+qword 12, 1
+qword 14, 1
+qword 16, 1
+qword 18, 1
+qword 20, 1
+qword 22, 1
+qword 24, 1
+qword 26, 1
+qword 28, 1
+qword 30, 1
+line11:
+ascii "9999999999999999999999999999999999999999"
+align 8
+pairs11:
+qword 0, 40
+line12:
+ascii "ascii \"\""
+align 8
+pairs12:
+qword 0, 5
+qword 6, 2
+line13:
+ascii "@ ! ?"
+align 8
+pairs13:
+qword 0, 1
+qword 2, 1
+qword 4, 1
+line14:
+ascii "\x09mov\x09r8,\x099"
+align 8
+pairs14:
+qword 1, 3
+qword 5, 2
+qword 7, 1
+qword 9, 1
+line15:
+ascii "ascii \"\\\\\\\"\\r\\n\\t\\0\\x7F\""
+align 8
+pairs15:
+qword 0, 5
+qword 6, 18
+line16:
+ascii "ascii \"A\x09B\""
+align 8
+pairs16:
+qword 0, 5
+line17:
+ascii "mov\x00rax"
+align 8
+pairs17:
+qword 0
+line18:
+ascii "; \x7f"
+align 8
+pairs18:
+qword 0
+line19:
+ascii "abc\x0a"
+align 8
+pairs19:
+qword 0
+line20:
+ascii "ascii \"\\xG1\""
+align 8
+pairs20:
+qword 0, 5
+line21:
+ascii "ascii \"\\x\""
+align 8
+pairs21:
+qword 0, 5
+line22:
+ascii "ascii \"\\q\""
+align 8
+pairs22:
+qword 0, 5
+line23:
+ascii "ascii \"ab"
+align 8
+pairs23:
+qword 0, 5
+line24:
+ascii "ascii \"a\\"
+align 8
+pairs24:
+qword 0, 5
+line25:
+ascii "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+align 8
+pairs25:
+qword 0
+line26:
+ascii "a a a a a a a a a a a a a a a a a"
+align 8
+pairs26:
+qword 0, 1
+qword 2, 1
+qword 4, 1
+qword 6, 1
+qword 8, 1
+qword 10, 1
+qword 12, 1
+qword 14, 1
+qword 16, 1
+qword 18, 1
+qword 20, 1
+qword 22, 1
+qword 24, 1
+qword 26, 1
+qword 28, 1
+qword 30, 1
+line27:
+ascii ";xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxx"
+align 8
+pairs27:
+qword 0
+line28:
+ascii ";xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxx"
+align 8
+pairs28:
+qword 0
+line29:
+ascii "abcdefg\x00xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ascii "xxxxxxxxxxxxxxxx"
+align 8
+pairs29:
+qword 0
+line30:
+ascii "ascii \"a\\\";b\""
+align 8
+pairs30:
+qword 0, 5
+qword 6, 7
+line31:
+ascii "Foo foo FOO"
+align 8
+pairs31:
+qword 0, 3
+qword 4, 3
+qword 8, 3
+align 8
+test_vectors:
+qword addr(line0), 0, 0, 0
+qword 0, 0, addr(pairs0), 0
+qword addr(line1), 3, 0, 0
+qword 0, 0, addr(pairs1), 0
+qword addr(line2), 8, 0, 0
+qword 0, 0, addr(pairs2), 0
+qword addr(line3), 9, 4, 0
+qword 0, 0, addr(pairs3), 0
+qword addr(line4), 30, 12, 0
+qword 0, 0, addr(pairs4), 0
+qword addr(line5), 11, 2, 0
+qword 0, 0, addr(pairs5), 0
+qword addr(line6), 17, 2, 0
+qword 0, 0, addr(pairs6), 0
+qword addr(line7), 16, 3, 0
+qword 0, 0, addr(pairs7), 0
+qword addr(line8), 17, 5, 0
+qword 0, 0, addr(pairs8), 0
+qword addr(line9), 31, 1, 0
+qword 0, 0, addr(pairs9), 0
+qword addr(line10), 31, 16, 0
+qword 0, 0, addr(pairs10), 0
+qword addr(line11), 40, 1, 0
+qword 0, 0, addr(pairs11), 0
+qword addr(line12), 8, 2, 0
+qword 0, 0, addr(pairs12), 0
+qword addr(line13), 5, 3, 0
+qword 0, 0, addr(pairs13), 0
+qword addr(line14), 10, 4, 0
+qword 0, 0, addr(pairs14), 0
+qword addr(line15), 24, 2, 0
+qword 0, 0, addr(pairs15), 0
+qword addr(line16), 11, 1, 102
+qword 8, 6, addr(pairs16), 0
+qword addr(line17), 7, 0, 100
+qword 3, 3, addr(pairs17), 0
+qword addr(line18), 3, 0, 100
+qword 2, 2, addr(pairs18), 0
+qword addr(line19), 4, 0, 100
+qword 3, 3, addr(pairs19), 0
+qword addr(line20), 12, 1, 102
+qword 9, 6, addr(pairs20), 0
+qword addr(line21), 10, 1, 102
+qword 9, 6, addr(pairs21), 0
+qword addr(line22), 10, 1, 102
+qword 8, 6, addr(pairs22), 0
+qword addr(line23), 9, 1, 102
+qword 9, 6, addr(pairs23), 0
+qword addr(line24), 9, 1, 102
+qword 9, 6, addr(pairs24), 0
+qword addr(line25), 32, 0, 101
+qword 31, 0, addr(pairs25), 0
+qword addr(line26), 33, 16, 101
+qword 32, 32, addr(pairs26), 0
+qword addr(line27), 256, 0, 101
+qword 255, 255, addr(pairs27), 0
+qword addr(line28), 255, 0, 0
+qword 0, 0, addr(pairs28), 0
+qword addr(line29), 256, 0, 100
+qword 7, 7, addr(pairs29), 0
+qword addr(line30), 13, 2, 0
+qword 0, 0, addr(pairs30), 0
+qword addr(line31), 11, 3, 0
+qword 0, 0, addr(pairs31), 0
+byte_expected:
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 0, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 0, 0, 1, 0, 0, 0, 102
+byte 1, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 0, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 1, 0, 0
+byte 1, 0, 0, 1, 0, 0, 1, 0
+byte 0, 1, 0, 0, 1, 0, 0, 1
+byte 0, 0, 1, 0, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+byte 0, 100, 0, 0, 100, 0, 0, 100
+byte 0, 0, 100, 0, 0, 100, 0, 0
+byte 100, 0, 0, 100, 0, 0, 100, 0
+hex_expected:
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 1, 102, 9, 6
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 2, 0, 0, 0
+byte 2, 0, 0, 0, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 1, 102, 9, 6
+byte 1, 102, 9, 6, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+byte 0, 100, 9, 9, 0, 100, 9, 9
+align 8
+byte_pairs:
+qword 0, 1
+hex_pairs:
+qword 0, 5, 6, 6
+section .data rw
+pre_guard:
+qword 31
+token_buffer:
+zero 256
+post_guard:
+qword 37
+test_phase:
+qword 0
+byte_counter:
+qword 0
+byte_input:
+byte 0
+hex_input:
+ascii "ascii \"\\x?0\""
+align 8
+byte_vector:
+qword addr(byte_input), 1, 0, 0
+qword 0, 0, addr(byte_pairs), 0
+hex_vector:
+qword addr(hex_input), 12, 0, 0
+qword 0, 0, addr(hex_pairs), 0

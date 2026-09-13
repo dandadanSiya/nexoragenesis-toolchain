@@ -1,0 +1,9 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+nop
+section .rdata r
+dword 4294967296
+section .data rw

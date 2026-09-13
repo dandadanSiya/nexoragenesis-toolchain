@@ -1,0 +1,28 @@
+module ntasm_lexer_test;
+import ntasm_lexer;
+
+// Adapter for the C parity harness. Header words 0..8 are result/diagnostic;
+// each token then occupies nine u64 words in declared Token field order.
+fn main(source:buf<u8>,source_index:u64,out:buf<u64>)->u64 {
+    let result:ntasm_lexer.Result=ntasm_lexer.lex(source,source_index);
+    let needed:u64=9+result.count*9;
+    if len(out)<(needed) {
+        ntasm_lexer.release(result);
+        return 901;
+    }
+    out[0]=0;if result.ok==true { out[0]=1; }
+    out[1]=result.diagnostic.code;
+    out[2]=result.diagnostic.reason;
+    out[3]=result.diagnostic.span.source;
+    out[4]=result.diagnostic.span.line;
+    out[5]=result.diagnostic.span.column;
+    out[6]=result.diagnostic.span.start;
+    out[7]=result.diagnostic.span.end;
+    out[8]=result.count;
+    let mut i:u64=0;
+    while i<result.count*9 {
+        out[9+i]=result.token_words[i];i=i+1;
+    }
+    ntasm_lexer.release(result);
+    return result.diagnostic.code;
+}

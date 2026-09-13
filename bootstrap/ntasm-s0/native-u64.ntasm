@@ -1,0 +1,792 @@
+; Composant natif du futur compilateur : parser u64 + driver de test UEFI.
+; Le driver ne constitue pas encore un assembleur auto-heberge.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rbx, rdx
+mov rsi, 17
+mov rdi, 19
+mov r14, 23
+mov r15, 29
+lea r12, [rip + vectors]
+mov r13, 199
+test_next:
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+load64 r8, [r12 + 16]
+call native_parse_u64
+; Sentinelles ABI : ces registres doivent survivre aux 199 appels.
+cmp rsi, 17
+jne failed
+cmp rdi, 19
+jne failed
+cmp r14, 23
+jne failed
+cmp r15, 29
+jne failed
+load64 r9, [r12 + 24]
+cmp rax, r9
+jne failed
+load64 r9, [r12 + 32]
+cmp r10, r9
+jne failed
+load64 r9, [r12 + 40]
+cmp r11, r9
+jne failed
+add r12, 48
+sub r13, 1
+cmp r13, 0
+jne test_next
+lea rdx, [rip + pass_msg]
+jmp emit
+failed:
+lea rdx, [rip + fail_msg]
+emit:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+mov rax, 0
+ret
+
+; RCX=adresse, RDX=longueur, R8=borne inclusive u64.
+; Retour RAX=valeur (zero si erreur), R10=0/102, R11=index de faute.
+; Aucun I/O, allocation ou producteur externe : ce corps est entierement NTASM.
+native_parse_u64:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rsi, rcx
+mov rdi, rdx
+mov r12, 0
+mov r15, 0
+cmp rdi, 0
+je np_bad
+load8 rax, [rsi]
+cmp rax, 48
+jne np_decimal
+cmp rdi, 1
+je np_ok
+mov r15, 1
+load8 rax, [rsi + 1]
+cmp rax, 120
+jne np_bad
+mov r15, 2
+cmp r15, rdi
+jae np_bad
+mov rbx, 16
+mov r13, r8
+shr r13, 4
+mov r14, r8
+and r14, 15
+jmp np_digit
+np_decimal:
+mov rbx, 10
+mov r13, 0
+mov r14, 0
+mov r9, 64
+; Division binaire par 10 : evite de dependre d'une instruction absente de S0.
+; Le reste intermediaire ne depasse pas 19; aucun decalage ne vaut 64.
+np_divide:
+mov rax, r8
+shr rax, 63
+shl r8, 1
+shl r13, 1
+shl r14, 1
+or r14, rax
+cmp r14, 10
+jb np_divide_next
+sub r14, 10
+or r13, 1
+np_divide_next:
+sub r9, 1
+cmp r9, 0
+jne np_divide
+np_digit:
+cmp r15, rdi
+jae np_ok
+load8 rax, [rsi + r15 * 1]
+cmp rbx, 16
+je np_hex
+sub rax, 48
+cmp rax, 10
+jae np_bad
+jmp np_bound
+np_hex:
+mov rcx, rax
+sub rax, 48
+cmp rax, 10
+jb np_bound
+mov rax, rcx
+or rax, 32
+sub rax, 97
+cmp rax, 6
+jae np_bad
+add rax, 10
+np_bound:
+; Tester acc <= borne/base AVANT multiplier, puis verifier le dernier chiffre.
+cmp r12, r13
+jb np_accumulate
+cmp r12, r13
+jne np_bad
+cmp r14, rax
+jb np_bad
+np_accumulate:
+cmp rbx, 16
+je np_accumulate_hex
+imul r12, r12, 10
+jmp np_accumulate_digit
+np_accumulate_hex:
+shl r12, 4
+np_accumulate_digit:
+add r12, rax
+add r15, 1
+jmp np_digit
+np_ok:
+mov rax, r12
+mov r10, 0
+mov r11, 0
+jmp np_return
+np_bad:
+mov rax, 0
+mov r10, 102
+mov r11, r15
+np_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+section .rdata r
+pass_msg:
+utf16z "NG_NTASM_NATIVE_U64_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_U64_BAD\r\n"
+u0:
+ascii ""
+u1:
+ascii "0"
+u2:
+ascii "01"
+u3:
+ascii "255"
+u4:
+ascii "256"
+u5:
+ascii "18446744073709551615"
+u6:
+ascii "18446744073709551616"
+u7:
+ascii "0xffffffffffffffff"
+u8:
+ascii "0x100"
+u9:
+ascii "0x"
+u10:
+ascii "0X1"
+u11:
+ascii "123_4"
+u12:
+ascii "-1"
+u13:
+ascii "1"
+u14:
+ascii "9223372036854775808"
+u15:
+ascii "0xaB"
+u16:
+ascii "1"
+u17:
+ascii "2"
+u18:
+ascii "2"
+u19:
+ascii "3"
+u20:
+ascii "3"
+u21:
+ascii "4"
+u22:
+ascii "4"
+u23:
+ascii "5"
+u24:
+ascii "5"
+u25:
+ascii "6"
+u26:
+ascii "6"
+u27:
+ascii "7"
+u28:
+ascii "7"
+u29:
+ascii "8"
+u30:
+ascii "8"
+u31:
+ascii "9"
+u32:
+ascii "9"
+u33:
+ascii "10"
+u34:
+ascii "10"
+u35:
+ascii "11"
+u36:
+ascii "11"
+u37:
+ascii "12"
+u38:
+ascii "12"
+u39:
+ascii "13"
+u40:
+ascii "13"
+u41:
+ascii "14"
+u42:
+ascii "14"
+u43:
+ascii "15"
+u44:
+ascii "15"
+u45:
+ascii "16"
+u46:
+ascii "16"
+u47:
+ascii "17"
+u48:
+ascii "17"
+u49:
+ascii "18"
+u50:
+ascii "18"
+u51:
+ascii "19"
+u52:
+ascii "19"
+u53:
+ascii "20"
+u54:
+ascii "20"
+u55:
+ascii "21"
+u56:
+ascii "21"
+u57:
+ascii "22"
+u58:
+ascii "22"
+u59:
+ascii "23"
+u60:
+ascii "23"
+u61:
+ascii "24"
+u62:
+ascii "24"
+u63:
+ascii "25"
+u64:
+ascii "25"
+u65:
+ascii "26"
+u66:
+ascii "26"
+u67:
+ascii "27"
+u68:
+ascii "27"
+u69:
+ascii "28"
+u70:
+ascii "28"
+u71:
+ascii "29"
+u72:
+ascii "29"
+u73:
+ascii "30"
+u74:
+ascii "30"
+u75:
+ascii "31"
+u76:
+ascii "31"
+u77:
+ascii "32"
+u78:
+ascii "0x0"
+u79:
+ascii "0x1"
+u80:
+ascii "0x1"
+u81:
+ascii "0x2"
+u82:
+ascii "0x2"
+u83:
+ascii "0x3"
+u84:
+ascii "0x9"
+u85:
+ascii "0xa"
+u86:
+ascii "0xa"
+u87:
+ascii "0xb"
+u88:
+ascii "0xf"
+u89:
+ascii "0x10"
+u90:
+ascii "0x10"
+u91:
+ascii "0x11"
+u92:
+ascii "0x11"
+u93:
+ascii "0x12"
+u94:
+ascii "63"
+u95:
+ascii "0x3f"
+u96:
+ascii "64"
+u97:
+ascii "0x40"
+u98:
+ascii "127"
+u99:
+ascii "0x7f"
+u100:
+ascii "128"
+u101:
+ascii "0x80"
+u102:
+ascii "128"
+u103:
+ascii "0x80"
+u104:
+ascii "129"
+u105:
+ascii "0x81"
+u106:
+ascii "0xff"
+u107:
+ascii "256"
+u108:
+ascii "0x100"
+u109:
+ascii "257"
+u110:
+ascii "0x101"
+u111:
+ascii "65535"
+u112:
+ascii "0xffff"
+u113:
+ascii "65536"
+u114:
+ascii "0x10000"
+u115:
+ascii "65536"
+u116:
+ascii "0x10000"
+u117:
+ascii "65537"
+u118:
+ascii "0x10001"
+u119:
+ascii "2147483647"
+u120:
+ascii "0x7fffffff"
+u121:
+ascii "2147483648"
+u122:
+ascii "0x80000000"
+u123:
+ascii "4294967295"
+u124:
+ascii "0xffffffff"
+u125:
+ascii "4294967296"
+u126:
+ascii "0x100000000"
+u127:
+ascii "9223372036854775807"
+u128:
+ascii "0x7fffffffffffffff"
+u129:
+ascii "9223372036854775808"
+u130:
+ascii "0x8000000000000000"
+u131:
+ascii "0x8000000000000000"
+u132:
+ascii "9223372036854775809"
+u133:
+ascii "0x8000000000000001"
+u134:
+ascii "0x10000000000000000"
+u135:
+ascii "12460614797070561471"
+u136:
+ascii "0xacecff23865df0bf"
+u137:
+ascii "12460614797070561472"
+u138:
+ascii "0xacecff23865df0c0"
+u139:
+ascii "1457594110843327458"
+u140:
+ascii "0x143a6a1f038493e2"
+u141:
+ascii "1457594110843327459"
+u142:
+ascii "0x143a6a1f038493e3"
+u143:
+ascii "849865848483782153"
+u144:
+ascii "0xbcb547c859c9e09"
+u145:
+ascii "849865848483782154"
+u146:
+ascii "0xbcb547c859c9e0a"
+u147:
+ascii "419602580097908708"
+u148:
+ascii "0x5d2ba52cd92bfe4"
+u149:
+ascii "419602580097908709"
+u150:
+ascii "0x5d2ba52cd92bfe5"
+u151:
+ascii "14163137474206455907"
+u152:
+ascii "0xc48d927e47195863"
+u153:
+ascii "14163137474206455908"
+u154:
+ascii "0xc48d927e47195864"
+u155:
+ascii "4915026277956855734"
+u156:
+ascii "0x4435ae5bdf5427b6"
+u157:
+ascii "4915026277956855735"
+u158:
+ascii "0x4435ae5bdf5427b7"
+u159:
+ascii "933687901665085005"
+u160:
+ascii "0xcf520331dd3c64d"
+u161:
+ascii "933687901665085006"
+u162:
+ascii "0xcf520331dd3c64e"
+u163:
+ascii "3335191439407747032"
+u164:
+ascii "0x2e48faf18bd28fd8"
+u165:
+ascii "3335191439407747033"
+u166:
+ascii "0x2e48faf18bd28fd9"
+u167:
+ascii "4027759083309167175"
+u168:
+ascii "0x37e5798bd97ef247"
+u169:
+ascii "4027759083309167176"
+u170:
+ascii "0x37e5798bd97ef248"
+u171:
+ascii "5499672797237760202"
+u172:
+ascii "0x4c52c345443c50ca"
+u173:
+ascii "5499672797237760203"
+u174:
+ascii "0x4c52c345443c50cb"
+u175:
+ascii "4650114082419501777"
+u176:
+ascii "0x4088861edfa7ead1"
+u177:
+ascii "4650114082419501778"
+u178:
+ascii "0x4088861edfa7ead2"
+u179:
+ascii "16240227712131561228"
+u180:
+ascii "0xe160e10f4d0e770c"
+u181:
+ascii "16240227712131561229"
+u182:
+ascii "0xe160e10f4d0e770d"
+u183:
+ascii "7658974010268279403"
+u184:
+ascii "0x6a4a244889fd626b"
+u185:
+ascii "7658974010268279404"
+u186:
+ascii "0x6a4a244889fd626c"
+u187:
+ascii "16244672099930333982"
+u188:
+ascii "0xe170ab34f90be31e"
+u189:
+ascii "16244672099930333983"
+u190:
+ascii "0xe170ab34f90be31f"
+u191:
+ascii "4725642675164827541"
+u192:
+ascii "0x4194daf9bca04f95"
+u193:
+ascii "4725642675164827542"
+u194:
+ascii "0x4194daf9bca04f96"
+u195:
+ascii "7302938743466977664"
+u196:
+ascii "0x6559401834c96980"
+u197:
+ascii "7302938743466977665"
+u198:
+ascii "0x6559401834c96981"
+align 8
+vectors:
+qword addr(u0), 0, 18446744073709551615, 0, 102, 0
+qword addr(u1), 1, 0, 0, 0, 0
+qword addr(u2), 2, 18446744073709551615, 0, 102, 1
+qword addr(u3), 3, 255, 255, 0, 0
+qword addr(u4), 3, 255, 0, 102, 2
+qword addr(u5), 20, 18446744073709551615, 18446744073709551615, 0, 0
+qword addr(u6), 20, 18446744073709551615, 0, 102, 19
+qword addr(u7), 18, 18446744073709551615, 18446744073709551615, 0, 0
+qword addr(u8), 5, 255, 0, 102, 4
+qword addr(u9), 2, 18446744073709551615, 0, 102, 2
+qword addr(u10), 3, 18446744073709551615, 0, 102, 1
+qword addr(u11), 5, 18446744073709551615, 0, 102, 3
+qword addr(u12), 2, 18446744073709551615, 0, 102, 0
+qword addr(u13), 1, 0, 0, 102, 0
+qword addr(u14), 19, 9223372036854775808, 9223372036854775808, 0, 0
+qword addr(u15), 4, 18446744073709551615, 171, 0, 0
+qword addr(u16), 1, 1, 1, 0, 0
+qword addr(u17), 1, 1, 0, 102, 0
+qword addr(u18), 1, 2, 2, 0, 0
+qword addr(u19), 1, 2, 0, 102, 0
+qword addr(u20), 1, 3, 3, 0, 0
+qword addr(u21), 1, 3, 0, 102, 0
+qword addr(u22), 1, 4, 4, 0, 0
+qword addr(u23), 1, 4, 0, 102, 0
+qword addr(u24), 1, 5, 5, 0, 0
+qword addr(u25), 1, 5, 0, 102, 0
+qword addr(u26), 1, 6, 6, 0, 0
+qword addr(u27), 1, 6, 0, 102, 0
+qword addr(u28), 1, 7, 7, 0, 0
+qword addr(u29), 1, 7, 0, 102, 0
+qword addr(u30), 1, 8, 8, 0, 0
+qword addr(u31), 1, 8, 0, 102, 0
+qword addr(u32), 1, 9, 9, 0, 0
+qword addr(u33), 2, 9, 0, 102, 1
+qword addr(u34), 2, 10, 10, 0, 0
+qword addr(u35), 2, 10, 0, 102, 1
+qword addr(u36), 2, 11, 11, 0, 0
+qword addr(u37), 2, 11, 0, 102, 1
+qword addr(u38), 2, 12, 12, 0, 0
+qword addr(u39), 2, 12, 0, 102, 1
+qword addr(u40), 2, 13, 13, 0, 0
+qword addr(u41), 2, 13, 0, 102, 1
+qword addr(u42), 2, 14, 14, 0, 0
+qword addr(u43), 2, 14, 0, 102, 1
+qword addr(u44), 2, 15, 15, 0, 0
+qword addr(u45), 2, 15, 0, 102, 1
+qword addr(u46), 2, 16, 16, 0, 0
+qword addr(u47), 2, 16, 0, 102, 1
+qword addr(u48), 2, 17, 17, 0, 0
+qword addr(u49), 2, 17, 0, 102, 1
+qword addr(u50), 2, 18, 18, 0, 0
+qword addr(u51), 2, 18, 0, 102, 1
+qword addr(u52), 2, 19, 19, 0, 0
+qword addr(u53), 2, 19, 0, 102, 1
+qword addr(u54), 2, 20, 20, 0, 0
+qword addr(u55), 2, 20, 0, 102, 1
+qword addr(u56), 2, 21, 21, 0, 0
+qword addr(u57), 2, 21, 0, 102, 1
+qword addr(u58), 2, 22, 22, 0, 0
+qword addr(u59), 2, 22, 0, 102, 1
+qword addr(u60), 2, 23, 23, 0, 0
+qword addr(u61), 2, 23, 0, 102, 1
+qword addr(u62), 2, 24, 24, 0, 0
+qword addr(u63), 2, 24, 0, 102, 1
+qword addr(u64), 2, 25, 25, 0, 0
+qword addr(u65), 2, 25, 0, 102, 1
+qword addr(u66), 2, 26, 26, 0, 0
+qword addr(u67), 2, 26, 0, 102, 1
+qword addr(u68), 2, 27, 27, 0, 0
+qword addr(u69), 2, 27, 0, 102, 1
+qword addr(u70), 2, 28, 28, 0, 0
+qword addr(u71), 2, 28, 0, 102, 1
+qword addr(u72), 2, 29, 29, 0, 0
+qword addr(u73), 2, 29, 0, 102, 1
+qword addr(u74), 2, 30, 30, 0, 0
+qword addr(u75), 2, 30, 0, 102, 1
+qword addr(u76), 2, 31, 31, 0, 0
+qword addr(u77), 2, 31, 0, 102, 1
+qword addr(u78), 3, 0, 0, 0, 0
+qword addr(u79), 3, 0, 0, 102, 2
+qword addr(u80), 3, 1, 1, 0, 0
+qword addr(u81), 3, 1, 0, 102, 2
+qword addr(u82), 3, 2, 2, 0, 0
+qword addr(u83), 3, 2, 0, 102, 2
+qword addr(u84), 3, 9, 9, 0, 0
+qword addr(u85), 3, 9, 0, 102, 2
+qword addr(u86), 3, 10, 10, 0, 0
+qword addr(u87), 3, 10, 0, 102, 2
+qword addr(u88), 3, 15, 15, 0, 0
+qword addr(u89), 4, 15, 0, 102, 3
+qword addr(u90), 4, 16, 16, 0, 0
+qword addr(u91), 4, 16, 0, 102, 3
+qword addr(u92), 4, 17, 17, 0, 0
+qword addr(u93), 4, 17, 0, 102, 3
+qword addr(u94), 2, 63, 63, 0, 0
+qword addr(u95), 4, 63, 63, 0, 0
+qword addr(u96), 2, 63, 0, 102, 1
+qword addr(u97), 4, 63, 0, 102, 3
+qword addr(u98), 3, 127, 127, 0, 0
+qword addr(u99), 4, 127, 127, 0, 0
+qword addr(u100), 3, 127, 0, 102, 2
+qword addr(u101), 4, 127, 0, 102, 3
+qword addr(u102), 3, 128, 128, 0, 0
+qword addr(u103), 4, 128, 128, 0, 0
+qword addr(u104), 3, 128, 0, 102, 2
+qword addr(u105), 4, 128, 0, 102, 3
+qword addr(u106), 4, 255, 255, 0, 0
+qword addr(u107), 3, 256, 256, 0, 0
+qword addr(u108), 5, 256, 256, 0, 0
+qword addr(u109), 3, 256, 0, 102, 2
+qword addr(u110), 5, 256, 0, 102, 4
+qword addr(u111), 5, 65535, 65535, 0, 0
+qword addr(u112), 6, 65535, 65535, 0, 0
+qword addr(u113), 5, 65535, 0, 102, 4
+qword addr(u114), 7, 65535, 0, 102, 6
+qword addr(u115), 5, 65536, 65536, 0, 0
+qword addr(u116), 7, 65536, 65536, 0, 0
+qword addr(u117), 5, 65536, 0, 102, 4
+qword addr(u118), 7, 65536, 0, 102, 6
+qword addr(u119), 10, 2147483647, 2147483647, 0, 0
+qword addr(u120), 10, 2147483647, 2147483647, 0, 0
+qword addr(u121), 10, 2147483647, 0, 102, 9
+qword addr(u122), 10, 2147483647, 0, 102, 9
+qword addr(u123), 10, 4294967295, 4294967295, 0, 0
+qword addr(u124), 10, 4294967295, 4294967295, 0, 0
+qword addr(u125), 10, 4294967295, 0, 102, 9
+qword addr(u126), 11, 4294967295, 0, 102, 10
+qword addr(u127), 19, 9223372036854775807, 9223372036854775807, 0, 0
+qword addr(u128), 18, 9223372036854775807, 9223372036854775807, 0, 0
+qword addr(u129), 19, 9223372036854775807, 0, 102, 18
+qword addr(u130), 18, 9223372036854775807, 0, 102, 17
+qword addr(u131), 18, 9223372036854775808, 9223372036854775808, 0, 0
+qword addr(u132), 19, 9223372036854775808, 0, 102, 18
+qword addr(u133), 18, 9223372036854775808, 0, 102, 17
+qword addr(u134), 19, 18446744073709551615, 0, 102, 18
+qword addr(u135), 20, 12460614797070561471, 12460614797070561471, 0, 0
+qword addr(u136), 18, 12460614797070561471, 12460614797070561471, 0, 0
+qword addr(u137), 20, 12460614797070561471, 0, 102, 19
+qword addr(u138), 18, 12460614797070561471, 0, 102, 17
+qword addr(u139), 19, 1457594110843327458, 1457594110843327458, 0, 0
+qword addr(u140), 18, 1457594110843327458, 1457594110843327458, 0, 0
+qword addr(u141), 19, 1457594110843327458, 0, 102, 18
+qword addr(u142), 18, 1457594110843327458, 0, 102, 17
+qword addr(u143), 18, 849865848483782153, 849865848483782153, 0, 0
+qword addr(u144), 17, 849865848483782153, 849865848483782153, 0, 0
+qword addr(u145), 18, 849865848483782153, 0, 102, 17
+qword addr(u146), 17, 849865848483782153, 0, 102, 16
+qword addr(u147), 18, 419602580097908708, 419602580097908708, 0, 0
+qword addr(u148), 17, 419602580097908708, 419602580097908708, 0, 0
+qword addr(u149), 18, 419602580097908708, 0, 102, 17
+qword addr(u150), 17, 419602580097908708, 0, 102, 16
+qword addr(u151), 20, 14163137474206455907, 14163137474206455907, 0, 0
+qword addr(u152), 18, 14163137474206455907, 14163137474206455907, 0, 0
+qword addr(u153), 20, 14163137474206455907, 0, 102, 19
+qword addr(u154), 18, 14163137474206455907, 0, 102, 17
+qword addr(u155), 19, 4915026277956855734, 4915026277956855734, 0, 0
+qword addr(u156), 18, 4915026277956855734, 4915026277956855734, 0, 0
+qword addr(u157), 19, 4915026277956855734, 0, 102, 18
+qword addr(u158), 18, 4915026277956855734, 0, 102, 17
+qword addr(u159), 18, 933687901665085005, 933687901665085005, 0, 0
+qword addr(u160), 17, 933687901665085005, 933687901665085005, 0, 0
+qword addr(u161), 18, 933687901665085005, 0, 102, 17
+qword addr(u162), 17, 933687901665085005, 0, 102, 16
+qword addr(u163), 19, 3335191439407747032, 3335191439407747032, 0, 0
+qword addr(u164), 18, 3335191439407747032, 3335191439407747032, 0, 0
+qword addr(u165), 19, 3335191439407747032, 0, 102, 18
+qword addr(u166), 18, 3335191439407747032, 0, 102, 17
+qword addr(u167), 19, 4027759083309167175, 4027759083309167175, 0, 0
+qword addr(u168), 18, 4027759083309167175, 4027759083309167175, 0, 0
+qword addr(u169), 19, 4027759083309167175, 0, 102, 18
+qword addr(u170), 18, 4027759083309167175, 0, 102, 17
+qword addr(u171), 19, 5499672797237760202, 5499672797237760202, 0, 0
+qword addr(u172), 18, 5499672797237760202, 5499672797237760202, 0, 0
+qword addr(u173), 19, 5499672797237760202, 0, 102, 18
+qword addr(u174), 18, 5499672797237760202, 0, 102, 17
+qword addr(u175), 19, 4650114082419501777, 4650114082419501777, 0, 0
+qword addr(u176), 18, 4650114082419501777, 4650114082419501777, 0, 0
+qword addr(u177), 19, 4650114082419501777, 0, 102, 18
+qword addr(u178), 18, 4650114082419501777, 0, 102, 17
+qword addr(u179), 20, 16240227712131561228, 16240227712131561228, 0, 0
+qword addr(u180), 18, 16240227712131561228, 16240227712131561228, 0, 0
+qword addr(u181), 20, 16240227712131561228, 0, 102, 19
+qword addr(u182), 18, 16240227712131561228, 0, 102, 17
+qword addr(u183), 19, 7658974010268279403, 7658974010268279403, 0, 0
+qword addr(u184), 18, 7658974010268279403, 7658974010268279403, 0, 0
+qword addr(u185), 19, 7658974010268279403, 0, 102, 18
+qword addr(u186), 18, 7658974010268279403, 0, 102, 17
+qword addr(u187), 20, 16244672099930333982, 16244672099930333982, 0, 0
+qword addr(u188), 18, 16244672099930333982, 16244672099930333982, 0, 0
+qword addr(u189), 20, 16244672099930333982, 0, 102, 19
+qword addr(u190), 18, 16244672099930333982, 0, 102, 17
+qword addr(u191), 19, 4725642675164827541, 4725642675164827541, 0, 0
+qword addr(u192), 18, 4725642675164827541, 4725642675164827541, 0, 0
+qword addr(u193), 19, 4725642675164827541, 0, 102, 18
+qword addr(u194), 18, 4725642675164827541, 0, 102, 17
+qword addr(u195), 19, 7302938743466977664, 7302938743466977664, 0, 0
+qword addr(u196), 18, 7302938743466977664, 7302938743466977664, 0, 0
+qword addr(u197), 19, 7302938743466977664, 0, 102, 18
+qword addr(u198), 18, 7302938743466977664, 0, 102, 17
+section .data rw
+zero 8

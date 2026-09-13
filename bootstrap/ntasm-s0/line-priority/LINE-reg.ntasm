@@ -1,0 +1,11 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+nop
+mov eax, "\q"
+section .rdata r
+qword addr(start)
+section .data rw
+zero 8

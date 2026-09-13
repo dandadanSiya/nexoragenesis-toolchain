@@ -1,0 +1,32 @@
+module ntasm_nxo_inspect;
+import ntasm_nxo;
+
+// Transactional seven-word NXO summary for tooling and reproducible manifests.
+// Output order: target, entry, text, rdata, data, symbols, relocations.
+export fn inspect(input:buf<u8>,out:buf<u64>)->u64 {
+    if len(out)<7 { return 809; }
+    let read_result:ntasm_nxo.ReadResult=ntasm_nxo.read(input);
+    if read_result.code!=0 { return read_result.code; }
+    let object:ntasm_nxo.Object=read_result.object;
+    let text:buf<u8>=object.text;
+    let rdata:buf<u8>=object.rdata;
+    let data:buf<u8>=object.data;
+    let symbols:buf<u64>=object.symbols;
+    let relocations:buf<u64>=object.relocations;
+    let target:u64=object.target;
+    let entry:u64=object.entry;
+    let text_size:u64=len(text);
+    let rdata_size:u64=len(rdata);
+    let data_size:u64=len(data);
+    let symbol_count:u64=len(symbols)/8;
+    let relocation_count:u64=len(relocations)/5;
+    ntasm_nxo.release(object);
+    out[0]=target;
+    out[1]=entry;
+    out[2]=text_size;
+    out[3]=rdata_size;
+    out[4]=data_size;
+    out[5]=symbol_count;
+    out[6]=relocation_count;
+    return 0;
+}

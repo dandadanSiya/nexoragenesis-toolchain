@@ -1,0 +1,37 @@
+; Une sortie de NTASM doit prouver DIR64, pas seulement employer des adresses RIP.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+sub rsp, 32
+mov rbx, rdx
+load64 rax, [rip + anchor]
+lea rdx, [rip + start]
+cmp rax, rdx
+jne failed
+mov rcx, 0x140001000
+cmp rax, rcx
+je failed
+lea rdx, [rip + good]
+jmp emit
+failed:
+lea rdx, [rip + bad]
+emit:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 32
+pop rbx
+mov rax, 0
+ret
+section .rdata r
+anchor:
+qword addr(start)
+good:
+utf16z "NG_NTASM_RELOC_OK\r\n"
+bad:
+utf16z "NG_NTASM_RELOC_BAD\r\n"
+section .data rw
+zero 8

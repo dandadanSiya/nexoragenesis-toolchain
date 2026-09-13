@@ -1,0 +1,17 @@
+fn main()->u64 {
+    let path:buf<u8>="NOVA.TXT";
+    let data:buf<u8>=[52,50];
+    let h:u64=rt_open_new(runtime(),path);
+    rt_write(runtime(),h,data);
+    rt_close(runtime(),h);
+    data[0]=0;
+    data[1]=0;
+    let reader:u64=rt_open_read(runtime(),path);
+    let n:u64=rt_read(runtime(),reader,data);
+    rt_close(runtime(),reader);
+    if n!=2 { return 1; }
+    let result:u64=(data[0]-48)*10+data[1]-48;
+    rt_free(runtime(),data);
+    rt_free(runtime(),path);
+    return result;
+}

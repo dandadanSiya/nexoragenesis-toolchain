@@ -1,0 +1,15 @@
+module lexer.fixture
+target x86_64-nexora-none
+// names, numeric separators, all compound operators and raw escapes
+const LIMIT:u64=18_446_744_073_709_551_615
+const HEX:u64=0xFFFF_FFFF_FFFF_FFFF
+section .rdata {
+data text:array<u8,4>="A\n\x42\0"
+}
+section .text {
+fn main()->u64
+effects {}
+clobbers {} {
+return (LIMIT>>1)<=HEX && LIMIT!=0
+}
+}

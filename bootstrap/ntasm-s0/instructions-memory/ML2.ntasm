@@ -1,0 +1,8 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+load16 r9, [r13]
+section .rdata r
+section .data rw

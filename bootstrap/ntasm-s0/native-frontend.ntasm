@@ -1,0 +1,3426 @@
+; Frontend natif : composition du lexer, des entiers et du registre de symboles.
+; Driver de constantes, pas encore un assembleur auto-heberge.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 48
+mov rbx, rdx
+load64 rsi, [rbx + 0x60]
+mov rax, 0
+store64 [rsp + 32], rax
+mov rcx, 2
+mov rdx, 0x1D020
+lea r8, [rsp + 32]
+load64 rax, [rsi + 0x40]
+call rax
+cmp rax, 0
+jne no_pool
+load64 r14, [rsp + 32]
+cmp r14, 0
+je no_pool
+mov rdi, r14
+add rdi, 16
+mov rdx, 0x1D000
+mov rax, 0
+zero_work:
+store64 [rdi], rax
+add rdi, 8
+sub rdx, 8
+cmp rdx, 0
+jne zero_work
+mov rax, 31
+store64 [r14], rax
+store64 [r14 + 8], rax
+mov rax, 37
+store64 [r14 + 0x1D010], rax
+store64 [r14 + 0x1D018], rax
+lea r12, [rip + cases]
+mov r13, 24
+test_next:
+mov rcx, r14
+add rcx, 16
+load64 rdx, [r12]
+load64 r8, [r12 + 8]
+lea r9, [r12 + 16]
+mov rdi, 19
+mov r15, 29
+call driver_add_const
+lea r8, [rip + phase]
+mov r9, 1
+store64 [r8], r9
+cmp rdi, 19
+jne failed
+cmp r15, 29
+jne failed
+load64 r9, [rsp + 32]
+cmp r14, r9
+jne failed
+lea r8, [rip + phase]
+mov r9, 2
+store64 [r8], r9
+load64 r9, [r12 + 32]
+cmp r10, r9
+jne failed
+lea r8, [rip + phase]
+mov r9, 3
+store64 [r8], r9
+load64 r9, [r12 + 40]
+cmp r11, r9
+jne failed
+lea r8, [rip + phase]
+mov r9, 4
+store64 [r8], r9
+load64 r9, [r12 + 48]
+load64 r8, [r14 + 16]
+cmp r9, r8
+jne failed
+cmp r10, 0
+jne expect_failure
+lea r8, [rip + phase]
+mov r9, 5
+store64 [r8], r9
+load64 r9, [r12 + 48]
+mov r8, r9
+sub r8, 1
+imul r8, r8, 48
+add r8, r14
+add r8, 0x410
+cmp rax, r8
+jne failed
+load64 rdx, [r12 + 56]
+lea r8, [rip + phase]
+mov r9, 6
+store64 [r8], r9
+mov rcx, 0
+check_record:
+load8 r9, [rax + rcx * 1]
+load8 r10, [rdx + rcx * 1]
+cmp r9, r10
+jne failed
+add rcx, 1
+cmp rcx, 48
+jne check_record
+jmp test_advance
+expect_failure:
+cmp rax, 0
+jne failed
+test_advance:
+add r12, 64
+sub r13, 1
+cmp r13, 0
+jne test_next
+; Comparer la table finale et sa partie non publiee, apres tous les refus.
+lea r8, [rip + phase]
+mov r9, 7
+store64 [r8], r9
+lea rdx, [rip + final_records]
+mov rcx, 0
+final_table:
+; Utiliser un pointeur de base, l'adressage S0 n'a pas deux deplacements.
+mov r8, r14
+add r8, 0x410
+load8 r9, [r8 + rcx * 1]
+cmp rcx, 336
+jae unused_table
+load8 r10, [rdx + rcx * 1]
+jmp table_compare
+unused_table:
+mov r10, 0
+table_compare:
+cmp r9, r10
+jne failed
+add rcx, 1
+cmp rcx, 0x6000
+jne final_table
+; Deuxieme phase : 512 declarations passent par le frontend entier.
+lea r8, [rip + phase]
+mov r9, 8
+store64 [r8], r9
+mov r8, r14
+add r8, 16
+mov rcx, 0x6400
+mov rax, 0
+clear_symbols:
+store64 [r8], rax
+add r8, 8
+sub rcx, 8
+cmp rcx, 0
+jne clear_symbols
+mov r13, 0
+bulk_next:
+mov rcx, r13
+call bulk_prepare
+mov rcx, r14
+add rcx, 16
+call driver_add_const
+cmp r10, 0
+jne failed
+cmp r11, 0
+jne failed
+imul r8, r13, 48
+add r8, r14
+add r8, 0x410
+cmp rax, r8
+jne failed
+lea rdx, [rip + bulk_expected]
+mov rcx, 0
+bulk_compare:
+load8 r9, [rax + rcx * 1]
+load8 r10, [rdx + rcx * 1]
+cmp r9, r10
+jne failed
+add rcx, 1
+cmp rcx, 48
+jne bulk_compare
+load64 r9, [r14 + 16]
+mov rax, r13
+add rax, 1
+cmp r9, rax
+jne failed
+add r13, 1
+cmp r13, 512
+jne bulk_next
+lea r8, [rip + phase]
+mov r9, 9
+store64 [r8], r9
+mov rcx, r13
+call bulk_prepare
+mov rcx, r14
+add rcx, 16
+call driver_add_const
+cmp r10, 500
+jne failed
+cmp r11, 6
+jne failed
+cmp rax, 0
+jne failed
+lea r8, [rip + phase]
+mov r9, 10
+store64 [r8], r9
+mov r13, 0
+mov rcx, 0
+call bulk_prepare
+mov rax, 0x6666
+store16 [rdx + 13], rax
+store8 [rdx + 15], rax
+mov rcx, r14
+add rcx, 16
+call driver_add_const
+cmp r10, 300
+jne failed
+cmp r11, 6
+jne failed
+cmp rax, 0
+jne failed
+load64 r9, [r14 + 16]
+cmp r9, 512
+jne failed
+load64 r9, [r14 + 0x430]
+cmp r9, 0
+jne failed
+mov r8, r14
+add r8, 0x6410
+mov rcx, 64
+check_after_symbols:
+load8 r9, [r8]
+cmp r9, 0
+jne failed
+add r8, 1
+sub rcx, 1
+cmp rcx, 0
+jne check_after_symbols
+; Provenance invalide avant insertion, puis borne valide a la derniere ligne.
+lea r8, [rip + phase]
+mov r9, 11
+store64 [r8], r9
+lea r12, [rip + prov_cases]
+mov r13, 5
+provenance_next:
+mov rcx, 0
+call bulk_prepare
+load64 rax, [r12]
+store64 [r9], rax
+load64 rax, [r12 + 8]
+store64 [r9 + 8], rax
+mov rcx, r14
+add rcx, 16
+call driver_add_const
+load64 r8, [r12 + 16]
+cmp r10, r8
+jne failed
+load64 r8, [r12 + 24]
+cmp r11, r8
+jne failed
+cmp rax, 0
+jne failed
+add r12, 32
+sub r13, 1
+cmp r13, 0
+jne provenance_next
+load64 r9, [r14 + 16]
+cmp r9, 512
+jne failed
+load32 r9, [r14 + 0x438]
+cmp r9, 6
+jne failed
+load16 r9, [r14 + 0x43C]
+cmp r9, 1
+jne failed
+; Phase des en-tetes : etat, descripteur entry et table persistent entre les lignes.
+lea r8, [rip + phase]
+mov r9, 12
+store64 [r8], r9
+mov r8, r14
+add r8, 16
+mov rcx, 0x6400
+mov rax, 0
+stage_clear:
+store64 [r8], rax
+add r8, 8
+sub rcx, 8
+cmp rcx, 0
+jne stage_clear
+mov rax, 12
+store64 [r14 + 0x28], rax
+mov rax, 32
+store64 [r14 + 0x18], rax
+mov rax, 48
+store64 [r14 + 0x20], rax
+lea r12, [rip + stage_cases]
+mov r13, 42
+stage_next:
+mov r8, r14
+add r8, 0x90
+lea rdx, [rip + stage_before]
+mov rcx, 56
+stage_snapshot:
+load8 rax, [r8]
+store8 [rdx], rax
+add r8, 1
+add rdx, 1
+sub rcx, 1
+cmp rcx, 0
+jne stage_snapshot
+mov rcx, r14
+add rcx, 16
+load64 rdx, [r12]
+load64 r8, [r12 + 8]
+lea r9, [r12 + 16]
+call driver_front_line
+load64 r8, [r12 + 32]
+cmp r10, r8
+jne failed
+load64 r8, [r12 + 40]
+cmp r11, r8
+jne failed
+load64 r8, [r12 + 64]
+cmp rax, r8
+jne failed
+load64 r8, [r14 + 0x90]
+load64 r9, [r12 + 48]
+cmp r8, r9
+jne failed
+load64 r8, [r14 + 16]
+load64 r9, [r12 + 56]
+cmp r8, r9
+jne failed
+cmp r10, 0
+je stage_success
+mov r8, r14
+add r8, 0x90
+lea rdx, [rip + stage_before]
+mov rcx, 56
+stage_unchanged:
+load8 r9, [r8]
+load8 r10, [rdx]
+cmp r9, r10
+jne failed
+add r8, 1
+add rdx, 1
+sub rcx, 1
+cmp rcx, 0
+jne stage_unchanged
+jmp stage_advance
+stage_success:
+load64 rdx, [r12 + 72]
+cmp rdx, 0
+je stage_entry
+load64 r8, [r14 + 16]
+sub r8, 1
+imul r8, r8, 48
+add r8, r14
+add r8, 0x410
+mov rcx, 48
+stage_record:
+load8 r9, [r8]
+load8 r10, [rdx]
+cmp r9, r10
+jne failed
+add r8, 1
+add rdx, 1
+sub rcx, 1
+cmp rcx, 0
+jne stage_record
+stage_entry:
+load64 r8, [r12 + 80]
+cmp r8, -1
+je stage_advance
+load64 rax, [r12]
+add rax, r8
+load64 r9, [r14 + 0xA0]
+cmp r9, rax
+jne failed
+load64 rax, [r12 + 88]
+load64 r9, [r14 + 0xA8]
+cmp r9, rax
+jne failed
+load64 rax, [r12 + 16]
+add rax, r8
+load64 r9, [r14 + 0xB0]
+cmp r9, rax
+jne failed
+load64 rax, [r12 + 24]
+load64 r9, [r14 + 0xB8]
+cmp r9, rax
+jne failed
+load64 rax, [r12 + 16]
+load64 r9, [r14 + 0xC0]
+cmp r9, rax
+jne failed
+load64 r9, [r14 + 0x98]
+cmp r9, 1
+jne failed
+stage_advance:
+add r12, 96
+sub r13, 1
+cmp r13, 0
+jne stage_next
+; Recontrole final : aucune ligne ulterieure ne doit alterer les records ou entry.
+mov r8, r14
+add r8, 0x410
+lea rdx, [rip + stage_expected9]
+mov rcx, 0
+stage_final_table:
+load8 r9, [r8 + rcx * 1]
+cmp rcx, 288
+jae stage_final_zero
+load8 r10, [rdx + rcx * 1]
+jmp stage_final_compare
+stage_final_zero:
+mov r10, 0
+stage_final_compare:
+cmp r9, r10
+jne failed
+add rcx, 1
+cmp rcx, 0x6000
+jne stage_final_table
+mov r8, r14
+add r8, 0x90
+lea rdx, [rip + stage_final_entry]
+mov rcx, 56
+stage_final_header:
+load8 r9, [r8]
+load8 r10, [rdx]
+cmp r9, r10
+jne failed
+add r8, 1
+add rdx, 1
+sub rcx, 1
+cmp rcx, 0
+jne stage_final_header
+; Contexte de test : une constante negative, avant les vecteurs de donnees.
+mov rcx, r14
+add rcx, 16
+lea rdx, [rip + nd_negative]
+call native_symbol_insert
+cmp r10, 0
+jne failed
+; Phase de remplissage : chaque cas part de compteurs connus et d'un scratch A5.
+lea r8, [rip + phase]
+mov r9, 13
+store64 [r8], r9
+lea r12, [rip + fill_cases]
+mov r13, 61
+fill_test_next:
+mov rax, 12
+store64 [r14 + 0x28], rax
+mov rax, 32
+store64 [r14 + 0x18], rax
+mov rax, 48
+store64 [r14 + 0x20], rax
+load64 rax, [r12 + 16]
+store64 [r14 + 0x90], rax
+cmp rax, 4
+je fill_test_text
+cmp rax, 5
+je fill_test_ro
+mov r15, r14
+add r15, 0x20
+jmp fill_test_cursor
+fill_test_text:
+mov r15, r14
+add r15, 0x28
+jmp fill_test_cursor
+fill_test_ro:
+mov r15, r14
+add r15, 0x18
+fill_test_cursor:
+load64 rax, [r12 + 24]
+store64 [r15], rax
+mov rax, 7
+store64 [r14 + 0x30], rax
+mov rax, 1
+store64 [r14 + 0x38], rax
+mov r8, r14
+add r8, 0x1C510
+mov rcx, 128
+mov rax, 0xA5A5A5A5A5A5A5A5
+fill_poison:
+store64 [r8], rax
+add r8, 8
+sub rcx, 1
+cmp rcx, 0
+jne fill_poison
+mov rax, 31
+store64 [r14 + 0x1CE50], rax
+mov rax, 37
+store64 [r14 + 0x1C910], rax
+mov rcx, r14
+add rcx, 16
+load64 rdx, [r12]
+load64 r8, [r12 + 8]
+lea r9, [rip + fill_origin]
+call driver_front_line
+load64 r8, [r12 + 32]
+cmp r10, r8
+jne failed
+load64 r8, [r12 + 40]
+cmp r11, r8
+jne failed
+load64 r8, [r12 + 72]
+cmp rax, r8
+jne failed
+load64 r8, [r12 + 48]
+load64 r9, [r15]
+cmp r8, r9
+jne failed
+load64 r8, [r12 + 56]
+load64 r9, [r14 + 0x30]
+cmp r8, r9
+jne failed
+load64 r8, [r12 + 64]
+load64 r9, [r14 + 0x38]
+cmp r8, r9
+jne failed
+load64 r8, [r12 + 16]
+load64 r9, [r14 + 0x90]
+cmp r8, r9
+jne failed
+load64 r9, [r14 + 16]
+cmp r9, 7
+jne failed
+mov rdi, 0
+cmp r10, 0
+jne fill_check_bytes
+load64 rdi, [r12 + 56]
+cmp rdi, 1024
+jb fill_check_bytes
+mov rdi, 1024
+fill_check_bytes:
+mov r8, r14
+add r8, 0x1C510
+mov rcx, 0
+fill_byte_check:
+load8 r9, [r8 + rcx * 1]
+cmp rcx, rdi
+jae fill_expected_poison
+load64 r10, [r12 + 88]
+cmp r10, 0
+je fill_expected_pattern
+load8 r10, [r10 + rcx * 1]
+jmp fill_expected_value
+fill_expected_pattern:
+load64 r10, [r12 + 80]
+jmp fill_expected_value
+fill_expected_poison:
+mov r10, 165
+fill_expected_value:
+cmp r9, r10
+jne failed
+add rcx, 1
+cmp rcx, 1024
+jne fill_byte_check
+load64 r9, [r14 + 0x1CE50]
+cmp r9, 31
+jne failed
+load64 r9, [r14 + 0x1C910]
+cmp r9, 37
+jne failed
+add r12, 96
+sub r13, 1
+cmp r13, 0
+jne fill_test_next
+load64 r9, [r14]
+cmp r9, 31
+jne failed
+load64 r9, [r14 + 8]
+cmp r9, 31
+jne failed
+load64 r9, [r14 + 0x1D010]
+cmp r9, 37
+jne failed
+load64 r9, [r14 + 0x1D018]
+cmp r9, 37
+jne failed
+lea r15, [rip + pass_msg]
+jmp release_pool
+failed:
+lea r8, [rip + phase]
+load64 rax, [r8]
+cmp rax, 8
+jae bulk_failure_index
+mov rax, 24
+sub rax, r13
+jmp failure_index_ready
+bulk_failure_index:
+mov rax, r13
+failure_index_ready:
+lea r8, [rip + diagnostic]
+add r8, 28
+lea r9, [rip + hex_chars]
+mov r10, 4
+diag_index:
+mov rcx, rax
+and rcx, 15
+load8 rdx, [r9 + rcx * 1]
+store16 [r8], rdx
+sub r8, 2
+shr rax, 4
+sub r10, 1
+cmp r10, 0
+jne diag_index
+lea r8, [rip + phase]
+load64 rax, [r8]
+load8 rax, [r9 + rax * 1]
+lea r8, [rip + diagnostic]
+store16 [r8 + 40], rax
+lea r8, [rip + observed]
+load64 rax, [r8]
+shl rax, 16
+load64 rcx, [r8 + 8]
+or rax, rcx
+lea r8, [rip + diagnostic]
+add r8, 60
+mov r10, 8
+diag_result:
+mov rcx, rax
+and rcx, 15
+load8 rdx, [r9 + rcx * 1]
+store16 [r8], rdx
+sub r8, 2
+shr rax, 4
+sub r10, 1
+cmp r10, 0
+jne diag_result
+lea r15, [rip + diagnostic]
+release_pool:
+mov rcx, r14
+load64 rax, [rsi + 0x48]
+call rax
+cmp rax, 0
+je report
+lea r15, [rip + fail_msg]
+jmp report
+no_pool:
+lea r15, [rip + fail_msg]
+report:
+mov rdx, r15
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 48
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+mov rax, 0
+ret
+
+driver_front_line:
+sub rsp, 40
+call native_front_line
+lea r8, [rip + observed]
+store64 [r8], r10
+store64 [r8 + 8], r11
+add rsp, 40
+ret
+
+; RCX=WORK, RDX=ligne, R8=longueur, R9=provenance comme native_add_const.
+; RAX=tag (0 vide, 1 format, 2 abi, 3 const, 4 entry, 5 section, 6 label).
+; R10=code, R11=index local. Les instructions et donnees ne sont pas encore portees ici.
+native_front_line:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 64
+mov r12, rcx
+mov rsi, rdx
+mov rdi, r8
+mov rbx, r9
+load64 r13, [r12 + 0x80]
+cmp r13, 7
+jae ns_internal
+load64 rax, [r12]
+cmp rax, 513
+jae ns_internal
+mov r14, r12
+add r14, 0x1C400
+mov rcx, rsi
+mov rdx, rdi
+mov r8, r14
+call native_lex_line
+cmp r10, 0
+jne ns_zero_return
+mov r15, rax
+cmp r15, 0
+je ns_ok
+mov rax, r15
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 rcx, [rax]
+load64 rdx, [rax + 8]
+add rcx, rdx
+store64 [rsp + 0x20], rcx
+mov rcx, rbx
+mov rdx, rdi
+call ns_check_origin
+cmp rax, 0
+jne ns_internal
+cmp r13, 2
+jb ns_preamble
+cmp r13, 2
+je ns_const_entry
+cmp r13, 3
+je ns_section_only
+; Une declaration de label est reconnue avant les mots-cles de corps.
+cmp r15, 2
+jb ns_body_keyword
+load64 rax, [r14 + 24]
+cmp rax, 1
+jne ns_body_keyword
+load64 rax, [r14 + 16]
+load8 rax, [rsi + rax * 1]
+cmp rax, 58
+je ns_label
+ns_body_keyword:
+lea r8, [rip + ns_kw_section]
+mov r9, 7
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je ns_section
+lea r8, [rip + nf_kw_align]
+mov r9, 5
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je nf_align
+lea r8, [rip + nf_kw_zero]
+mov r9, 4
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je nf_zero
+jmp ns_body
+ns_section_only:
+lea r8, [rip + ns_kw_section]
+mov r9, 7
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+jne ns_order_zero
+jmp ns_section
+ns_preamble:
+cmp r13, 0
+jne ns_abi_word
+lea r8, [rip + ns_kw_format]
+mov r9, 6
+jmp ns_preamble_word
+ns_abi_word:
+lea r8, [rip + ns_kw_abi]
+mov r9, 3
+ns_preamble_word:
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+jne ns_order_zero
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+cmp r13, 0
+jne ns_abi_value
+lea r8, [rip + ns_kw_pe64]
+mov r9, 4
+jmp ns_preamble_value
+ns_abi_value:
+lea r8, [rip + ns_kw_efi]
+mov r9, 7
+ns_preamble_value:
+mov rcx, 1
+call ns_token_equals
+cmp rax, 1
+jne ns_order_one
+cmp r15, 2
+jne ns_extra_two
+mov rax, r13
+add rax, 1
+store64 [r12 + 0x80], rax
+jmp ns_ok
+ns_const_entry:
+lea r8, [rip + kw_const]
+mov r9, 5
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+jne ns_maybe_entry
+mov rcx, r12
+mov rdx, rsi
+mov r8, rdi
+mov r9, rbx
+call native_add_const
+cmp r10, 0
+jne ns_return
+mov rax, 3
+jmp ns_ok
+ns_maybe_entry:
+lea r8, [rip + kw_entry]
+mov r9, 5
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+jne ns_order_zero
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+load64 rcx, [r14 + 16]
+add rcx, rsi
+load64 rdx, [r14 + 24]
+call native_name_check
+cmp rax, 0
+jne ns_name_one_error
+lea r8, [rip + kw_const]
+mov r9, 5
+mov rcx, 1
+call ns_token_equals
+cmp rax, 1
+je ns_syntax_one
+lea r8, [rip + kw_entry]
+mov r9, 5
+mov rcx, 1
+call ns_token_equals
+cmp rax, 1
+je ns_syntax_one
+cmp r15, 2
+jne ns_extra_two
+load64 rax, [r14 + 16]
+add rax, rsi
+store64 [r12 + 0x90], rax
+load64 rax, [r14 + 24]
+store64 [r12 + 0x98], rax
+load64 rax, [rbx]
+load64 rdx, [r14 + 16]
+add rax, rdx
+store64 [r12 + 0xA0], rax
+load64 rax, [rbx + 8]
+store64 [r12 + 0xA8], rax
+load64 rax, [rbx]
+store64 [r12 + 0xB0], rax
+mov rax, 1
+store64 [r12 + 0x88], rax
+mov rax, 3
+store64 [r12 + 0x80], rax
+mov rax, 4
+jmp ns_ok
+ns_section:
+cmp r13, 6
+je ns_order_zero
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+cmp r13, 3
+je ns_text_name
+cmp r13, 4
+je ns_ro_name
+lea r8, [rip + ns_kw_data]
+mov r9, 5
+jmp ns_section_name
+ns_text_name:
+lea r8, [rip + ns_kw_text]
+mov r9, 5
+jmp ns_section_name
+ns_ro_name:
+lea r8, [rip + ns_kw_ro]
+mov r9, 6
+ns_section_name:
+mov rcx, 1
+call ns_token_equals
+cmp rax, 1
+jne ns_order_one
+cmp r15, 3
+jb ns_missing
+mov rcx, 2
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_two
+cmp r13, 3
+je ns_text_flags
+cmp r13, 4
+je ns_ro_flags
+lea r8, [rip + ns_kw_rw]
+mov r9, 2
+jmp ns_section_flags
+ns_text_flags:
+lea r8, [rip + ns_kw_rx]
+mov r9, 2
+jmp ns_section_flags
+ns_ro_flags:
+lea r8, [rip + ns_kw_r]
+mov r9, 1
+ns_section_flags:
+mov rcx, 2
+call ns_token_equals
+cmp rax, 1
+jne ns_order_two
+cmp r15, 3
+jne ns_extra_three
+mov rax, r13
+add rax, 1
+store64 [r12 + 0x80], rax
+mov rax, 5
+jmp ns_ok
+ns_label:
+load64 rcx, [r14]
+add rcx, rsi
+load64 rdx, [r14 + 8]
+call native_name_check
+cmp rax, 0
+jne ns_name_zero_error
+cmp r15, 2
+jne ns_extra_two
+cmp r13, 4
+je ns_text_offset
+cmp r13, 5
+je ns_ro_offset
+load64 rax, [r12 + 16]
+cmp rax, 8193
+jae ns_internal
+jmp ns_label_value
+ns_text_offset:
+load64 rax, [r12 + 24]
+cmp rax, 32769
+jae ns_internal
+jmp ns_label_value
+ns_ro_offset:
+load64 rax, [r12 + 8]
+cmp rax, 16385
+jae ns_internal
+ns_label_value:
+store64 [rsp + 0x28], rax
+mov r9, r12
+add r9, 0x1CD00
+mov rax, 0
+store64 [r9], rax
+store64 [r9 + 8], rax
+store64 [r9 + 16], rax
+store64 [r9 + 24], rax
+store64 [r9 + 32], rax
+store64 [r9 + 40], rax
+load64 rdx, [r14]
+add rdx, rsi
+load64 r8, [r14 + 8]
+mov rcx, 0
+ns_copy_label:
+cmp rcx, r8
+jae ns_label_meta
+load8 rax, [rdx + rcx * 1]
+store8 [r9 + rcx * 1], rax
+add rcx, 1
+jmp ns_copy_label
+ns_label_meta:
+load64 rax, [rsp + 0x28]
+store64 [r9 + 32], rax
+load64 rax, [rbx]
+load64 rdx, [r14]
+add rax, rdx
+store32 [r9 + 40], rax
+load64 rax, [rbx + 8]
+store16 [r9 + 44], rax
+mov rax, r13
+sub rax, 3
+shl rax, 5
+or rax, 2
+store16 [r9 + 46], rax
+mov rcx, r12
+mov rdx, r9
+call native_symbol_insert
+cmp r10, 0
+je ns_label_ok
+cmp r10, 600
+je ns_return
+load64 rdx, [r14]
+add r11, rdx
+jmp ns_return
+ns_label_ok:
+mov rax, 6
+jmp ns_ok
+; Les deux directives publient un remplissage, pas une copie tronquee de donnees.
+nf_align:
+mov rax, 7
+store64 [rsp + 0x28], rax
+jmp nf_argument
+nf_zero:
+cmp r13, 4
+je ns_forbidden
+mov rax, 8
+store64 [rsp + 0x28], rax
+nf_argument:
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+load64 rax, [rsp + 0x28]
+cmp rax, 8
+je nf_zero_value
+load64 rdx, [r14 + 16]
+load64 rcx, [r14 + 24]
+cmp rcx, 1
+je nf_single_align
+cmp rcx, 2
+jne ns_syntax_one
+load16 rax, [rsi + rdx * 1]
+cmp rax, 0x3631
+jne ns_syntax_one
+mov rax, 16
+jmp nf_value
+nf_single_align:
+load8 rax, [rsi + rdx * 1]
+cmp rax, 50
+je nf_align_digit
+cmp rax, 52
+je nf_align_digit
+cmp rax, 56
+jne ns_syntax_one
+nf_align_digit:
+sub rax, 48
+jmp nf_value
+nf_zero_value:
+load64 rcx, [r14 + 16]
+add rcx, rsi
+load8 rax, [rcx]
+cmp rax, 48
+jb ns_syntax_one
+cmp rax, 58
+jae ns_syntax_one
+load64 rdx, [r14 + 24]
+mov r8, 18446744073709551615
+call native_parse_u64
+cmp r10, 0
+jne nf_integer_error
+cmp rax, 0
+je ns_syntax_one
+nf_value:
+cmp r15, 2
+jne ns_extra_two
+mov rbx, r12
+cmp r13, 4
+je nf_text_cursor
+cmp r13, 5
+je nf_ro_cursor
+add rbx, 16
+mov rdi, 8192
+jmp nf_compute
+nf_text_cursor:
+add rbx, 24
+mov rdi, 32768
+jmp nf_compute
+nf_ro_cursor:
+add rbx, 8
+mov rdi, 16384
+nf_compute:
+load64 r9, [rbx]
+cmp rdi, r9
+jb nf_capacity
+load64 r8, [rsp + 0x28]
+cmp r8, 7
+jne nf_check_room
+; delta = (-offset) & (n-1), apres validation de l'offset et du n canonique.
+mov r8, rax
+sub r8, 1
+mov rax, 0
+sub rax, r9
+and rax, r8
+nf_check_room:
+mov r8, rdi
+sub r8, r9
+cmp r8, rax
+jb nf_capacity
+mov rdx, r9
+add rdx, rax
+mov r15, rax
+mov r8, rax
+cmp r8, 1024
+jb nf_prefix_ready
+mov r8, 1024
+nf_prefix_ready:
+cmp r8, 0
+je nf_publish
+mov r9, r12
+add r9, 0x1C500
+mov r10, 0
+cmp r13, 4
+jne nf_fill_byte
+mov r10, 144
+nf_fill_byte:
+store8 [r9], r10
+add r9, 1
+sub r8, 1
+cmp r8, 0
+jne nf_fill_byte
+nf_publish:
+store64 [rbx], rdx
+store64 [r12 + 0x20], r15
+mov rax, 2
+cmp r13, 4
+jne nf_kind_ready
+mov rax, 3
+nf_kind_ready:
+store64 [r12 + 0x28], rax
+load64 rax, [rsp + 0x28]
+jmp ns_ok
+nf_integer_error:
+load64 rdx, [r14 + 16]
+add r11, rdx
+jmp ns_zero_return
+nf_capacity:
+mov r10, 500
+jmp ns_error_zero
+
+; RAX=largeur depuis la table de mots, uniquement en rdata/data.
+nd_scalar:
+store64 [rsp + 0x28], rax
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+mov rbx, r12
+cmp r13, 5
+je nd_ro
+add rbx, 16
+mov rdi, 8192
+jmp nd_alignment
+nd_ro:
+add rbx, 8
+mov rdi, 16384
+nd_alignment:
+load64 rax, [rbx]
+load64 rdx, [rsp + 0x28]
+sub rdx, 1
+and rax, rdx
+cmp rax, 0
+jne nd_unaligned
+mov rax, 1
+store64 [rsp + 0x30], rax
+mov rax, 0
+store64 [rsp + 0x38], rax
+nd_value:
+; addr(...) attend son port de relocation; ne pas le confondre avec une constante.
+load64 rax, [rsp + 0x30]
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 4
+jne nd_parse
+load64 rdx, [rax]
+load32 rdx, [rsi + rdx * 1]
+cmp rdx, 0x72646461
+jne nd_parse
+load64 rdx, [rsp + 0x30]
+add rdx, 1
+cmp rdx, r15
+jae nd_parse
+load64 rdx, [rax + 24]
+cmp rdx, 1
+jne nd_parse
+load64 rdx, [rax + 16]
+load8 rdx, [rsi + rdx * 1]
+cmp rdx, 40
+je nd_addr_pending
+nd_parse:
+load64 rcx, [rsp + 0x30]
+mov rdx, 1
+call nd_parse_value
+cmp r10, 0
+jne ns_zero_return
+load64 rcx, [rsp + 0x28]
+cmp rcx, 8
+je nd_store_temp
+cmp r8, 0
+jne nd_negative_bound
+mov rdx, 255
+cmp rcx, 1
+je nd_positive_check
+mov rdx, 65535
+cmp rcx, 2
+je nd_positive_check
+mov rdx, 4294967295
+nd_positive_check:
+cmp rdx, rax
+jb nd_range
+jmp nd_store_temp
+nd_negative_bound:
+cmp rax, 0
+je nd_store_temp
+mov rdx, 0xFFFFFFFFFFFFFF80
+cmp rcx, 1
+je nd_negative_check
+mov rdx, 0xFFFFFFFFFFFF8000
+cmp rcx, 2
+je nd_negative_check
+mov rdx, 0xFFFFFFFF80000000
+nd_negative_check:
+cmp rax, rdx
+jb nd_range
+nd_store_temp:
+load64 rcx, [rsp + 0x38]
+cmp rcx, 8
+jae ns_internal
+mov rdx, r12
+add rdx, 0x1CE00
+store64 [rdx + rcx * 8], rax
+add rcx, 1
+store64 [rsp + 0x38], rcx
+load64 rax, [rsp + 0x30]
+add rax, r9
+store64 [rsp + 0x30], rax
+cmp rax, r15
+je nd_commit
+cmp r15, rax
+jb ns_internal
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne nd_syntax_current
+load64 rdx, [rax]
+load8 rdx, [rsi + rdx * 1]
+cmp rdx, 44
+jne nd_syntax_current
+load64 rax, [rsp + 0x30]
+add rax, 1
+store64 [rsp + 0x30], rax
+cmp rax, r15
+jae ns_missing
+jmp nd_value
+nd_commit:
+load64 r15, [rsp + 0x38]
+mov rax, r15
+load64 r8, [rsp + 0x28]
+cmp r8, 1
+je nd_length
+cmp r8, 2
+je nd_length_two
+cmp r8, 4
+je nd_length_four
+shl rax, 3
+jmp nd_length
+nd_length_two:
+shl rax, 1
+jmp nd_length
+nd_length_four:
+shl rax, 2
+nd_length:
+store64 [rsp + 0x38], rax
+load64 r9, [rbx]
+cmp rdi, r9
+jb nf_capacity
+mov r8, rdi
+sub r8, r9
+cmp r8, rax
+jb nf_capacity
+add r9, rax
+store64 [rsp + 0x30], r9
+mov rdx, r12
+add rdx, 0x1CE00
+mov r9, r12
+add r9, 0x1C500
+nd_emit_value:
+load64 rax, [rdx]
+add rdx, 8
+load64 r8, [rsp + 0x28]
+nd_emit_byte:
+store8 [r9], rax
+shr rax, 8
+add r9, 1
+sub r8, 1
+cmp r8, 0
+jne nd_emit_byte
+sub r15, 1
+cmp r15, 0
+jne nd_emit_value
+load64 rax, [rsp + 0x30]
+store64 [rbx], rax
+load64 rax, [rsp + 0x38]
+store64 [r12 + 0x20], rax
+mov rax, 1
+store64 [r12 + 0x28], rax
+mov rax, 9
+jmp ns_ok
+nd_unaligned:
+mov r10, 402
+jmp ns_error_zero
+nd_addr_pending:
+mov r10, 400
+jmp nd_error_current
+nd_range:
+mov r10, 401
+jmp nd_error_current
+nd_syntax_current:
+mov r10, 201
+nd_error_current:
+load64 rax, [rsp + 0x30]
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+jmp ns_zero_return
+ns_body:
+lea rax, [rip + ns_body_words]
+store64 [rsp + 0x38], rax
+ns_body_word:
+load64 rax, [rsp + 0x38]
+load64 r9, [rax]
+cmp r9, 0
+je ns_unknown
+load64 r8, [rax + 16]
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je ns_body_matched
+load64 rax, [rsp + 0x38]
+add rax, 32
+store64 [rsp + 0x38], rax
+jmp ns_body_word
+ns_body_matched:
+load64 rax, [rsp + 0x38]
+load64 rax, [rax + 8]
+cmp rax, 0
+je ns_order_zero
+cmp r13, 4
+jne ns_data_body
+cmp rax, 2
+je ns_forbidden
+jmp ns_unknown
+ns_data_body:
+cmp rax, 1
+je ns_forbidden
+load64 rax, [rsp + 0x38]
+load64 rax, [rax + 24]
+cmp rax, 0
+jne nd_scalar
+ns_unknown:
+mov r10, 400
+jmp ns_error_zero
+ns_forbidden:
+mov r10, 202
+jmp ns_error_zero
+ns_order_zero:
+mov r10, 200
+ns_error_zero:
+load64 r11, [r14]
+jmp ns_zero_return
+ns_order_one:
+mov r10, 200
+load64 r11, [r14 + 16]
+jmp ns_zero_return
+ns_order_two:
+mov r10, 200
+load64 r11, [r14 + 32]
+jmp ns_zero_return
+ns_syntax_one:
+load64 r11, [r14 + 16]
+jmp ns_syntax
+ns_syntax_two:
+ns_extra_two:
+load64 r11, [r14 + 32]
+jmp ns_syntax
+ns_extra_three:
+load64 r11, [r14 + 48]
+jmp ns_syntax
+ns_missing:
+load64 r11, [rsp + 0x20]
+ns_syntax:
+mov r10, 201
+jmp ns_zero_return
+ns_name_one_error:
+mov r10, rax
+load64 rdx, [r14 + 16]
+add r11, rdx
+jmp ns_zero_return
+ns_name_zero_error:
+mov r10, rax
+load64 rdx, [r14]
+add r11, rdx
+jmp ns_zero_return
+ns_internal:
+mov r10, 600
+mov r11, 0
+ns_zero_return:
+mov rax, 0
+jmp ns_return
+ns_ok:
+mov r10, 0
+mov r11, 0
+ns_return:
+add rsp, 64
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; Helper prive du frontend : RCX=index token, RDX=constantes permises.
+; RSI/R12/R14/R15 = ligne/WORK/tokens/compte. Retour bits, signe R8, tokens R9.
+nd_parse_value:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 48
+mov rdi, r12
+mov r13, rcx
+mov rbx, rdx
+mov rax, 0
+store64 [rsp + 32], rax
+mov rax, 1
+store64 [rsp + 40], rax
+cmp r13, r15
+jae nv_missing
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 r12, [rax]
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne nv_classify
+mov rdx, r12
+load8 rdx, [rsi + rdx * 1]
+cmp rdx, 45
+jne nv_classify
+mov rax, 16
+store64 [rsp + 32], rax
+mov rax, 2
+store64 [rsp + 40], rax
+add r13, 1
+cmp r13, r15
+jae nv_sign_gap
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+mov rax, r12
+add rax, 1
+cmp rdx, rax
+jne nv_sign_gap
+nv_classify:
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+load8 r8, [rsi + rdx * 1]
+cmp r8, 48
+jb nv_name
+cmp r8, 58
+jb nv_literal
+nv_name:
+load64 r8, [rsp + 32]
+cmp r8, 0
+jne nv_bad_magnitude
+cmp rbx, 0
+je nv_unsupported
+load64 r8, [rax + 8]
+add rdx, rsi
+mov rcx, rdi
+call native_symbol_find
+cmp r10, 0
+jne nv_lookup_error
+load16 r10, [rax + 46]
+mov r8, r10
+and r8, 16
+and r10, 15
+cmp r10, 1
+jne nv_absent
+store64 [rsp + 32], r8
+load64 rax, [rax + 32]
+jmp nv_ok
+nv_literal:
+load64 rdx, [rax + 8]
+load64 rcx, [rax]
+add rcx, rsi
+mov r8, 18446744073709551615
+load64 rax, [rsp + 32]
+cmp rax, 0
+je nv_parse
+mov r8, 9223372036854775808
+nv_parse:
+call native_parse_u64
+cmp r10, 0
+jne nv_literal_error
+load64 r8, [rsp + 32]
+cmp r8, 0
+je nv_ok
+mov rdx, 0
+sub rdx, rax
+mov rax, rdx
+nv_ok:
+mov r10, 0
+mov r11, 0
+load64 r8, [rsp + 32]
+load64 r9, [rsp + 40]
+jmp nv_return
+nv_lookup_error:
+cmp r10, 600
+je nv_error
+add r11, r12
+jmp nv_error
+nv_literal_error:
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+add r11, rdx
+jmp nv_error
+nv_bad_magnitude:
+mov r11, rdx
+mov r10, 102
+jmp nv_error
+nv_sign_gap:
+mov r11, r12
+add r11, 1
+mov r10, 102
+jmp nv_error
+nv_absent:
+mov r10, 301
+mov r11, r12
+jmp nv_error
+nv_unsupported:
+mov r10, 400
+mov r11, r12
+jmp nv_error
+nv_missing:
+mov r11, 0
+cmp r15, 0
+je nv_missing_code
+mov rax, r15
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+load64 rdx, [rax + 8]
+add r11, rdx
+nv_missing_code:
+mov r10, 201
+nv_error:
+mov rax, 0
+mov r8, 0
+mov r9, 0
+nv_return:
+add rsp, 48
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+; Helpers prives : RSI=ligne, R14=tokens dans native_front_line.
+; RCX=index token, R8/R9=mot attendu; aucun etat publie.
+ns_token_equals:
+imul rcx, rcx, 16
+add rcx, r14
+load64 rdx, [rcx + 8]
+load64 rcx, [rcx]
+add rcx, rsi
+sub rsp, 40
+call fc_equals
+add rsp, 40
+ret
+ns_require_space:
+imul rcx, rcx, 16
+add rcx, r14
+load64 rax, [rcx - 16]
+load64 rdx, [rcx - 8]
+add rax, rdx
+add rax, 1
+load64 rdx, [rcx]
+cmp rdx, rax
+jb ns_no_space
+mov rax, 0
+ret
+ns_no_space:
+mov rax, 1
+ret
+
+; RCX=provenance, RDX=longueur de ligne deja bornee par le lexer.
+ns_check_origin:
+load64 rax, [rcx]
+cmp rax, 65536
+jae ns_origin_bad
+add rax, rdx
+cmp rax, 65536
+jae ns_origin_bad
+load64 rax, [rcx + 8]
+cmp rax, 1
+jb ns_origin_bad
+cmp rax, 4097
+jae ns_origin_bad
+mov rax, 0
+ret
+ns_origin_bad:
+mov rax, 600
+ret
+
+; Conserver le resultat reel de chaque phase pour le diagnostic du driver.
+driver_add_const:
+sub rsp, 40
+call native_add_const
+lea r8, [rip + observed]
+store64 [r8], r10
+store64 [r8 + 8], r11
+add rsp, 40
+ret
+
+; RCX=i -> ligne Cxxx=0xxxx, provenance et oracle, sans clobber non volatil.
+bulk_prepare:
+lea r8, [rip + bulk_line]
+lea r9, [rip + hex_chars]
+mov r10, rcx
+shr r10, 8
+and r10, 15
+load8 rax, [r9 + r10 * 1]
+store8 [r8 + 7], rax
+store8 [r8 + 13], rax
+mov r10, rcx
+shr r10, 4
+and r10, 15
+load8 rax, [r9 + r10 * 1]
+store8 [r8 + 8], rax
+store8 [r8 + 14], rax
+mov r10, rcx
+and r10, 15
+load8 rax, [r9 + r10 * 1]
+store8 [r8 + 9], rax
+store8 [r8 + 15], rax
+lea r9, [rip + bulk_expected]
+load32 rax, [r8 + 6]
+store32 [r9], rax
+store64 [r9 + 32], rcx
+mov rax, rcx
+shl rax, 5
+add rax, 6
+store32 [r9 + 40], rax
+mov rax, rcx
+add rax, 1
+store16 [r9 + 44], rax
+mov rax, 1
+store16 [r9 + 46], rax
+lea r9, [rip + bulk_prov]
+mov rax, rcx
+shl rax, 5
+store64 [r9], rax
+add rcx, 1
+store64 [r9 + 8], rcx
+mov rdx, r8
+mov r8, 16
+ret
+; RCX=WORK 0x1D000, RDX=ligne, R8=longueur, R9={offset source:u64, ligne:u64}.
+; RAX=record ou zero; R10=code, R11=index local de faute. Pas d'I/O.
+native_add_const:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 96
+mov r12, rcx
+mov rsi, rdx
+mov rdi, r8
+mov rbx, r9
+mov r14, r12
+add r14, 0x1C400
+mov r15, r12
+add r15, 0x1CD00
+mov rax, 0
+store64 [rsp + 0x20], rax
+store64 [rsp + 0x48], rax
+mov rcx, rsi
+mov rdx, rdi
+mov r8, r14
+call native_lex_line
+cmp r10, 0
+jne fc_lex_error
+mov r13, rax
+cmp r13, 0
+je fc_missing
+mov rax, r13
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 rcx, [rax]
+load64 rdx, [rax + 8]
+add rcx, rdx
+store64 [rsp + 0x20], rcx
+load64 rcx, [r14]
+add rcx, rsi
+load64 rdx, [r14 + 8]
+lea r8, [rip + kw_const]
+mov r9, 5
+call fc_equals
+cmp rax, 1
+jne fc_syntax_zero
+cmp r13, 2
+jb fc_missing
+load64 rax, [r14 + 16]
+store64 [rsp + 0x28], rax
+load64 rdx, [r14 + 24]
+store64 [rsp + 0x30], rdx
+load64 rcx, [r14]
+load64 r8, [r14 + 8]
+add rcx, r8
+add rcx, 1
+cmp rax, rcx
+jb fc_syntax_name
+mov rcx, rsi
+add rcx, rax
+call native_name_check
+cmp rax, 0
+jne fc_name_error
+load64 rcx, [rsp + 0x28]
+add rcx, rsi
+load64 rdx, [rsp + 0x30]
+lea r8, [rip + kw_const]
+mov r9, 5
+call fc_equals
+cmp rax, 1
+je fc_syntax_name
+load64 rcx, [rsp + 0x28]
+add rcx, rsi
+load64 rdx, [rsp + 0x30]
+lea r8, [rip + kw_entry]
+mov r9, 5
+call fc_equals
+cmp rax, 1
+je fc_syntax_name
+cmp r13, 3
+jb fc_missing
+load64 rax, [r14 + 40]
+cmp rax, 1
+jne fc_syntax_two
+load64 rax, [r14 + 32]
+load8 rax, [rsi + rax * 1]
+cmp rax, 61
+jne fc_syntax_two
+cmp r13, 4
+jb fc_missing
+mov rax, 3
+store64 [rsp + 0x38], rax
+load64 rax, [r14 + 48]
+store64 [rsp + 0x40], rax
+load64 rdx, [r14 + 56]
+cmp rdx, 1
+jne fc_number
+load8 rax, [rsi + rax * 1]
+cmp rax, 45
+jne fc_number
+mov rax, 16
+store64 [rsp + 0x48], rax
+mov rax, 4
+store64 [rsp + 0x38], rax
+cmp r13, 5
+jb fc_sign_gap
+load64 rax, [rsp + 0x40]
+add rax, 1
+load64 rdx, [r14 + 64]
+cmp rax, rdx
+jne fc_sign_gap
+fc_number:
+load64 rax, [rsp + 0x38]
+imul rax, rax, 16
+add rax, r14
+load64 rcx, [rax]
+add rcx, rsi
+load64 rdx, [rax + 8]
+mov r8, 18446744073709551615
+load64 rax, [rsp + 0x48]
+cmp rax, 0
+je fc_parse_number
+mov r8, 9223372036854775808
+fc_parse_number:
+call native_parse_u64
+cmp r10, 0
+jne fc_number_error
+load64 r9, [rsp + 0x48]
+cmp r9, 0
+je fc_bits
+mov r9, 0
+sub r9, rax
+mov rax, r9
+fc_bits:
+store64 [rsp + 0x50], rax
+load64 r9, [rsp + 0x38]
+add r9, 1
+cmp r13, r9
+jne fc_extra
+; Provenance bornee avant publication; le candidat est dans un scratch distinct.
+load64 rax, [rbx]
+cmp rax, 65536
+jae fc_internal
+add rax, rdi
+cmp rax, 65536
+jae fc_internal
+load64 rax, [rbx + 8]
+cmp rax, 1
+jb fc_internal
+cmp rax, 4097
+jae fc_internal
+mov rax, 0
+store64 [r15], rax
+store64 [r15 + 8], rax
+store64 [r15 + 16], rax
+store64 [r15 + 24], rax
+store64 [r15 + 32], rax
+store64 [r15 + 40], rax
+load64 rdx, [rsp + 0x28]
+add rdx, rsi
+load64 r8, [rsp + 0x30]
+mov rcx, 0
+fc_copy_name:
+cmp rcx, r8
+jae fc_metadata
+load8 rax, [rdx + rcx * 1]
+store8 [r15 + rcx * 1], rax
+add rcx, 1
+jmp fc_copy_name
+fc_metadata:
+load64 rax, [rsp + 0x50]
+store64 [r15 + 32], rax
+load64 rax, [rbx]
+load64 rdx, [rsp + 0x28]
+add rax, rdx
+store32 [r15 + 40], rax
+load64 rax, [rbx + 8]
+store16 [r15 + 44], rax
+load64 rax, [rsp + 0x48]
+add rax, 1
+store16 [r15 + 46], rax
+mov rcx, r12
+mov rdx, r15
+call native_symbol_insert
+cmp r10, 0
+je fc_return
+cmp r10, 600
+je fc_return
+load64 rdx, [rsp + 0x28]
+add r11, rdx
+jmp fc_return
+fc_lex_error:
+mov rax, 0
+jmp fc_return
+fc_name_error:
+mov r10, rax
+load64 rdx, [rsp + 0x28]
+add r11, rdx
+mov rax, 0
+jmp fc_return
+fc_number_error:
+load64 rax, [rsp + 0x38]
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+add r11, rdx
+mov rax, 0
+jmp fc_return
+fc_sign_gap:
+load64 r11, [rsp + 0x40]
+add r11, 1
+mov r10, 102
+mov rax, 0
+jmp fc_return
+fc_syntax_zero:
+load64 r11, [r14]
+jmp fc_syntax
+fc_syntax_name:
+load64 r11, [rsp + 0x28]
+jmp fc_syntax
+fc_syntax_two:
+load64 r11, [r14 + 32]
+jmp fc_syntax
+fc_missing:
+load64 r11, [rsp + 0x20]
+jmp fc_syntax
+fc_extra:
+load64 rax, [rsp + 0x38]
+add rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+fc_syntax:
+mov rax, 0
+mov r10, 201
+jmp fc_return
+fc_internal:
+mov rax, 0
+mov r10, 600
+mov r11, 0
+fc_return:
+add rsp, 96
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; Comparaison bornee de deux spans; les mots-cles gardent leur casse exacte.
+fc_equals:
+cmp rdx, r9
+jne fc_not_equal
+mov r10, 0
+fc_equal_byte:
+cmp r10, rdx
+jae fc_equal
+load8 rax, [rcx + r10 * 1]
+load8 r11, [r8 + r10 * 1]
+cmp rax, r11
+jne fc_not_equal
+add r10, 1
+jmp fc_equal_byte
+fc_equal:
+mov rax, 1
+ret
+fc_not_equal:
+mov rax, 0
+ret
+
+; Composant repris sans son driver depuis native-u64.ntasm.
+native_parse_u64:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rsi, rcx
+mov rdi, rdx
+mov r12, 0
+mov r15, 0
+cmp rdi, 0
+je np_bad
+load8 rax, [rsi]
+cmp rax, 48
+jne np_decimal
+cmp rdi, 1
+je np_ok
+mov r15, 1
+load8 rax, [rsi + 1]
+cmp rax, 120
+jne np_bad
+mov r15, 2
+cmp r15, rdi
+jae np_bad
+mov rbx, 16
+mov r13, r8
+shr r13, 4
+mov r14, r8
+and r14, 15
+jmp np_digit
+np_decimal:
+mov rbx, 10
+mov r13, 0
+mov r14, 0
+mov r9, 64
+; Division binaire par 10 : evite de dependre d'une instruction absente de S0.
+; Le reste intermediaire ne depasse pas 19; aucun decalage ne vaut 64.
+np_divide:
+mov rax, r8
+shr rax, 63
+shl r8, 1
+shl r13, 1
+shl r14, 1
+or r14, rax
+cmp r14, 10
+jb np_divide_next
+sub r14, 10
+or r13, 1
+np_divide_next:
+sub r9, 1
+cmp r9, 0
+jne np_divide
+np_digit:
+cmp r15, rdi
+jae np_ok
+load8 rax, [rsi + r15 * 1]
+cmp rbx, 16
+je np_hex
+sub rax, 48
+cmp rax, 10
+jae np_bad
+jmp np_bound
+np_hex:
+mov rcx, rax
+sub rax, 48
+cmp rax, 10
+jb np_bound
+mov rax, rcx
+or rax, 32
+sub rax, 97
+cmp rax, 6
+jae np_bad
+add rax, 10
+np_bound:
+; Tester acc <= borne/base AVANT multiplier, puis verifier le dernier chiffre.
+cmp r12, r13
+jb np_accumulate
+cmp r12, r13
+jne np_bad
+cmp r14, rax
+jb np_bad
+np_accumulate:
+cmp rbx, 16
+je np_accumulate_hex
+imul r12, r12, 10
+jmp np_accumulate_digit
+np_accumulate_hex:
+shl r12, 4
+np_accumulate_digit:
+add r12, rax
+add r15, 1
+jmp np_digit
+np_ok:
+mov rax, r12
+mov r10, 0
+mov r11, 0
+jmp np_return
+np_bad:
+mov rax, 0
+mov r10, 102
+mov r11, r15
+np_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; Composant repris sans son driver depuis native-lexer.ntasm.
+native_lex_line:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rsi, rcx
+mov rdi, rdx
+mov r12, r8
+mov r13, 0
+mov r14, 0
+mov r15, 0
+; Gate physique : lire seulement les octets declares, y compris ceux des commentaires.
+nl_physical:
+cmp r13, rdi
+jae nl_physical_done
+cmp r13, 255
+jae nl_physical_limit
+load8 rax, [rsi + r13 * 1]
+cmp rax, 9
+je nl_physical_next
+cmp rax, 32
+jb nl_physical_bad
+cmp rax, 127
+jae nl_physical_bad
+nl_physical_next:
+add r13, 1
+jmp nl_physical
+nl_physical_done:
+mov r13, 0
+nl_next:
+cmp r13, rdi
+jae nl_ok
+load8 rax, [rsi + r13 * 1]
+cmp rax, 32
+je nl_space
+cmp rax, 9
+je nl_space
+cmp rax, 59
+je nl_ok
+mov r15, r13
+cmp r14, 16
+jae nl_limit
+cmp rax, 34
+je nl_string_start
+mov rbx, 0
+cmp rax, 46
+je nl_section
+cmp rax, 48
+jb nl_first_letter
+cmp rax, 58
+jb nl_word
+nl_first_letter:
+cmp rax, 95
+je nl_identifier
+or rax, 32
+cmp rax, 97
+jb nl_punctuation
+cmp rax, 123
+jae nl_punctuation
+nl_identifier:
+mov rbx, 1
+jmp nl_word
+nl_section:
+add r13, 1
+jmp nl_word
+nl_punctuation:
+add r13, 1
+jmp nl_record
+nl_space:
+add r13, 1
+jmp nl_next
+; Un entier reste un candidat lexical; native_parse_u64 verifiera ses chiffres.
+nl_word:
+cmp r13, rdi
+jae nl_record
+load8 rax, [rsi + r13 * 1]
+cmp rax, 95
+je nl_word_char
+cmp rax, 48
+jb nl_word_letter
+cmp rax, 58
+jb nl_word_char
+nl_word_letter:
+or rax, 32
+cmp rax, 97
+jb nl_record
+cmp rax, 123
+jae nl_record
+nl_word_char:
+cmp rbx, 1
+jne nl_word_advance
+mov rax, r13
+sub rax, r15
+cmp rax, 31
+jae nl_limit
+nl_word_advance:
+add r13, 1
+jmp nl_word
+nl_string_start:
+add r13, 1
+nl_string:
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+cmp rax, 34
+je nl_string_closed
+cmp rax, 32
+jb nl_escape_bad
+cmp rax, 92
+jne nl_string_advance
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+cmp rax, 92
+je nl_string_advance
+cmp rax, 34
+je nl_string_advance
+cmp rax, 114
+je nl_string_advance
+cmp rax, 110
+je nl_string_advance
+cmp rax, 116
+je nl_string_advance
+cmp rax, 48
+je nl_string_advance
+cmp rax, 120
+jne nl_escape_bad
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+call nl_hex_digit
+cmp rax, -1
+je nl_escape_bad
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+call nl_hex_digit
+cmp rax, -1
+je nl_escape_bad
+nl_string_advance:
+add r13, 1
+jmp nl_string
+nl_string_closed:
+add r13, 1
+nl_record:
+; Publier apres validation : aucun record partiel ni octet au-dela des 256.
+store64 [r12], r15
+mov rax, r13
+sub rax, r15
+store64 [r12 + 8], rax
+add r12, 16
+add r14, 1
+jmp nl_next
+nl_ok:
+mov r10, 0
+mov r11, 0
+mov r9, 0
+jmp nl_return
+nl_physical_bad:
+mov r15, r13
+mov r10, 100
+jmp nl_error
+nl_physical_limit:
+mov r15, r13
+nl_limit:
+mov r10, 101
+jmp nl_error
+nl_escape_bad:
+mov r10, 102
+nl_error:
+mov r11, r13
+mov r9, r15
+nl_return:
+mov rax, r14
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RAX=octet ASCII; RAX=chiffre 0..15 ou -1, RCX volatile.
+nl_hex_digit:
+mov rcx, rax
+sub rax, 48
+cmp rax, 10
+jb nl_hex_return
+mov rax, rcx
+or rax, 32
+sub rax, 97
+cmp rax, 6
+jae nl_hex_bad
+add rax, 10
+nl_hex_return:
+ret
+nl_hex_bad:
+mov rax, -1
+ret
+
+; Composant repris sans son driver depuis native-symbols.ntasm.
+native_symbol_find:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov rsi, rdx
+mov rdi, r8
+load64 r13, [r12]
+cmp r13, 513
+jae sf_internal
+mov rcx, rsi
+mov rdx, rdi
+call native_name_check
+cmp rax, 0
+jne sf_name_error
+mov r14, r12
+add r14, 0x400
+mov rbx, 0
+sf_record:
+cmp rbx, r13
+jae sf_absent
+mov r15, 0
+sf_byte:
+cmp r15, rdi
+jae sf_length
+load8 rax, [rsi + r15 * 1]
+load8 r9, [r14 + r15 * 1]
+cmp rax, r9
+jne sf_next
+add r15, 1
+jmp sf_byte
+sf_length:
+load8 rax, [r14 + r15 * 1]
+cmp rax, 0
+jne sf_next
+mov rax, r14
+mov r10, 0
+mov r11, 0
+jmp sf_return
+sf_next:
+add r14, 48
+add rbx, 1
+jmp sf_record
+sf_absent:
+mov r10, 301
+mov r11, 0
+jmp sf_zero
+sf_internal:
+mov r10, 600
+mov r11, 0
+jmp sf_zero
+sf_name_error:
+mov r10, rax
+sf_zero:
+mov rax, 0
+sf_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RDX=candidat de 48 octets, distinct du tableau. Nom NUL, metadata a +32.
+; La metadata est preparee/validee par l'appelant; cette couche gere les noms et places.
+native_symbol_insert:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov rsi, rdx
+mov rdi, 0
+si_name_length:
+cmp rdi, 32
+jae si_name_long
+load8 rax, [rsi + rdi * 1]
+cmp rax, 0
+je si_lookup
+add rdi, 1
+jmp si_name_length
+si_lookup:
+mov rcx, r12
+mov rdx, rsi
+mov r8, rdi
+call native_symbol_find
+cmp r10, 0
+je si_duplicate
+cmp r10, 301
+jne si_return
+load64 r13, [r12]
+cmp r13, 512
+jae si_full
+imul r14, r13, 48
+add r14, r12
+add r14, 0x400
+; Aucun write precede ces validations. Le nom est canonicalise a zero jusqu'a 32.
+mov rax, 0
+store64 [r14], rax
+store64 [r14 + 8], rax
+store64 [r14 + 16], rax
+store64 [r14 + 24], rax
+mov r15, 0
+si_copy_name:
+cmp r15, rdi
+jae si_metadata
+load8 rax, [rsi + r15 * 1]
+store8 [r14 + r15 * 1], rax
+add r15, 1
+jmp si_copy_name
+si_metadata:
+load64 rax, [rsi + 32]
+store64 [r14 + 32], rax
+load64 rax, [rsi + 40]
+store64 [r14 + 40], rax
+add r13, 1
+store64 [r12], r13
+mov rax, r14
+mov r10, 0
+mov r11, 0
+jmp si_return
+si_duplicate:
+mov rax, 0
+mov r10, 300
+mov r11, 0
+jmp si_return
+si_full:
+mov rax, 0
+mov r10, 500
+mov r11, 0
+jmp si_return
+si_name_long:
+mov rax, 0
+mov r10, 101
+mov r11, 31
+si_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RCX=nom, RDX=longueur. RAX=0/101/201, R11=index invalide.
+native_name_check:
+mov r11, 0
+cmp rdx, 0
+je nc_bad
+cmp rdx, 32
+jae nc_long
+mov r8, 0
+nc_byte:
+load8 rax, [rcx + r8 * 1]
+cmp rax, 95
+je nc_next
+; Tester les chiffres AVANT le pliage de casse : 0x10 OR 0x20 ne doit pas devenir '0'.
+cmp rax, 48
+jb nc_letter
+cmp rax, 58
+jb nc_digit
+nc_letter:
+or rax, 32
+cmp rax, 97
+jb nc_bad_at
+cmp rax, 123
+jb nc_next
+jmp nc_bad_at
+nc_digit:
+cmp r8, 0
+je nc_bad_at
+nc_next:
+add r8, 1
+cmp r8, rdx
+jb nc_byte
+mov rax, 0
+ret
+nc_bad_at:
+mov r11, r8
+nc_bad:
+mov rax, 201
+ret
+nc_long:
+mov rax, 101
+mov r11, 31
+ret
+
+section .rdata r
+pass_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_BAD\r\n"
+kw_const:
+ascii "const"
+kw_entry:
+ascii "entry"
+hex_chars:
+ascii "0123456789abcdef"
+line0:
+ascii "const ZERO = 0"
+line1:
+ascii "const MAX = 18446744073709551615"
+line2:
+ascii "const NEG = -9223372036854775808"
+line3:
+ascii "const Hex=0xaB ; commentaire"
+line4:
+ascii "const _zero=-0"
+line5:
+ascii "const ZERO=1"
+line6:
+ascii "const NEW = 1 extra"
+line7:
+ascii "const Gap = - 1"
+line8:
+ascii "CONST A=1"
+line9:
+ascii "const 1A=2"
+line10:
+ascii "const entry=2"
+line11:
+ascii "const const=2"
+line12:
+ascii "const = 1"
+line13:
+ascii "const OVER = 18446744073709551616"
+line14:
+ascii "const LOW = -9223372036854775809"
+line15:
+ascii "const Bad=0X1"
+line16:
+ascii "const Bad=01"
+line17:
+ascii "const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=0"
+line18:
+ascii "const X"
+line19:
+ascii "const X ="
+line20:
+ascii "const X=-"
+line21:
+ascii "const X=Y"
+line22:
+ascii "const NEW=2"
+line23:
+ascii "\tconst Case\t=\t42 ; fin"
+align 8
+final_records:
+expected0:
+ascii "ZERO"
+zero 28
+qword 0
+dword 106
+word 7, 1
+expected1:
+ascii "MAX"
+zero 29
+qword 18446744073709551615
+dword 206
+word 8, 1
+expected2:
+ascii "NEG"
+zero 29
+qword 9223372036854775808
+dword 306
+word 9, 17
+expected3:
+ascii "Hex"
+zero 29
+qword 171
+dword 406
+word 10, 1
+expected4:
+ascii "_zero"
+zero 27
+qword 0
+dword 506
+word 11, 17
+expected5:
+ascii "NEW"
+zero 29
+qword 2
+dword 2306
+word 29, 1
+expected6:
+ascii "Case"
+zero 28
+qword 42
+dword 2407
+word 30, 1
+align 8
+cases:
+qword addr(line0), 14, 100, 7
+qword 0, 0, 1
+qword addr(expected0)
+qword addr(line1), 32, 200, 8
+qword 0, 0, 2
+qword addr(expected1)
+qword addr(line2), 32, 300, 9
+qword 0, 0, 3
+qword addr(expected2)
+qword addr(line3), 28, 400, 10
+qword 0, 0, 4
+qword addr(expected3)
+qword addr(line4), 14, 500, 11
+qword 0, 0, 5
+qword addr(expected4)
+qword addr(line5), 12, 600, 12
+qword 300, 6, 5
+qword 0
+qword addr(line6), 19, 700, 13
+qword 201, 14, 5
+qword 0
+qword addr(line7), 15, 800, 14
+qword 102, 13, 5
+qword 0
+qword addr(line8), 9, 900, 15
+qword 201, 0, 5
+qword 0
+qword addr(line9), 10, 1000, 16
+qword 201, 6, 5
+qword 0
+qword addr(line10), 13, 1100, 17
+qword 201, 6, 5
+qword 0
+qword addr(line11), 13, 1200, 18
+qword 201, 6, 5
+qword 0
+qword addr(line12), 9, 1300, 19
+qword 201, 6, 5
+qword 0
+qword addr(line13), 33, 1400, 20
+qword 102, 32, 5
+qword 0
+qword addr(line14), 32, 1500, 21
+qword 102, 31, 5
+qword 0
+qword addr(line15), 13, 1600, 22
+qword 102, 11, 5
+qword 0
+qword addr(line16), 12, 1700, 23
+qword 102, 11, 5
+qword 0
+qword addr(line17), 40, 1800, 24
+qword 101, 37, 5
+qword 0
+qword addr(line18), 7, 1900, 25
+qword 201, 7, 5
+qword 0
+qword addr(line19), 9, 2000, 26
+qword 201, 9, 5
+qword 0
+qword addr(line20), 9, 2100, 27
+qword 102, 9, 5
+qword 0
+qword addr(line21), 9, 2200, 28
+qword 102, 8, 5
+qword 0
+qword addr(line22), 11, 2300, 29
+qword 0, 0, 6
+qword addr(expected5)
+qword addr(line23), 22, 2400, 30
+qword 0, 0, 7
+qword addr(expected6)
+stage_line0:
+ascii "; commentaire"
+stage_line1:
+ascii "abi efi_x64"
+stage_line2:
+ascii "format pe32"
+stage_line3:
+ascii "format pe64 extra"
+stage_line4:
+ascii "format pe64"
+stage_line5:
+ascii "format pe64"
+stage_line6:
+ascii "abi wrong"
+stage_line7:
+ascii "abi efi_x64 x"
+stage_line8:
+ascii "abi efi_x64"
+stage_line9:
+ascii "const K=42"
+stage_line10:
+ascii "const K=0"
+stage_line11:
+ascii "entry"
+stage_line12:
+ascii "entry entry"
+stage_line13:
+ascii "entry start extra"
+stage_line14:
+ascii "entry "
+stage_entry_name:
+ascii "start"
+stage_line15:
+ascii "const L=1"
+stage_line16:
+ascii "section .rdata r"
+stage_line17:
+ascii "section .text r"
+stage_line18:
+ascii "section .text rx extra"
+stage_line19:
+ascii "section .text rx"
+stage_line20:
+ascii "start:"
+stage_line21:
+ascii "start:"
+stage_line22:
+ascii "1bad:"
+stage_line23:
+ascii "inline: nop"
+stage_line24:
+ascii "const C=9"
+stage_line25:
+ascii "byte 1"
+stage_line26:
+ascii "nop"
+stage_line27:
+ascii "section .data rw"
+stage_line28:
+ascii "section .rdata rw"
+stage_line29:
+ascii "section .rdata r"
+stage_line30:
+ascii "ro:"
+stage_line31:
+ascii "mov rax,1"
+stage_line32:
+ascii "section .text rx"
+stage_line33:
+ascii "section .data r"
+stage_line34:
+ascii "section .data rw"
+stage_line35:
+ascii "rw:"
+stage_line36:
+ascii "entry start"
+stage_line37:
+ascii "section .data rw"
+stage_line38:
+ascii "RW:"
+stage_line39:
+ascii "K:"
+stage_line40:
+ascii "; end"
+stage_line41:
+ascii "tail:"
+align 8
+stage_expected9:
+ascii "K"
+zero 31
+qword 42
+dword 6158
+word 109, 1
+stage_expected20:
+ascii "start"
+zero 27
+qword 12
+dword 7560
+word 120, 34
+stage_expected30:
+ascii "ro"
+zero 30
+qword 32
+dword 8840
+word 130, 66
+stage_expected35:
+ascii "rw"
+zero 30
+qword 48
+dword 9480
+word 135, 98
+stage_expected38:
+ascii "RW"
+zero 30
+qword 48
+dword 9864
+word 138, 98
+stage_expected41:
+ascii "tail"
+zero 28
+qword 48
+dword 10248
+word 141, 98
+stage_cases:
+qword addr(stage_line0), 13, 5000, 100
+qword 0, 0, 0, 0
+qword 0, 0, -1, 0
+qword addr(stage_line1), 11, 5128, 101
+qword 200, 0, 0, 0
+qword 0, 0, -1, 0
+qword addr(stage_line2), 11, 5256, 102
+qword 200, 7, 0, 0
+qword 0, 0, -1, 0
+qword addr(stage_line3), 17, 5384, 103
+qword 201, 12, 0, 0
+qword 0, 0, -1, 0
+qword addr(stage_line4), 11, 5512, 104
+qword 0, 0, 1, 0
+qword 1, 0, -1, 0
+qword addr(stage_line5), 11, 5640, 105
+qword 200, 0, 1, 0
+qword 0, 0, -1, 0
+qword addr(stage_line6), 9, 5768, 106
+qword 200, 4, 1, 0
+qword 0, 0, -1, 0
+qword addr(stage_line7), 13, 5896, 107
+qword 201, 12, 1, 0
+qword 0, 0, -1, 0
+qword addr(stage_line8), 11, 6024, 108
+qword 0, 0, 2, 0
+qword 2, 0, -1, 0
+qword addr(stage_line9), 10, 6152, 109
+qword 0, 0, 2, 1
+qword 3, addr(stage_expected9), -1, 0
+qword addr(stage_line10), 9, 6280, 110
+qword 300, 6, 2, 1
+qword 0, 0, -1, 0
+qword addr(stage_line11), 5, 6408, 111
+qword 201, 5, 2, 1
+qword 0, 0, -1, 0
+qword addr(stage_line12), 11, 6536, 112
+qword 201, 6, 2, 1
+qword 0, 0, -1, 0
+qword addr(stage_line13), 17, 6664, 113
+qword 201, 12, 2, 1
+qword 0, 0, -1, 0
+qword addr(stage_line14), 11, 6792, 114
+qword 0, 0, 3, 1
+qword 4, 0, 6, 5
+qword addr(stage_line15), 9, 6920, 115
+qword 200, 0, 3, 1
+qword 0, 0, -1, 0
+qword addr(stage_line16), 16, 7048, 116
+qword 200, 8, 3, 1
+qword 0, 0, -1, 0
+qword addr(stage_line17), 15, 7176, 117
+qword 200, 14, 3, 1
+qword 0, 0, -1, 0
+qword addr(stage_line18), 22, 7304, 118
+qword 201, 17, 3, 1
+qword 0, 0, -1, 0
+qword addr(stage_line19), 16, 7432, 119
+qword 0, 0, 4, 1
+qword 5, 0, -1, 0
+qword addr(stage_line20), 6, 7560, 120
+qword 0, 0, 4, 2
+qword 6, addr(stage_expected20), -1, 0
+qword addr(stage_line21), 6, 7688, 121
+qword 300, 0, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line22), 5, 7816, 122
+qword 201, 0, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line23), 11, 7944, 123
+qword 201, 8, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line24), 9, 8072, 124
+qword 200, 0, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line25), 6, 8200, 125
+qword 202, 0, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line26), 3, 8328, 126
+qword 400, 0, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line27), 16, 8456, 127
+qword 200, 8, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line28), 17, 8584, 128
+qword 200, 15, 4, 2
+qword 0, 0, -1, 0
+qword addr(stage_line29), 16, 8712, 129
+qword 0, 0, 5, 2
+qword 5, 0, -1, 0
+qword addr(stage_line30), 3, 8840, 130
+qword 0, 0, 5, 3
+qword 6, addr(stage_expected30), -1, 0
+qword addr(stage_line31), 9, 8968, 131
+qword 202, 0, 5, 3
+qword 0, 0, -1, 0
+qword addr(stage_line32), 16, 9096, 132
+qword 200, 8, 5, 3
+qword 0, 0, -1, 0
+qword addr(stage_line33), 15, 9224, 133
+qword 200, 14, 5, 3
+qword 0, 0, -1, 0
+qword addr(stage_line34), 16, 9352, 134
+qword 0, 0, 6, 3
+qword 5, 0, -1, 0
+qword addr(stage_line35), 3, 9480, 135
+qword 0, 0, 6, 4
+qword 6, addr(stage_expected35), -1, 0
+qword addr(stage_line36), 11, 9608, 136
+qword 200, 0, 6, 4
+qword 0, 0, -1, 0
+qword addr(stage_line37), 16, 9736, 137
+qword 200, 0, 6, 4
+qword 0, 0, -1, 0
+qword addr(stage_line38), 3, 9864, 138
+qword 0, 0, 6, 5
+qword 6, addr(stage_expected38), -1, 0
+qword addr(stage_line39), 2, 9992, 139
+qword 300, 0, 6, 5
+qword 0, 0, -1, 0
+qword addr(stage_line40), 5, 10120, 140
+qword 0, 0, 6, 5
+qword 0, 0, -1, 0
+qword addr(stage_line41), 5, 10248, 141
+qword 0, 0, 6, 6
+qword 6, addr(stage_expected41), -1, 0
+stage_final_entry:
+qword 6, 1, addr(stage_entry_name), 5
+qword 6798, 114, 6792
+nf_kw_align:
+ascii "align"
+nf_kw_zero:
+ascii "zero"
+ns_kw_format:
+ascii "format"
+ns_kw_abi:
+ascii "abi"
+ns_kw_pe64:
+ascii "pe64"
+ns_kw_efi:
+ascii "efi_x64"
+ns_kw_section:
+ascii "section"
+ns_kw_text:
+ascii ".text"
+ns_kw_ro:
+ascii ".rdata"
+ns_kw_data:
+ascii ".data"
+ns_kw_rx:
+ascii "rx"
+ns_kw_r:
+ascii "r"
+ns_kw_rw:
+ascii "rw"
+ns_word0:
+ascii "format"
+ns_word1:
+ascii "abi"
+ns_word2:
+ascii "const"
+ns_word3:
+ascii "entry"
+ns_word4:
+ascii "byte"
+ns_word5:
+ascii "word"
+ns_word6:
+ascii "dword"
+ns_word7:
+ascii "qword"
+ns_word8:
+ascii "ascii"
+ns_word9:
+ascii "utf16z"
+ns_word10:
+ascii "zero"
+ns_word11:
+ascii "mov"
+ns_word12:
+ascii "lea"
+ns_word13:
+ascii "load8"
+ns_word14:
+ascii "load16"
+ns_word15:
+ascii "load32"
+ns_word16:
+ascii "load64"
+ns_word17:
+ascii "store8"
+ns_word18:
+ascii "store16"
+ns_word19:
+ascii "store32"
+ns_word20:
+ascii "store64"
+ns_word21:
+ascii "add"
+ns_word22:
+ascii "sub"
+ns_word23:
+ascii "and"
+ns_word24:
+ascii "or"
+ns_word25:
+ascii "xor"
+ns_word26:
+ascii "cmp"
+ns_word27:
+ascii "test"
+ns_word28:
+ascii "shl"
+ns_word29:
+ascii "shr"
+ns_word30:
+ascii "imul"
+ns_word31:
+ascii "push"
+ns_word32:
+ascii "pop"
+ns_word33:
+ascii "call"
+ns_word34:
+ascii "ret"
+ns_word35:
+ascii "jmp"
+ns_word36:
+ascii "je"
+ns_word37:
+ascii "jne"
+ns_word38:
+ascii "jb"
+ns_word39:
+ascii "jae"
+ns_word40:
+ascii "nop"
+align 8
+ns_body_words:
+qword 6, 0, addr(ns_word0), 0
+qword 3, 0, addr(ns_word1), 0
+qword 5, 0, addr(ns_word2), 0
+qword 5, 0, addr(ns_word3), 0
+qword 4, 2, addr(ns_word4), 1
+qword 4, 2, addr(ns_word5), 2
+qword 5, 2, addr(ns_word6), 4
+qword 5, 2, addr(ns_word7), 8
+qword 5, 2, addr(ns_word8), 0
+qword 6, 2, addr(ns_word9), 0
+qword 4, 2, addr(ns_word10), 0
+qword 3, 1, addr(ns_word11), 0
+qword 3, 1, addr(ns_word12), 0
+qword 5, 1, addr(ns_word13), 0
+qword 6, 1, addr(ns_word14), 0
+qword 6, 1, addr(ns_word15), 0
+qword 6, 1, addr(ns_word16), 0
+qword 6, 1, addr(ns_word17), 0
+qword 7, 1, addr(ns_word18), 0
+qword 7, 1, addr(ns_word19), 0
+qword 7, 1, addr(ns_word20), 0
+qword 3, 1, addr(ns_word21), 0
+qword 3, 1, addr(ns_word22), 0
+qword 3, 1, addr(ns_word23), 0
+qword 2, 1, addr(ns_word24), 0
+qword 3, 1, addr(ns_word25), 0
+qword 3, 1, addr(ns_word26), 0
+qword 4, 1, addr(ns_word27), 0
+qword 3, 1, addr(ns_word28), 0
+qword 3, 1, addr(ns_word29), 0
+qword 4, 1, addr(ns_word30), 0
+qword 4, 1, addr(ns_word31), 0
+qword 3, 1, addr(ns_word32), 0
+qword 4, 1, addr(ns_word33), 0
+qword 3, 1, addr(ns_word34), 0
+qword 3, 1, addr(ns_word35), 0
+qword 2, 1, addr(ns_word36), 0
+qword 3, 1, addr(ns_word37), 0
+qword 2, 1, addr(ns_word38), 0
+qword 3, 1, addr(ns_word39), 0
+qword 3, 1, addr(ns_word40), 0
+qword 0
+fill_line0:
+ascii "align 8"
+fill_line1:
+ascii "align 8"
+fill_line2:
+ascii "align 4"
+fill_line3:
+ascii "align 16"
+fill_line4:
+ascii "align 16"
+fill_line5:
+ascii "align 16"
+fill_line6:
+ascii "align 16"
+fill_line7:
+ascii "align 16"
+fill_line8:
+ascii "align 3"
+fill_line9:
+ascii "align 0x10"
+fill_line10:
+ascii "align 8 extra"
+fill_line11:
+ascii "align"
+fill_line12:
+ascii "align -2"
+fill_line13:
+ascii "zero 8"
+fill_line14:
+ascii "zero 16384"
+fill_line15:
+ascii "zero 8192"
+fill_line16:
+ascii "zero 1"
+fill_line17:
+ascii "zero 2"
+fill_line18:
+ascii "zero 1"
+fill_line19:
+ascii "zero 0"
+fill_line20:
+ascii "zero -1"
+fill_line21:
+ascii "zero SIZE"
+fill_line22:
+ascii "zero 01"
+fill_line23:
+ascii "zero 0x10"
+fill_line24:
+ascii "zero 18446744073709551615"
+fill_line25:
+ascii "zero 18446744073709551616"
+fill_line26:
+ascii "zero 8 extra"
+fill_line27:
+ascii "zero"
+fill_line28:
+ascii " zero 2 ;x"
+fill_line29:
+ascii "\talign 16"
+align 8
+scalar_line0:
+ascii "byte 0,255,-128,127"
+scalar_line1:
+ascii "word 65535,-32768"
+scalar_line2:
+ascii "dword 4294967295,-2147483648"
+scalar_line3:
+ascii "qword 18446744073709551615,-9223372036854775808"
+scalar_line4:
+ascii "byte -0"
+scalar_line5:
+ascii "byte K"
+scalar_line6:
+ascii "byte ND_NEG"
+scalar_line7:
+ascii "byte 0,1,2,3,4,5,6,7"
+scalar_line8:
+ascii "word 0x1234"
+scalar_line9:
+ascii "byte 256"
+scalar_line10:
+ascii "byte -129"
+scalar_line11:
+ascii "word 65536"
+scalar_line12:
+ascii "word -32769"
+scalar_line13:
+ascii "dword 4294967296"
+scalar_line14:
+ascii "dword -2147483649"
+scalar_line15:
+ascii "word 1"
+scalar_line16:
+ascii "dword 1"
+scalar_line17:
+ascii "qword 1"
+scalar_line18:
+ascii "byte absent"
+scalar_line19:
+ascii "qword start"
+scalar_line20:
+ascii "byte 1,"
+scalar_line21:
+ascii "byte ,1"
+scalar_line22:
+ascii "byte 1 2"
+scalar_line23:
+ascii "byte 1,256"
+scalar_line24:
+ascii "byte 01"
+scalar_line25:
+ascii "byte - 1"
+scalar_line26:
+ascii "qword addr(start)"
+scalar_line27:
+ascii "byte 1"
+scalar_line28:
+ascii "byte 1"
+scalar_line29:
+ascii "byte 1"
+scalar_line30:
+ascii "byte"
+align 8
+scalar_empty:
+qword 0
+scalar_bytes0:
+byte 0, 255, 128, 127
+scalar_bytes1:
+byte 255, 255, 0, 128
+scalar_bytes2:
+byte 255, 255, 255, 255, 0, 0, 0, 128
+scalar_bytes3:
+byte 255, 255, 255, 255, 255, 255, 255, 255
+byte 0, 0, 0, 0, 0, 0, 0, 128
+scalar_bytes4:
+byte 0
+scalar_bytes5:
+byte 42
+scalar_bytes6:
+byte 128
+scalar_bytes7:
+byte 0, 1, 2, 3, 4, 5, 6, 7
+scalar_bytes8:
+byte 52, 18
+scalar_bytes29:
+byte 1
+align 8
+nd_negative:
+ascii "ND_NEG"
+zero 26
+qword 18446744073709551488
+dword 0
+word 1,17
+fill_cases:
+qword addr(fill_line0), 7, 4, 1
+qword 0, 0, 8, 7
+qword 3, 7, 144, 0
+qword addr(fill_line1), 7, 4, 8
+qword 0, 0, 8, 0
+qword 3, 7, 144, 0
+qword addr(fill_line2), 7, 5, 3
+qword 0, 0, 4, 1
+qword 2, 7, 0, 0
+qword addr(fill_line3), 8, 6, 7
+qword 0, 0, 16, 9
+qword 2, 7, 0, 0
+qword addr(fill_line4), 8, 4, 32767
+qword 0, 0, 32768, 1
+qword 3, 7, 144, 0
+qword addr(fill_line5), 8, 4, 32768
+qword 0, 0, 32768, 0
+qword 3, 7, 144, 0
+qword addr(fill_line6), 8, 4, 32769
+qword 500, 0, 32769, 7
+qword 1, 0, 165, 0
+qword addr(fill_line7), 8, 4, 18446744073709551615
+qword 500, 0, 18446744073709551615, 7
+qword 1, 0, 165, 0
+qword addr(fill_line8), 7, 4, 0
+qword 201, 6, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line9), 10, 4, 0
+qword 201, 6, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line10), 13, 4, 1
+qword 201, 8, 1, 7
+qword 1, 0, 165, 0
+qword addr(fill_line11), 5, 4, 1
+qword 201, 5, 1, 7
+qword 1, 0, 165, 0
+qword addr(fill_line12), 8, 4, 0
+qword 201, 6, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line13), 6, 6, 0
+qword 0, 0, 8, 8
+qword 2, 8, 0, 0
+qword addr(fill_line14), 10, 5, 0
+qword 0, 0, 16384, 16384
+qword 2, 8, 0, 0
+qword addr(fill_line15), 9, 6, 0
+qword 0, 0, 8192, 8192
+qword 2, 8, 0, 0
+qword addr(fill_line16), 6, 5, 16384
+qword 500, 0, 16384, 7
+qword 1, 0, 165, 0
+qword addr(fill_line17), 6, 6, 8191
+qword 500, 0, 8191, 7
+qword 1, 0, 165, 0
+qword addr(fill_line18), 6, 4, 0
+qword 202, 0, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line19), 6, 6, 0
+qword 201, 5, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line20), 7, 6, 0
+qword 201, 5, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line21), 9, 6, 0
+qword 201, 5, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line22), 7, 6, 0
+qword 102, 6, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line23), 9, 6, 0
+qword 0, 0, 16, 16
+qword 2, 8, 0, 0
+qword addr(fill_line24), 25, 6, 0
+qword 500, 0, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line25), 25, 6, 0
+qword 102, 24, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line26), 12, 6, 0
+qword 201, 7, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line27), 4, 6, 0
+qword 201, 4, 0, 7
+qword 1, 0, 165, 0
+qword addr(fill_line28), 10, 6, 0
+qword 0, 0, 2, 2
+qword 2, 8, 0, 0
+qword addr(fill_line29), 9, 4, 32769
+qword 500, 1, 32769, 7
+qword 1, 0, 165, 0
+qword addr(scalar_line0), 19, 5, 0
+qword 0, 0, 4, 4
+qword 1, 9, 0, addr(scalar_bytes0)
+qword addr(scalar_line1), 17, 5, 0
+qword 0, 0, 4, 4
+qword 1, 9, 0, addr(scalar_bytes1)
+qword addr(scalar_line2), 28, 6, 0
+qword 0, 0, 8, 8
+qword 1, 9, 0, addr(scalar_bytes2)
+qword addr(scalar_line3), 47, 5, 0
+qword 0, 0, 16, 16
+qword 1, 9, 0, addr(scalar_bytes3)
+qword addr(scalar_line4), 7, 5, 0
+qword 0, 0, 1, 1
+qword 1, 9, 0, addr(scalar_bytes4)
+qword addr(scalar_line5), 6, 5, 0
+qword 0, 0, 1, 1
+qword 1, 9, 0, addr(scalar_bytes5)
+qword addr(scalar_line6), 11, 5, 0
+qword 0, 0, 1, 1
+qword 1, 9, 0, addr(scalar_bytes6)
+qword addr(scalar_line7), 20, 5, 0
+qword 0, 0, 8, 8
+qword 1, 9, 0, addr(scalar_bytes7)
+qword addr(scalar_line8), 11, 5, 2
+qword 0, 0, 4, 2
+qword 1, 9, 0, addr(scalar_bytes8)
+qword addr(scalar_line9), 8, 5, 0
+qword 401, 5, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line10), 9, 5, 0
+qword 401, 5, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line11), 10, 5, 0
+qword 401, 5, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line12), 11, 5, 0
+qword 401, 5, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line13), 16, 6, 0
+qword 401, 6, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line14), 17, 6, 0
+qword 401, 6, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line15), 6, 5, 1
+qword 402, 0, 1, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line16), 7, 6, 2
+qword 402, 0, 2, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line17), 7, 6, 4
+qword 402, 0, 4, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line18), 11, 5, 0
+qword 301, 5, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line19), 11, 5, 0
+qword 301, 6, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line20), 7, 5, 0
+qword 201, 7, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line21), 7, 5, 0
+qword 201, 5, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line22), 8, 5, 0
+qword 201, 7, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line23), 10, 5, 0
+qword 401, 7, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line24), 7, 5, 0
+qword 102, 6, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line25), 8, 5, 0
+qword 102, 6, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line26), 17, 5, 0
+qword 400, 6, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line27), 6, 4, 0
+qword 202, 0, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line28), 6, 5, 16384
+qword 500, 0, 16384, 7
+qword 1, 0, 0, addr(scalar_empty)
+qword addr(scalar_line29), 6, 5, 16383
+qword 0, 0, 16384, 1
+qword 1, 9, 0, addr(scalar_bytes29)
+qword addr(scalar_line30), 4, 5, 0
+qword 201, 4, 0, 7
+qword 1, 0, 0, addr(scalar_empty)
+fill_origin:
+qword 0, 1
+prov_cases:
+qword 65536, 1, 600, 0
+qword 65530, 1, 600, 0
+qword 0, 0, 600, 0
+qword 0, 4097, 600, 0
+qword 65519, 4096, 300, 6
+section .data rw
+zero 8
+phase:
+qword 0
+observed:
+qword 0, 0
+diagnostic:
+utf16z "NGS0 E900 L0000 C0000 O00000000\r\n"
+align 8
+bulk_expected:
+zero 48
+bulk_prov:
+qword 0, 1
+bulk_line:
+ascii "const C000=0x000"
+stage_before:
+zero 56

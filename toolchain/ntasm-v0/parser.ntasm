@@ -1,0 +1,1952 @@
+; NV0P0001 native parser proof driver. Written in closed NTASM-S0.
+; RED fixture: a valid module must be accepted by parse_v0.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rbp
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 40
+mov rbx, rdx
+lea r12, [rip + test_vectors]
+mov r13, 24
+test_next:
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+sub rdx, rcx
+lea r8, [rip + context]
+load64 r9, [r12 + 48]
+cmp r9, 0
+jne test_fragment
+call parse_v0
+jmp test_result
+test_fragment:
+call parse_rule_v0
+test_result:
+load64 r10, [r12 + 16]
+cmp rax, r10
+jne failed
+load64 r10, [r12 + 24]
+cmp rdx, r10
+jne failed
+load64 r10, [r12 + 32]
+cmp r8, r10
+jne failed
+load64 r10, [r12 + 40]
+cmp r9, r10
+jne failed
+add r12, 56
+sub r13, 1
+cmp r13, 0
+jne test_next
+lea rcx, [rip + case_positive]
+mov rdx, 35
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 0
+jne failed
+lea r10, [rip + ast_descriptor]
+load64 rax, [r10 + 24]
+cmp rax, 19
+jne failed
+load64 rax, [r10 + 32]
+cmp rax, 0
+jne failed
+lea r10, [rip + ast_nodes]
+load64 rax, [r10 + 8]
+cmp rax, 6
+jne failed
+load64 rax, [r10 + 16]
+cmp rax, 0
+jne failed
+load64 rax, [r10 + 24]
+cmp rax, 35
+jne failed
+load64 rax, [r10 + 32]
+cmp rax, -1
+jne failed
+load64 rax, [r10 + 40]
+cmp rax, 1
+jne failed
+load64 rax, [r10 + 56]
+cmp rax, 0
+jne failed
+lea rcx, [rip + case_parameter]
+lea rdx, [rip + case_parameter_end]
+sub rdx, rcx
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 0
+jne failed
+lea r14, [rip + ast_nodes]
+lea r10, [rip + ast_descriptor]
+load64 r15, [r10 + 24]
+mov r12, 0
+mov r13, 0
+ast_find_parameter:
+cmp r12, r15
+jae ast_parameter_done
+mov r10, r12
+shl r10, 6
+add r10, r14
+load64 rax, [r10 + 8]
+cmp rax, 9
+jne ast_parameter_next
+load64 rcx, [r10]
+load64 rax, [rcx]
+mov rdx, 0x6574656D61726170
+cmp rax, rdx
+jne ast_parameter_next
+load8 rax, [rcx + 8]
+cmp rax, 114
+jne ast_parameter_next
+add r13, 1
+load64 rax, [r10 + 40]
+cmp rax, r15
+jae failed
+shl rax, 6
+add rax, r14
+load64 rax, [rax + 48]
+cmp rax, r15
+jae failed
+shl rax, 6
+add rax, r14
+load64 rdx, [rax + 32]
+cmp rdx, r12
+jne failed
+load64 rdx, [rax + 56]
+cmp rdx, 1
+jne failed
+load64 rdx, [rax + 16]
+cmp rdx, 59
+jne failed
+load64 rdx, [rax + 24]
+cmp rdx, 60
+jne failed
+ast_parameter_next:
+add r12, 1
+jmp ast_find_parameter
+ast_parameter_done:
+cmp r13, 1
+jne failed
+lea r10, [rip + ast_exports]
+load64 rax, [r10 + 48]
+cmp rax, 0
+je failed
+lea rcx, [rip + case_parameter]
+lea rdx, [rip + case_parameter_end]
+sub rdx, rcx
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call rax
+cmp rax, 0
+jne failed
+; Error after a published tree must revoke the whole descriptor.
+lea rcx, [rip + case_order]
+lea rdx, [rip + case_order_end]
+sub rdx, rcx
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 200
+jne failed
+call ast_test_empty
+cmp rax, 0
+jne failed
+; Minimal module needs peak21 slots (top/constant/constant_core at EOF).
+lea r10, [rip + ast_descriptor]
+mov rax, 21
+store64 [r10 + 16], rax
+lea r10, [rip + ast_nodes]
+mov rax, 46
+store64 [r10 + 1344], rax
+lea rcx, [rip + case_positive]
+mov rdx, 35
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 0
+jne failed
+lea r10, [rip + ast_nodes]
+load64 rax, [r10 + 1344]
+cmp rax, 46
+jne failed
+lea r10, [rip + ast_descriptor]
+load64 rax, [r10 + 24]
+cmp rax, 19
+jne failed
+mov rax, 20
+store64 [r10 + 16], rax
+lea r10, [rip + ast_nodes]
+mov rax, 50
+store64 [r10 + 1280], rax
+lea rcx, [rip + case_positive]
+mov rdx, 35
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 904
+jne failed
+call ast_test_empty
+cmp rax, 0
+jne failed
+lea r10, [rip + ast_nodes]
+load64 rax, [r10 + 1280]
+cmp rax, 50
+jne failed
+; Descriptor versions and reserved flags are closed.
+lea r10, [rip + ast_descriptor]
+mov rax, 112
+store64 [r10 + 16], rax
+mov rax, 2
+store64 [r10], rax
+lea rcx, [rip + case_positive]
+mov rdx, 35
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 904
+jne failed
+call ast_test_empty
+cmp rax, 0
+jne failed
+lea r10, [rip + ast_descriptor]
+mov rax, 1
+store64 [r10], rax
+store64 [r10 + 40], rax
+lea rcx, [rip + case_positive]
+mov rdx, 35
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 904
+jne failed
+call ast_test_empty
+cmp rax, 0
+jne failed
+lea r10, [rip + ast_descriptor]
+mov rax, 0
+store64 [r10 + 40], rax
+lea rcx, [rip + case_parameter]
+lea rdx, [rip + case_parameter_end]
+sub rdx, rcx
+lea r8, [rip + context]
+lea r9, [rip + ast_descriptor]
+call parse_ast_v0
+cmp rax, 0
+jne failed
+lea r10, [rip + ast_descriptor]
+load64 rax, [r10 + 24]
+cmp rax, 97
+jne failed
+lea r10, [rip + ast_pre_guard]
+load64 rax, [r10]
+cmp rax, 31
+jne failed
+load64 rax, [r10 + 8]
+cmp rax, 31
+jne failed
+lea r10, [rip + ast_post_guard]
+load64 rax, [r10]
+cmp rax, 37
+jne failed
+load64 rax, [r10 + 8]
+cmp rax, 37
+jne failed
+lea rdx, [rip + pass_msg]
+jmp emit
+failed:
+mov r14, rax
+mov r15, rdx
+lea rdx, [rip + detail_code]
+call print_hex4
+mov rax, r15
+lea rdx, [rip + detail_offset]
+call print_hex4
+mov rax, r13
+lea rdx, [rip + detail_case]
+call print_hex4
+lea rdx, [rip + detail_msg]
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+lea rdx, [rip + fail_msg]
+emit:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 40
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbp
+pop rbx
+mov rax, 0
+ret
+print_hex4:
+add rdx, 6
+mov rcx, 4
+ph_next:
+mov r8, rax
+and r8, 15
+cmp r8, 10
+jb ph_digit
+add r8, 7
+ph_digit:
+add r8, 48
+store16 [rdx], r8
+sub rdx, 2
+shr rax, 4
+sub rcx, 1
+cmp rcx, 0
+jne ph_next
+ret
+ast_test_empty:
+lea r10, [rip + ast_descriptor]
+load64 rax, [r10 + 24]
+cmp rax, 0
+jne ate_bad
+load64 rax, [r10 + 32]
+cmp rax, -1
+jne ate_bad
+mov rax, 0
+ret
+ate_bad:
+mov rax, 1
+ret
+; NV0P0001: isolated native recognition engine, no S0 shared state.
+parse_ast_v0:
+cmp r9, 0
+je pa_invalid
+mov r10, r9
+mov r9, 0
+jmp parse_common
+pa_invalid:
+mov rax, 904
+mov rdx, 0
+mov r8, 1
+mov r9, 1
+ret
+parse_v0:
+mov r9, 0
+parse_rule_v0:
+mov r10, 0
+parse_common:
+push rbx
+push rbp
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 40
+mov r15, r9
+mov r14, r10
+mov rbp, r8
+mov r10, 0
+pv_clear:
+mov rax, 0
+store64 [rbp + r10 * 1], rax
+add r10, 8
+cmp r10, 256
+jb pv_clear
+store64 [rbp], rcx
+store64 [rbp + 8], rdx
+mov rax, -1
+store64 [rbp + 136], rax
+cmp r14, 0
+je pv_descriptor_done
+mov rax, r14
+and rax, 7
+jne pv_ast_bad
+mov rax, 0
+store64 [r14 + 24], rax
+mov rax, -1
+store64 [r14 + 32], rax
+load64 rax, [r14]
+cmp rax, 1
+jne pv_ast_bad
+load64 rax, [r14 + 40]
+load64 r10, [r14 + 48]
+or rax, r10
+load64 r10, [r14 + 56]
+or rax, r10
+cmp rax, 0
+jne pv_ast_bad
+load64 r10, [r14 + 8]
+cmp r10, 0
+je pv_ast_bad
+mov rax, r10
+and rax, 7
+jne pv_ast_bad
+load64 r11, [r14 + 16]
+cmp r11, 0
+je pv_ast_bad
+cmp r11, 65536
+jae pv_ast_bad
+mov rax, r11
+shl rax, 6
+add rax, r10
+cmp rax, r10
+jb pv_ast_bad
+store64 [rbp + 112], r10
+store64 [rbp + 120], r11
+store64 [rbp + 144], r14
+pv_descriptor_done:
+mov rax, 2000000
+store64 [rbp + 32], rax
+lea rax, [rip + grammar]
+store64 [rbp + 56], rax
+lea rax, [rip + grammar_end]
+store64 [rbp + 64], rax
+cmp rdx, 0
+je pv_size
+cmp rdx, 65536
+jae pv_size
+cmp r15, 0
+je pv_source_rule
+mov rdx, 0
+pv_root_length:
+cmp rdx, 31
+jae pv_rule_bad
+load8 rax, [r15 + rdx * 1]
+cmp rax, 0
+je pv_find_root
+add rdx, 1
+jmp pv_root_length
+pv_find_root:
+mov rcx, r15
+call grammar_find
+cmp rax, 0
+je pv_rule_bad
+mov rsi, rax
+jmp pv_match
+pv_source_rule:
+lea rsi, [rip + grammar_source]
+pv_match:
+lea rcx, [rip + grammar]
+mov rdx, 6
+call ast_open
+store64 [rbp + 160], rax
+call match_expr
+mov rdx, rax
+load64 rcx, [rbp + 160]
+call ast_close
+load64 rdx, [rbp + 48]
+cmp rdx, 0
+jne pv_fatal
+cmp rax, 0
+je pv_syntax
+load64 rax, [rbp + 16]
+load64 rdx, [rbp + 8]
+cmp rax, rdx
+jne pv_trailing
+call ast_publish
+cmp rax, 0
+jne pv_ast_bad
+mov rax, 0
+mov rdx, 0
+jmp pv_position
+pv_trailing:
+call lex_token
+load64 rdx, [rbp + 48]
+cmp rdx, 0
+jne pv_fatal
+mov rdx, r10
+mov rax, 200
+jmp pv_position
+pv_rule_bad:
+mov rax, 903
+mov rdx, 0
+jmp pv_position
+pv_ast_bad:
+mov rax, 904
+mov rdx, 0
+jmp pv_position
+pv_size:
+mov rax, 901
+mov rdx, 0
+jmp pv_position
+pv_fatal:
+mov rax, rdx
+load64 rdx, [rbp + 72]
+jmp pv_position
+pv_syntax:
+mov rax, 200
+load64 rdx, [rbp + 24]
+pv_position:
+cmp rax, 0
+je pv_position_ready
+mov r14, rax
+mov r15, rdx
+call ast_invalidate
+mov rax, r14
+mov rdx, r15
+pv_position_ready:
+mov r8, 1
+mov r9, 1
+mov rcx, 0
+load64 r10, [rbp]
+pv_position_loop:
+cmp rcx, rdx
+jae pv_return
+load8 r11, [r10 + rcx * 1]
+cmp r11, 10
+jne pv_column
+add r8, 1
+mov r9, 1
+jmp pv_position_next
+pv_column:
+cmp r11, 128
+jb pv_column_inc
+cmp r11, 192
+jb pv_position_next
+pv_column_inc:
+add r9, 1
+pv_position_next:
+add rcx, 1
+jmp pv_position_loop
+pv_return:
+add rsp, 40
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbp
+pop rbx
+ret
+
+; Grammar cursor RSI; source cursor in context. Ordered alternatives rewind.
+match_expr:
+push r12
+push r13
+push r14
+push r15
+sub rsp, 40
+load64 r12, [rbp + 16]
+load64 r14, [rbp + 128]
+load64 r15, [rbp + 136]
+mov r13, 0
+load64 rax, [rbp + 40]
+add rax, 1
+store64 [rbp + 40], rax
+cmp rax, 129
+jae me_limit
+me_alternative:
+store64 [rbp + 16], r12
+store64 [rbp + 128], r14
+store64 [rbp + 136], r15
+call match_sequence
+cmp rax, 0
+je me_try_next
+mov r13, 1
+me_skip_rest:
+call grammar_space
+load8 rax, [rsi]
+cmp rax, 124
+jne me_done
+add rsi, 1
+call grammar_skip_sequence
+jmp me_skip_rest
+me_try_next:
+call grammar_space
+load8 rax, [rsi]
+cmp rax, 124
+jne me_done
+add rsi, 1
+jmp me_alternative
+me_limit:
+call fatal_limit
+me_done:
+load64 rax, [rbp + 40]
+sub rax, 1
+store64 [rbp + 40], rax
+cmp r13, 0
+jne me_success
+store64 [rbp + 16], r12
+store64 [rbp + 128], r14
+store64 [rbp + 136], r15
+me_success:
+mov rax, r13
+add rsp, 40
+pop r15
+pop r14
+pop r13
+pop r12
+ret
+
+match_sequence:
+push r12
+sub rsp, 32
+mov r12, 1
+ms_next:
+call grammar_space
+load8 rax, [rsi]
+cmp rax, 44
+je ms_comma
+cmp rax, 124
+je ms_done
+cmp rax, 59
+je ms_done
+cmp rax, 93
+je ms_done
+cmp rax, 125
+je ms_done
+cmp rax, 41
+je ms_done
+cmp rax, 0
+je ms_done
+cmp r12, 0
+je ms_skip
+call match_factor
+cmp rax, 0
+jne ms_next
+mov r12, 0
+jmp ms_next
+ms_skip:
+call grammar_skip_factor
+jmp ms_next
+ms_comma:
+add rsi, 1
+jmp ms_next
+ms_done:
+mov rax, r12
+add rsp, 32
+pop r12
+ret
+
+match_factor:
+push rbx
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 40
+load64 rax, [rbp + 48]
+cmp rax, 0
+jne mf_fatal
+load64 rax, [rbp + 32]
+cmp rax, 0
+je mf_limit
+sub rax, 1
+store64 [rbp + 32], rax
+call grammar_space
+mov r12, rsi
+load8 r13, [rsi]
+call grammar_skip_factor
+mov r14, rsi
+cmp r13, 34
+je mf_literal
+cmp r13, 91
+je mf_group
+cmp r13, 123
+je mf_group
+cmp r13, 40
+je mf_group
+cmp r13, 65
+jb mf_reference
+cmp r13, 91
+jae mf_reference
+call lex_token
+cmp r13, 73
+je mf_ident
+cmp r13, 85
+je mf_uint
+cmp r13, 83
+je mf_string
+cmp r13, 78
+je mf_nl
+cmp r13, 69
+je mf_eof
+cmp r13, 87
+je mf_word
+jmp mf_grammar_bad
+mf_word:
+cmp rax, 1
+jne mf_no
+jmp mf_token_yes
+mf_ident:
+cmp rax, 1
+jne mf_no
+call identifier_reserved
+cmp rax, 0
+jne mf_no
+jmp mf_token_yes
+mf_uint:
+cmp rax, 2
+jne mf_no
+jmp mf_token_yes
+mf_string:
+cmp rax, 3
+jne mf_no
+jmp mf_token_yes
+mf_nl:
+cmp rax, 4
+jne mf_no
+jmp mf_token_yes
+mf_eof:
+cmp rax, 5
+jne mf_no
+jmp mf_token_yes
+mf_literal:
+call lex_token
+mov rax, r14
+sub rax, r12
+sub rax, 2
+cmp rax, r11
+jne mf_no
+add r12, 1
+mov rcx, 0
+load64 rdx, [rbp]
+add rdx, r10
+mf_literal_byte:
+cmp rcx, r11
+jae mf_token_yes
+load8 rax, [r12 + rcx * 1]
+load8 r8, [rdx + rcx * 1]
+cmp rax, r8
+jne mf_no
+add rcx, 1
+jmp mf_literal_byte
+mf_reference:
+mov rcx, r12
+mov rdx, r14
+sub rdx, r12
+call ast_open
+store64 [rsp + 32], rax
+mov rcx, r12
+mov rdx, r14
+sub rdx, r12
+call grammar_find
+cmp rax, 0
+je mf_grammar_bad
+mov rsi, rax
+call match_expr
+mov rdx, rax
+load64 rcx, [rsp + 32]
+call ast_close
+cmp rax, 0
+je mf_reference_done
+mov rcx, r14
+sub rcx, r12
+cmp rcx, 8
+jne mf_reference_done
+load64 rcx, [r12]
+mov rdx, 0x706F5F7466696873
+cmp rcx, rdx
+jne mf_reference_done
+load64 r10, [rbp + 80]
+cmp r10, 0
+je mf_no
+load64 rdx, [rbp]
+load8 rcx, [rdx + r10 * 1]
+sub r10, 1
+load8 r8, [rdx + r10 * 1]
+cmp rcx, r8
+jne mf_no
+mf_reference_done:
+mov rsi, r14
+jmp mf_return
+mf_group:
+load64 r15, [rbp + 16]
+lea rsi, [r12 + 1]
+call match_expr
+cmp rax, 0
+je mf_group_no
+cmp r13, 123
+jne mf_yes
+load64 rax, [rbp + 16]
+cmp rax, r15
+jne mf_group
+; Repetition which accepts epsilon cannot iterate forever.
+jmp mf_yes
+mf_group_no:
+store64 [rbp + 16], r15
+cmp r13, 40
+je mf_no
+jmp mf_yes
+mf_no:
+load64 rax, [rbp + 80]
+load64 rdx, [rbp + 24]
+cmp rax, rdx
+jb mf_no_seen
+je mf_no_seen
+store64 [rbp + 24], rax
+mf_no_seen:
+mov rax, 0
+jmp mf_finish
+mf_token_yes:
+load64 rcx, [rbp + 80]
+load64 rdx, [rbp + 88]
+load64 r8, [rbp + 96]
+call ast_token
+load64 rax, [rbp + 48]
+cmp rax, 0
+jne mf_no
+mf_yes:
+mov rax, 1
+jmp mf_finish
+mf_limit:
+call fatal_limit
+mf_fatal:
+call grammar_skip_factor
+mov r14, rsi
+mov rax, 0
+jmp mf_finish
+mf_grammar_bad:
+mov rax, 903
+store64 [rbp + 48], rax
+mov rax, 0
+mf_finish:
+mov rsi, r14
+mf_return:
+add rsp, 40
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rbx
+ret
+
+fatal_limit:
+mov rax, 902
+store64 [rbp + 48], rax
+load64 rax, [rbp + 16]
+store64 [rbp + 72], rax
+ret
+
+grammar_space:
+load8 rax, [rsi]
+cmp rax, 32
+je gs_next
+cmp rax, 9
+je gs_next
+cmp rax, 10
+je gs_next
+cmp rax, 13
+jne gs_done
+gs_next:
+add rsi, 1
+jmp grammar_space
+gs_done:
+ret
+
+grammar_skip_sequence:
+sub rsp, 40
+gss_next:
+call grammar_space
+load8 rax, [rsi]
+cmp rax, 44
+je gss_comma
+cmp rax, 124
+je gss_done
+cmp rax, 59
+je gss_done
+cmp rax, 93
+je gss_done
+cmp rax, 125
+je gss_done
+cmp rax, 41
+je gss_done
+cmp rax, 0
+je gss_done
+call grammar_skip_factor
+jmp gss_next
+gss_comma:
+add rsi, 1
+jmp gss_next
+gss_done:
+add rsp, 40
+ret
+
+grammar_skip_factor:
+push r12
+sub rsp, 32
+call grammar_space
+load8 r12, [rsi]
+cmp r12, 34
+je gsf_quote
+cmp r12, 91
+je gsf_bracket
+cmp r12, 123
+je gsf_brace
+cmp r12, 40
+je gsf_paren
+gsf_name:
+load8 rax, [rsi]
+cmp rax, 95
+je gsf_name_next
+cmp rax, 65
+jb gsf_done
+cmp rax, 91
+jb gsf_name_next
+cmp rax, 97
+jb gsf_done
+cmp rax, 123
+jae gsf_done
+gsf_name_next:
+add rsi, 1
+jmp gsf_name
+gsf_quote:
+add rsi, 1
+gsf_quote_next:
+load8 rax, [rsi]
+cmp rax, 0
+je gsf_bad
+add rsi, 1
+cmp rax, 34
+jne gsf_quote_next
+jmp gsf_done
+gsf_bracket:
+mov r12, 93
+jmp gsf_group
+gsf_brace:
+mov r12, 125
+jmp gsf_group
+gsf_paren:
+mov r12, 41
+gsf_group:
+add rsi, 1
+gsf_group_next:
+call grammar_space
+load8 rax, [rsi]
+cmp rax, r12
+je gsf_close
+cmp rax, 0
+je gsf_bad
+cmp rax, 44
+je gsf_separator
+cmp rax, 124
+je gsf_separator
+call grammar_skip_factor
+jmp gsf_group_next
+gsf_separator:
+add rsi, 1
+jmp gsf_group_next
+gsf_close:
+add rsi, 1
+jmp gsf_done
+gsf_bad:
+mov rax, 903
+store64 [rbp + 48], rax
+gsf_done:
+add rsp, 32
+pop r12
+ret
+
+; RCX name, RDX length -> RAX production RHS or zero.
+grammar_find:
+push rsi
+push r12
+push r13
+push r14
+sub rsp, 40
+mov r12, rcx
+mov r13, rdx
+load64 rsi, [rbp + 56]
+gf_line:
+call grammar_space
+load8 rax, [rsi]
+cmp rax, 0
+je gf_notfound
+mov r14, rsi
+call grammar_skip_factor
+mov rax, rsi
+sub rax, r14
+cmp rax, r13
+jne gf_skip
+mov rcx, 0
+gf_compare:
+cmp rcx, r13
+jae gf_found
+load8 rax, [r12 + rcx * 1]
+load8 rdx, [r14 + rcx * 1]
+cmp rax, rdx
+jne gf_skip
+add rcx, 1
+jmp gf_compare
+gf_found:
+call grammar_space
+load8 rax, [rsi]
+cmp rax, 61
+jne gf_notfound
+add rsi, 1
+mov rax, rsi
+jmp gf_return
+gf_skip:
+load8 rax, [rsi]
+cmp rax, 0
+je gf_notfound
+cmp rax, 34
+je gf_skip_quote
+add rsi, 1
+cmp rax, 59
+jne gf_skip
+jmp gf_line
+gf_skip_quote:
+call grammar_skip_factor
+jmp gf_skip
+gf_notfound:
+mov rax, 0
+gf_return:
+add rsp, 40
+pop r14
+pop r13
+pop r12
+pop rsi
+ret
+
+identifier_reserved:
+lea rdx, [rip + reserved_words]
+load64 r8, [rbp]
+add r8, r10
+ir_word:
+load8 rax, [rdx]
+cmp rax, 0
+je ir_free
+mov rcx, 0
+ir_compare:
+cmp rcx, r11
+jae ir_end_word
+load8 rax, [rdx + rcx * 1]
+cmp rax, 124
+je ir_next_word
+cmp rax, 0
+je ir_free
+load8 r9, [r8 + rcx * 1]
+cmp rax, r9
+jne ir_next_word
+add rcx, 1
+jmp ir_compare
+ir_end_word:
+load8 rax, [rdx + rcx * 1]
+cmp rax, 124
+je ir_reserved
+cmp rax, 0
+je ir_reserved
+ir_next_word:
+load8 rax, [rdx]
+cmp rax, 0
+je ir_free
+add rdx, 1
+cmp rax, 124
+jne ir_next_word
+jmp ir_word
+ir_reserved:
+mov rax, 1
+ret
+ir_free:
+mov rax, 0
+ret
+
+; NV0A0001 concrete tree. Arena and source remain caller-owned.
+ast_open:
+load64 rax, [rbp + 112]
+cmp rax, 0
+je ao_disabled
+load64 r10, [rbp + 128]
+load64 r11, [rbp + 120]
+cmp r10, r11
+jae ast_full
+mov r11, r10
+shl r11, 6
+add r11, rax
+store64 [r11], rcx
+store64 [r11 + 8], rdx
+load64 rax, [rbp + 16]
+store64 [r11 + 16], rax
+store64 [r11 + 24], rax
+load64 rax, [rbp + 136]
+store64 [r11 + 32], rax
+mov rax, -1
+store64 [r11 + 40], rax
+store64 [r11 + 48], rax
+mov rax, 0
+store64 [r11 + 56], rax
+store64 [rbp + 136], r10
+mov rax, r10
+add r10, 1
+store64 [rbp + 128], r10
+ret
+ao_disabled:
+mov rax, -1
+ret
+ast_token:
+load64 rax, [rbp + 112]
+cmp rax, 0
+je ao_disabled
+load64 r10, [rbp + 128]
+load64 r11, [rbp + 120]
+cmp r10, r11
+jae ast_full
+mov r11, r10
+shl r11, 6
+add r11, rax
+mov rax, 0
+store64 [r11], rax
+store64 [r11 + 8], rax
+store64 [r11 + 16], rcx
+add rcx, rdx
+store64 [r11 + 24], rcx
+load64 rax, [rbp + 136]
+store64 [r11 + 32], rax
+mov rax, -1
+store64 [r11 + 40], rax
+store64 [r11 + 48], rax
+store64 [r11 + 56], r8
+mov rax, r10
+add r10, 1
+store64 [rbp + 128], r10
+ret
+ast_full:
+mov rax, 904
+store64 [rbp + 48], rax
+load64 rax, [rbp + 16]
+store64 [rbp + 72], rax
+mov rax, -1
+ret
+ast_close:
+load64 rax, [rbp + 112]
+cmp rax, 0
+je ac_return
+cmp rcx, -1
+je ac_return
+mov r10, rcx
+shl r10, 6
+add r10, rax
+load64 r11, [r10 + 32]
+store64 [rbp + 136], r11
+cmp rdx, 0
+jne ac_complete
+store64 [rbp + 128], rcx
+jmp ac_return
+ac_complete:
+load64 rax, [rbp + 16]
+store64 [r10 + 24], rax
+ac_return:
+mov rax, rdx
+ret
+ast_invalidate:
+load64 rcx, [rbp + 144]
+cmp rcx, 0
+je ai_return
+mov rax, 0
+store64 [rcx + 24], rax
+store64 [rbp + 128], rax
+mov rax, -1
+store64 [rcx + 32], rax
+store64 [rbp + 136], rax
+ai_return:
+ret
+ast_publish:
+load64 r11, [rbp + 112]
+cmp r11, 0
+je ap_success
+load64 r8, [rbp + 128]
+cmp r8, 0
+je ap_bad
+mov r10, 0
+ap_init:
+cmp r10, r8
+jae ap_link_start
+mov r9, r10
+shl r9, 6
+add r9, r11
+load64 rax, [r9]
+cmp rax, 0
+je ap_init_next
+mov rax, -1
+store64 [r9 + 56], rax
+ap_init_next:
+add r10, 1
+jmp ap_init
+ap_link_start:
+mov r10, 0
+ap_link:
+cmp r10, r8
+jae ap_restore_start
+mov r9, r10
+shl r9, 6
+add r9, r11
+load64 rcx, [r9 + 32]
+cmp rcx, -1
+jne ap_has_parent
+cmp r10, 0
+jne ap_bad
+jmp ap_link_next
+ap_has_parent:
+cmp rcx, r10
+jae ap_bad
+mov rdx, rcx
+shl rdx, 6
+add rdx, r11
+load64 rax, [rdx]
+cmp rax, 0
+je ap_bad
+load64 rax, [rdx + 56]
+cmp rax, -1
+je ap_first
+cmp rax, r10
+jae ap_bad
+shl rax, 6
+add rax, r11
+store64 [rax + 48], r10
+jmp ap_last
+ap_first:
+store64 [rdx + 40], r10
+ap_last:
+store64 [rdx + 56], r10
+ap_link_next:
+add r10, 1
+jmp ap_link
+ap_restore_start:
+mov r10, 0
+ap_restore:
+cmp r10, r8
+jae ap_publish
+mov r9, r10
+shl r9, 6
+add r9, r11
+load64 rax, [r9]
+cmp rax, 0
+je ap_restore_next
+mov rax, 0
+store64 [r9 + 56], rax
+ap_restore_next:
+add r10, 1
+jmp ap_restore
+ap_publish:
+load64 rax, [rbp + 144]
+store64 [rax + 24], r8
+mov rcx, 0
+store64 [rax + 32], rcx
+ap_success:
+mov rax, 0
+ret
+ap_bad:
+mov rax, 904
+ret
+
+; Lexer: RAX kind, R10 start, R11 length. Bounded by source length.
+lex_token:
+load64 rdx, [rbp]
+load64 r8, [rbp + 8]
+load64 r9, [rbp + 16]
+lt_space:
+cmp r9, r8
+jae lt_eof
+load8 rax, [rdx + r9 * 1]
+cmp rax, 32
+je lt_space_next
+cmp rax, 9
+je lt_space_next
+cmp rax, 47
+je lt_comment_check
+jmp lt_start
+lt_comment_check:
+lea rcx, [r9 + 1]
+cmp rcx, r8
+jae lt_start
+load8 rcx, [rdx + rcx * 1]
+cmp rcx, 47
+jne lt_start
+add r9, 2
+lt_comment:
+cmp r9, r8
+jae lt_eof
+load8 rax, [rdx + r9 * 1]
+cmp rax, 10
+je lt_start
+cmp rax, 13
+je lt_start
+cmp rax, 9
+je lt_comment_next
+cmp rax, 32
+jb lt_comment_bad
+cmp rax, 127
+je lt_comment_bad
+cmp rax, 128
+jae lt_comment_unicode
+lt_comment_next:
+add r9, 1
+jmp lt_comment
+lt_comment_unicode:
+mov r10, r9
+sub rsp, 40
+call utf8_advance
+add rsp, 40
+cmp rax, 0
+je lt_bad
+jmp lt_comment
+lt_comment_bad:
+mov r10, r9
+jmp lt_bad
+lt_space_next:
+add r9, 1
+jmp lt_space
+lt_eof:
+mov r10, r9
+mov r11, 0
+mov rax, 5
+jmp lt_return
+lt_start:
+mov r10, r9
+cmp rax, 10
+je lt_newline
+cmp rax, 13
+je lt_cr
+cmp rax, 34
+je lt_string
+cmp rax, 65
+jb lt_number_check
+cmp rax, 91
+jb lt_ident
+cmp rax, 95
+je lt_ident
+cmp rax, 97
+jb lt_punctuation
+cmp rax, 123
+jb lt_ident
+jmp lt_punctuation
+lt_number_check:
+cmp rax, 48
+jb lt_punctuation
+cmp rax, 58
+jb lt_number
+jmp lt_punctuation
+lt_ident:
+add r9, 1
+lt_ident_next:
+cmp r9, r8
+jae lt_ident_done
+load8 rax, [rdx + r9 * 1]
+cmp rax, 95
+je lt_ident
+cmp rax, 48
+jb lt_ident_done
+cmp rax, 58
+jb lt_ident
+cmp rax, 65
+jb lt_ident_done
+cmp rax, 91
+jb lt_ident
+cmp rax, 97
+jb lt_ident_done
+cmp rax, 123
+jb lt_ident
+lt_ident_done:
+mov rax, 1
+jmp lt_finish
+lt_number:
+mov r11, 10
+mov rcx, 0
+cmp rax, 48
+jne lt_num_loop
+lea rax, [r9 + 1]
+cmp rax, r8
+jae lt_num_loop
+load8 rax, [rdx + rax * 1]
+cmp rax, 120
+je lt_num_hex
+cmp rax, 95
+je lt_token_bad
+cmp rax, 48
+jb lt_num_loop
+cmp rax, 58
+jb lt_token_bad
+jmp lt_num_loop
+lt_num_hex:
+mov r11, 16
+add r9, 2
+lt_num_loop:
+cmp r9, r8
+jae lt_num_end
+load8 rax, [rdx + r9 * 1]
+cmp rax, 95
+je lt_num_under
+cmp rax, 48
+jb lt_num_end
+cmp rax, 58
+jb lt_num_digit
+cmp r11, 16
+jne lt_num_alpha
+cmp rax, 65
+jb lt_num_end
+cmp rax, 71
+jb lt_num_digit
+cmp rax, 97
+jb lt_num_alpha
+cmp rax, 103
+jb lt_num_digit
+lt_num_alpha:
+cmp rax, 65
+jb lt_num_end
+cmp rax, 91
+jb lt_token_bad
+cmp rax, 97
+jb lt_num_end
+cmp rax, 123
+jb lt_token_bad
+jmp lt_num_end
+lt_num_digit:
+mov rcx, 1
+add r9, 1
+jmp lt_num_loop
+lt_num_under:
+cmp rcx, 0
+je lt_token_bad
+mov rcx, 0
+add r9, 1
+jmp lt_num_loop
+lt_num_end:
+cmp rcx, 0
+je lt_token_bad
+mov rax, 2
+jmp lt_finish
+lt_string:
+add r9, 1
+lt_string_loop:
+cmp r9, r8
+jae lt_token_bad
+load8 rax, [rdx + r9 * 1]
+cmp rax, 34
+je lt_string_end
+cmp rax, 92
+je lt_escape
+cmp rax, 32
+jb lt_token_bad
+cmp rax, 127
+je lt_token_bad
+cmp rax, 128
+jae lt_string_unicode
+add r9, 1
+jmp lt_string_loop
+lt_string_unicode:
+sub rsp, 40
+call utf8_advance
+add rsp, 40
+cmp rax, 0
+je lt_token_bad
+jmp lt_string_loop
+lt_escape:
+add r9, 1
+cmp r9, r8
+jae lt_token_bad
+load8 rax, [rdx + r9 * 1]
+cmp rax, 120
+je lt_escape_hex
+cmp rax, 92
+je lt_escape_done
+cmp rax, 34
+je lt_escape_done
+cmp rax, 110
+je lt_escape_done
+cmp rax, 114
+je lt_escape_done
+cmp rax, 116
+je lt_escape_done
+cmp rax, 48
+jne lt_token_bad
+lt_escape_done:
+add r9, 1
+jmp lt_string_loop
+lt_escape_hex:
+mov r11, 2
+lt_escape_hex_loop:
+add r9, 1
+cmp r9, r8
+jae lt_token_bad
+load8 rax, [rdx + r9 * 1]
+cmp rax, 48
+jb lt_token_bad
+cmp rax, 58
+jb lt_escape_hex_digit
+cmp rax, 65
+jb lt_token_bad
+cmp rax, 71
+jb lt_escape_hex_digit
+cmp rax, 97
+jb lt_token_bad
+cmp rax, 103
+jae lt_token_bad
+lt_escape_hex_digit:
+sub r11, 1
+cmp r11, 0
+jne lt_escape_hex_loop
+jmp lt_escape_done
+lt_string_end:
+add r9, 1
+mov rax, 3
+jmp lt_finish
+lt_newline:
+add r9, 1
+mov rax, 4
+jmp lt_finish
+lt_cr:
+add r9, 1
+cmp r9, r8
+jae lt_bad
+load8 rax, [rdx + r9 * 1]
+cmp rax, 10
+je lt_newline
+jmp lt_bad
+lt_punctuation:
+cmp rax, 33
+jb lt_bad
+cmp rax, 127
+jae lt_bad
+cmp rax, 45
+je lt_arrow
+cmp rax, 61
+je lt_double_operator
+cmp rax, 33
+je lt_double_operator
+cmp rax, 60
+je lt_double_operator
+cmp rax, 62
+jne lt_one_punct
+lt_double_operator:
+lea rcx, [r9 + 1]
+cmp rcx, r8
+jae lt_one_punct
+load8 rcx, [rdx + rcx * 1]
+cmp rcx, 61
+jne lt_one_punct
+add r9, 1
+jmp lt_one_punct
+lt_arrow:
+lea rcx, [r9 + 1]
+cmp rcx, r8
+jae lt_one_punct
+load8 rcx, [rdx + rcx * 1]
+cmp rcx, 62
+jne lt_one_punct
+add r9, 1
+lt_one_punct:
+add r9, 1
+mov rax, 6
+jmp lt_finish
+lt_bad:
+mov rax, 100
+jmp lt_fatal
+lt_token_bad:
+mov rax, 101
+lt_fatal:
+store64 [rbp + 48], rax
+store64 [rbp + 72], r10
+mov rax, 0
+lt_finish:
+mov r11, r9
+sub r11, r10
+lt_return:
+store64 [rbp + 16], r9
+store64 [rbp + 80], r10
+store64 [rbp + 88], r11
+store64 [rbp + 96], rax
+ret
+
+; Validate one UTF-8 scalar at R9, advance only within R8 length.
+utf8_advance:
+load8 rax, [rdx + r9 * 1]
+mov r11, 1
+cmp rax, 194
+jb u8_bad
+cmp rax, 224
+jb u8_bound
+mov r11, 2
+cmp rax, 240
+jb u8_bound
+mov r11, 3
+cmp rax, 245
+jae u8_bad
+u8_bound:
+lea rcx, [r9 + r11 * 1]
+cmp rcx, r8
+jae u8_bad
+lea rcx, [r9 + 1]
+load8 rcx, [rdx + rcx * 1]
+cmp rax, 224
+jne u8_ed
+cmp rcx, 160
+jb u8_bad
+u8_ed:
+cmp rax, 237
+jne u8_fzero
+cmp rcx, 160
+jae u8_bad
+u8_fzero:
+cmp rax, 240
+jne u8_ffour
+cmp rcx, 144
+jb u8_bad
+u8_ffour:
+cmp rax, 244
+jne u8_continue
+cmp rcx, 144
+jae u8_bad
+u8_continue:
+add r9, 1
+load8 rcx, [rdx + r9 * 1]
+cmp rcx, 128
+jb u8_bad
+cmp rcx, 192
+jae u8_bad
+sub r11, 1
+cmp r11, 0
+jne u8_continue
+add r9, 1
+mov rax, 1
+ret
+u8_bad:
+mov rax, 0
+ret
+section .rdata r
+ast_exports:
+ascii "NV0A0001"
+qword 64, 1, 7
+qword addr(parse_v0), addr(parse_rule_v0)
+qword addr(parse_ast_v0), 0
+reserved_words:
+ascii "module|target|versions|default_abi|output|features|import|as|fn|export|const|data|comptime|macro|stub_table|stub|section|abi|"
+ascii "effects|clobbers|requires|ensures|let|call|return|if|else|expand|for|in|out|inout|emit|quote|intrinsic|ptr|array|bool|never|"
+ascii "u8|u16|u32|u64|i8|i16|i32|i64|true|false"
+byte 0
+grammar:
+ascii "source = "
+grammar_source:
+ascii "lines, \"module\", qualified, term, lines, \"target\", dashed, term, lines, { top, lines }, EOF ;\n"
+ascii "top = versions | default_abi | output | features | import | constant | comptime | macro | stub_table | section ;\n"
+ascii "stub_table = \"stub_table\", IDENT, \"kind\", stub_kind, \"{\", lines, { stub, lines }, \"}\" ;\n"
+ascii "stub_kind = \"interrupt\" | \"syscall\" ;\n"
+ascii "stub = \"stub\", UINT, \"{\", lines, \"handler\", qualified, term, lines, \"entry_abi\", dashed, term, lines, "
+ascii "\"exit_abi\", dashed, term, lines, \"exit\", terminal, term, lines, \"frame\", qualified, term, lines, "
+ascii "\"bindings\", \"{\", [ binding, { \",\", binding } ], \"}\", term, lines, \"hardware_error_code\", boolean, term, lines, "
+ascii "\"save\", register_set, term, lines, \"clobbers\", register_set, term, lines, \"stack_align\", UINT, term, lines, "
+ascii "\"swapgs\", swapgs_policy, term, lines, \"interrupts\", interrupt_policy, term, lines, \"section\", section_name, term, lines, "
+ascii "\"visibility\", visibility, term, lines, \"symbol\", IDENT, term, lines, \"}\" ;\n"
+ascii "binding = IDENT, \":\", type, \"@\", IDENT ;\n"
+ascii "terminal = \"return\" | \"iretq\" | \"sysretq\" | \"jump\" | \"halt\" ;\n"
+ascii "swapgs_policy = \"never\" | \"entry\" | \"exit\" | \"entry_exit\" ;\n"
+ascii "interrupt_policy = \"preserve\" | \"disable\" ;\n"
+ascii "visibility = \"local\" | \"export\" ;\n"
+ascii "section_name = \".\", IDENT ;\n"
+ascii "versions = \"versions\", \"{\", lines, version_entry, { version_entry }, \"}\" ;\n"
+ascii "version_entry = version_domain, UINT, \".\", UINT, term, lines ;\n"
+ascii "version_domain = \"ntir\" | \"machine_ir\" | \"sections\" | \"symbols\" | \"relocations\" | \"nxo\" ;\n"
+ascii "default_abi = \"default_abi\", dashed, term ;\n"
+ascii "output = \"output\", dashed, term ;\n"
+ascii "features = \"features\", \"{\", lines, [ qualified, { \",\", lines, qualified } ], lines, \"}\", term ;\n"
+ascii "import = \"import\", qualified, \"as\", IDENT, \":\", \"fn\", parameters, \"->\", type, term, lines, contracts, term ;\n"
+ascii "constant = constant_core, term ;\n"
+ascii "constant_core = \"const\", IDENT, \":\", type, \"=\", expression ;\n"
+ascii "comptime = \"comptime\", \"(\", lines, limits, lines, \")\", meta_block ;\n"
+ascii "limits = limit, { \",\", lines, limit } ;\n"
+ascii "limit = limit_name, \"=\", UINT ;\n"
+ascii "limit_name = \"fuel\" | \"call_depth\" | \"arena_bytes\" | \"ast_nodes\" | \"expansion_depth\" | \"constant_bytes\" ;\n"
+ascii "macro = \"macro\", IDENT, \"(\", lines, [ macro_param, { \",\", lines, macro_param } ], lines, \")\", \"->\", macro_result, meta_block ;\n"
+ascii "macro_param = IDENT, \":\", macro_type ;\n"
+ascii "macro_type = \"ast\", \".\", quote_kind | type ;\n"
+ascii "macro_result = macro_type | \"list\", \"<\", macro_type, \">\" ;\n"
+ascii "quote_kind = \"expr\" | \"stmt\" | \"decl\" | \"type\" | \"block\" ;\n"
+ascii "lines = { NL } ;\n"
+ascii "qualified = IDENT, { \".\", IDENT } ;\n"
+ascii "dashed = WORD, { \"-\", WORD } ;\n"
+ascii "term = [ \";\" ], NL | \";\" ;\n"
+ascii "section = \"section\", \".\", IDENT, \"{\", lines, { section_item, lines }, \"}\" ;\n"
+ascii "section_item = function | data | expand ;\n"
+ascii "function = [ \"export\" ], \"fn\", IDENT, parameters, \"->\", type, term, lines, contracts, function_block ;\n"
+ascii "parameters = \"(\", lines, [ parameter, { \",\", lines, parameter } ], lines, \")\" ;\n"
+ascii "parameter = direction, IDENT, \":\", type, [ \"@\", IDENT ] ;\n"
+ascii "direction = \"in\" | \"out\" | \"inout\" ;\n"
+ascii "contracts = [ \"abi\", dashed, term, lines ], \"effects\", effect_set, term, lines, \"clobbers\", register_set, "
+ascii "[ term, lines, \"requires\", predicate_set ], [ term, lines, \"ensures\", predicate_set ] ;\n"
+ascii "effect_set = \"{\", lines, [ effect, { \",\", lines, effect } ], lines, \"}\" ;\n"
+ascii "effect = effect_atom | memory_effect ;\n"
+ascii "effect_atom = \"privileged\" | \"changes_flags\" | \"mmio\" | \"io_port\" | \"msr\" | \"control\" | \"interrupt_state\" | \"no_return\""
+ascii " | \"memory_ordering\" | \"reads_clock\" | \"suspends\" ;\n"
+ascii "memory_effect = memory_effect_name, [ \"(\", address_space, \")\" ] ;\n"
+ascii "memory_effect_name = \"reads_mem\" | \"writes_mem\" ;\n"
+ascii "register_set = \"{\", lines, [ IDENT, { \",\", lines, IDENT } ], lines, \"}\" ;\n"
+ascii "predicate_set = \"{\", lines, [ predicate, { \",\", lines, predicate } ], lines, \"}\" ;\n"
+ascii "predicate = \"feature\", \"(\", qualified, \")\" | \"non_null\", \"(\", expression, \")\" | \"canonical\", \"(\", expression, \")\""
+ascii " | \"stack_in\", \"(\", address_space, \")\" | \"stack_aligned\", \"(\", expression, \")\""
+ascii " | \"msr_initialized\", \"(\", expression, \")\" | \"interrupts_enabled\", \"(\", \")\" | \"interrupts_disabled\", \"(\", \")\""
+ascii " | \"mapping_present\", \"(\", expression, \")\" | \"valid_user_return\", \"(\", expression, \",\", expression, \")\" ;\n"
+ascii "function_block = \"{\", lines, { statement, lines }, \"}\" ;\n"
+ascii "statement = label | let | call | return | runtime_if | expand | instruction ;\n"
+ascii "label = IDENT, \":\", term ;\n"
+ascii "let = \"let\", IDENT, \":\", type, \"=\", expression, term ;\n"
+ascii "return = \"return\", [ expression ], term ;\n"
+ascii "runtime_if = \"if\", predicate, function_block, [ lines, \"else\", function_block ] ;\n"
+ascii "expand = \"expand\", IDENT, \"(\", lines, [ meta_value, { \",\", lines, meta_value } ], lines, \")\", term ;\n"
+ascii "call = \"call\", qualified, [ \"(\", lines, [ expression, { \",\", lines, expression } ], lines, \")\" ], term ;\n"
+ascii "instruction = instruction_core, term ;\n"
+ascii "instruction_core = IDENT, [ operands ] | \"in\", operands | \"out\", operands ;\n"
+ascii "operands = operand, { \",\", operand } ;\n"
+ascii "operand = memory | expression ;\n"
+ascii "memory = \"[\", [ segment, \":\" ], address, \"]\", \":\", pointer ;\n"
+ascii "segment = \"fs\" | \"gs\" ;\n"
+ascii "address = address_term, { add_op, address_term } ;\n"
+ascii "address_term = qualified, [ \"*\", UINT ] | UINT ;\n"
+ascii "add_op = \"+\" | \"-\" ;\n"
+ascii "meta_block = \"{\", lines, { meta_statement, lines }, \"}\" ;\n"
+ascii "meta_statement = \"let\", IDENT, \"=\", expression, term | \"if\", expression, meta_block, [ lines, \"else\", meta_block ]"
+ascii " | \"for\", IDENT, \"in\", expression, meta_block | \"return\", meta_value, term | \"emit\", meta_value, term | expand ;\n"
+ascii "meta_value = quote | expression ;\n"
+ascii "quote = \"quote\", \"(\", \"expr\", \")\", \"{\", lines, expression, lines, \"}\""
+ascii " | \"quote\", \"(\", \"stmt\", \")\", \"{\", lines, quote_statement, [ term ], lines, \"}\""
+ascii " | \"quote\", \"(\", \"decl\", \")\", \"{\", lines, quote_decl, [ term ], lines, \"}\""
+ascii " | \"quote\", \"(\", \"type\", \")\", \"{\", lines, type, lines, \"}\" | \"quote\", \"(\", \"block\", \")\", function_block ;\n"
+ascii "quote_statement = instruction_core | \"return\", [ expression ] | \"let\", IDENT, \":\", type, \"=\", expression ;\n"
+ascii "quote_decl = constant_core | function | data_core ;\n"
+ascii "data = data_core, term ;\n"
+ascii "data_core = [ \"export\" ], \"data\", IDENT, \":\", type, \"=\", expression ;\n"
+ascii "expression = bit_or, [ comparison, bit_or ] ;\n"
+ascii "comparison = \"==\" | \"!=\" | \"<=\" | \">=\" | \"<\" | \">\" ;\n"
+ascii "bit_or = bit_xor, { \"|\", bit_xor } ;\n"
+ascii "bit_xor = bit_and, { \"^\", bit_and } ;\n"
+ascii "bit_and = shift, { \"&\", shift } ;\n"
+ascii "shift = additive, { shift_op, additive } ;\n"
+ascii "shift_op = \"<\", \"<\" | \">\", \">\" ;\n"
+ascii "additive = multiplicative, { add_op, multiplicative } ;\n"
+ascii "multiplicative = unary, { mul_op, unary } ;\n"
+ascii "mul_op = \"*\" | \"/\" | \"%\" ;\n"
+ascii "unary = { \"+\" | \"-\" | \"~\" }, primary ;\n"
+ascii "primary = UINT | STRING | boolean | qualified, [ \"(\", lines, [ expression, { \",\", lines, expression } ], lines, \")\" ]"
+ascii " | \"(\", lines, expression, lines, \")\" | \"$\", IDENT | \"intrinsic\", qualified, \"(\", lines, "
+ascii "[ expression, { \",\", lines, expression } ], lines, \")\" ;\n"
+ascii "type = scalar | pointer | array | \"bool\" | \"never\" ;\n"
+ascii "scalar = \"u8\" | \"u16\" | \"u32\" | \"u64\" | \"i8\" | \"i16\" | \"i32\" | \"i64\" ;\n"
+ascii "pointer = \"ptr\", \"<\", address_space, \",\", lines, type, \">\" ;\n"
+ascii "array = \"array\", \"<\", type, \",\", lines, UINT, \">\" ;\n"
+ascii "address_space = \"user\" | \"kernel\" | \"physical\" | \"mmio\" | \"device\" | \"firmware\" ;\n"
+ascii "boolean = \"true\" | \"false\" ;\n"
+grammar_end:
+byte 0
+case_positive:
+ascii "module m\ntarget x86_64-nexora-none\n"
+case_positive_end:
+case_function:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f() -> u64\neffects {}\nclobbers {rax} {\nreturn 0\n}\n}\n"
+case_function_end:
+case_parameter:
+ascii "module m\ntarget x86_64-nexora-none\nsection .text {\nfn f(in x: u64 @rdi) -> u64\neffects {}\nclobbers {rax} {\nreturn x\n}\n}\n"
+case_parameter_end:
+case_authority:
+ascii "module kernel.syscalls\ntarget x86_64-nexora-none\n\nsection .syscall {\n"
+ascii "export fn syscall_entry(\nin number: u64 @rax,\nin arg0: u64 @rdi,\nin arg1: u64 @rsi\n) -> never\n"
+ascii "effects { privileged, reads_mem, writes_mem, changes_flags }\nclobbers { rax, rcx, r11 } {\n"
+ascii "swapgs\nload rsp, [gs:kernel_rsp]:ptr<kernel, u64>\nalign_stack 16\ncall nx_syscall_dispatch\nsysretq\n}\n}\n"
+case_authority_end:
+case_order:
+ascii "target x86_64-nexora-none\nmodule m\n"
+case_order_end:
+case_missing:
+ascii "module m\n"
+case_missing_end:
+case_double:
+ascii "module m\ntarget x86_64-nexora-none\ntarget x86_64-nexora-none\n"
+case_double_end:
+case_badbyte:
+byte 0
+case_badbyte_end:
+case_composite:
+ascii "module examples.composite\ntarget x86_64-nexora-none\ndefault_abi nx64-abi-v0\noutput nxo-v0\n"
+ascii "versions {\nntir 0.1\nmachine_ir 0.1\nsections 0.1\nsymbols 0.1\nrelocations 0.1\nnxo 0.1\n}\nfeatures { msr }\n"
+ascii "const N: u64 = 1 + 2 * 3 << 1\nconst HEX: u64 = 0x1_0\n"
+ascii "macro clear(dst: ast.expr) -> ast.stmt {\nreturn quote (stmt) { xor $dst, $dst }\n}\n"
+ascii "comptime (fuel=32, call_depth=2, arena_bytes=1024, ast_nodes=8, expansion_depth=1, constant_bytes=64) {\n"
+ascii "emit quote (decl) { const WORDS: u64 = 4 }\n}\nsection .rodata {\ndata value: u64 = N\n}\n"
+ascii "import kernel.math.add1 as add1: fn(in x: u64 @rdi) -> u64\nabi nx64-abi-v0\neffects { changes_flags }\n"
+ascii "clobbers {rax}\nrequires {}\nensures {}\nsection .text {\nfn f(in p: ptr<kernel,u64> @rdi) -> u64\n"
+ascii "effects { reads_mem(kernel), changes_flags }\nclobbers {rax}\nrequires {non_null(p)}\nensures {} {\n"
+ascii "// a comment\nlet n: u64 = 0xA_B\nexpand clear(rax)\nload rax, [rdi]:ptr<kernel,u64>\ncall add1(n)\nreturn rax\n}\n}\n"
+case_composite_end:
+case_reserved:
+ascii "module fn\ntarget x86_64-nexora-none\n"
+case_reserved_end:
+case_shiftspace:
+ascii "module m\ntarget x86_64-nexora-none\nconst N: u64 = 1 < < 2\n"
+case_shiftspace_end:
+case_integerbad:
+ascii "module m\ntarget x86_64-nexora-none\nconst N: u64 = 1__2\n"
+case_integerbad_end:
+case_commentutf:
+ascii "module m\ntarget x86_64-nexora-none\n// caf\xC3\xA9\n"
+case_commentutf_end:
+case_stub:
+ascii "module k\ntarget x86_64-nexora-none\nstub_table idt kind interrupt {\nstub 14 {\nhandler kernel.page_fault\n"
+ascii "entry_abi nx64-interrupt-v0\nexit_abi nx64-interrupt-return-v0\nexit iretq\nframe nx64.page_fault\n"
+ascii "bindings { error: u64 @rax }\nhardware_error_code true\nsave {rax,rcx,rdx}\nclobbers {rax,rcx,rdx}\n"
+ascii "stack_align 16\nswapgs entry_exit\ninterrupts disable\nsection .text\nvisibility local\nsymbol page_fault_stub\n}\n}\n"
+case_stub_end:
+case_stub_missing:
+ascii "module k\ntarget x86_64-nexora-none\nstub_table idt kind interrupt {\nstub 14 {\nhandler kernel.page_fault\n}\n}\n"
+case_stub_missing_end:
+case_nested_type:
+ascii "ptr<kernel,ptr<user,u8>>"
+case_nested_type_end:
+root_type:
+ascii "type"
+byte 0
+root_expression:
+ascii "expression"
+byte 0
+root_quote:
+ascii "quote"
+byte 0
+root_memory:
+ascii "memory"
+byte 0
+root_instruction:
+ascii "instruction"
+byte 0
+case_expression:
+ascii "1 + 2 * 3 << 1"
+case_expression_end:
+case_bad_hex:
+ascii "0x"
+case_bad_hex_end:
+case_chain:
+ascii "1 < 2 < 3"
+case_chain_end:
+case_qblock:
+ascii "quote (block) {\nlet temporary: u64 = $value\nadd rax, temporary\n}"
+case_qblock_end:
+case_qbad:
+ascii "quote (block) { let n: u64 = 1\n"
+case_qbad_end:
+case_memory:
+ascii "[r13 + r12 * 8 - 128]:ptr<kernel,u64>"
+case_memory_end:
+case_bad_escape:
+ascii "\"bad\\q\""
+case_bad_escape_end:
+case_sem_width:
+ascii "load eax, [rdi]:ptr<kernel,u64>\n"
+case_sem_width_end:
+case_zero_under:
+ascii "0_1"
+case_zero_under_end:
+align 8
+test_vectors:
+qword addr(case_positive), addr(case_positive_end)
+qword 0, 0, 1, 1
+qword 0
+qword addr(case_function), addr(case_function_end)
+qword 0, 0, 1, 1
+qword 0
+qword addr(case_authority), addr(case_authority_end)
+qword 0, 0, 1, 1
+qword 0
+qword addr(case_order), addr(case_order_end)
+qword 200, 0, 1, 1
+qword 0
+qword addr(case_missing), addr(case_missing_end)
+qword 200, 9, 2, 1
+qword 0
+qword addr(case_double), addr(case_double_end)
+qword 200, 35, 3, 1
+qword 0
+qword addr(case_badbyte), addr(case_badbyte_end)
+qword 100, 0, 1, 1
+qword 0
+qword addr(case_composite), addr(case_composite_end)
+qword 0, 0, 1, 1
+qword 0
+qword addr(case_reserved), addr(case_reserved_end)
+qword 200, 7, 1, 8
+qword 0
+qword addr(case_shiftspace), addr(case_shiftspace_end)
+qword 200, 54, 3, 20
+qword 0
+qword addr(case_integerbad), addr(case_integerbad_end)
+qword 101, 50, 3, 16
+qword 0
+qword addr(case_commentutf), addr(case_commentutf_end)
+qword 0, 0, 1, 1
+qword 0
+qword addr(case_stub), addr(case_stub_end)
+qword 0, 0, 1, 1
+qword 0
+qword addr(case_stub_missing), addr(case_stub_missing_end)
+qword 200, 103, 6, 1
+qword 0
+qword addr(case_nested_type), addr(case_nested_type_end)
+qword 0, 0, 1, 1
+qword addr(root_type)
+qword addr(case_expression), addr(case_expression_end)
+qword 0, 0, 1, 1
+qword addr(root_expression)
+qword addr(case_bad_hex), addr(case_bad_hex_end)
+qword 101, 0, 1, 1
+qword addr(root_expression)
+qword addr(case_chain), addr(case_chain_end)
+qword 200, 6, 1, 7
+qword addr(root_expression)
+qword addr(case_qblock), addr(case_qblock_end)
+qword 0, 0, 1, 1
+qword addr(root_quote)
+qword addr(case_qbad), addr(case_qbad_end)
+qword 200, 31, 2, 1
+qword addr(root_quote)
+qword addr(case_memory), addr(case_memory_end)
+qword 0, 0, 1, 1
+qword addr(root_memory)
+qword addr(case_bad_escape), addr(case_bad_escape_end)
+qword 101, 0, 1, 1
+qword addr(root_expression)
+qword addr(case_sem_width), addr(case_sem_width_end)
+qword 0, 0, 1, 1
+qword addr(root_instruction)
+qword addr(case_zero_under), addr(case_zero_under_end)
+qword 101, 0, 1, 1
+qword addr(root_expression)
+pass_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_BAD\r\n"
+section .data rw
+align 16
+context:
+zero 256
+image_anchor:
+qword addr(start)
+detail_msg:
+word 78, 86, 48, 80, 32, 82
+word 69, 77, 65, 73, 78, 61
+detail_case:
+word 48, 48, 48, 48, 32
+word 67, 79, 68, 69, 61
+detail_code:
+word 48, 48, 48, 48, 32, 79
+word 70, 70, 83, 69, 84, 61
+detail_offset:
+word 48, 48, 48, 48, 13, 10, 0
+align 8
+ast_descriptor:
+qword 1, addr(ast_nodes), 112, 0
+qword -1, 0, 0, 0
+ast_pre_guard:
+qword 31, 31
+ast_nodes:
+zero 7168
+ast_post_guard:
+qword 37, 37

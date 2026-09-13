@@ -1,0 +1,9 @@
+format pe64
+abi efi_x64
+const K = 8
+entry start
+section .text rx
+start:
+lea rax, [rbx - K]
+section .rdata r
+section .data rw

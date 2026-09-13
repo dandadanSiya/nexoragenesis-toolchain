@@ -1,0 +1,83 @@
+; Module de test : seuls nos octets NTASM sont compiles.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push r12
+push r13
+push r14
+push r15
+sub rsp, 48
+mov rbx, rdx
+mov r12, rcx
+load64 r13, [rbx + 0x60]
+mov rax, 0
+store64 [rsp + 32], rax
+mov rcx, r12
+lea rdx, [rip + loaded_guid]
+lea r8, [rsp + 32]
+load64 rax, [r13 + 0x98]
+call rax
+cmp rax, 0
+jne lib_bad
+load64 rax, [rsp + 32]
+cmp rax, 0
+je lib_bad
+load32 rdx, [rax + 48]
+cmp rdx, 48
+jne lib_bad
+load64 r14, [rax + 56]
+cmp r14, 0
+je lib_bad
+load64 rax, [r14]
+mov rdx, 0x31303030434C544E
+cmp rax, rdx
+jne lib_bad
+load64 rax, [r14 + 8]
+cmp rax, 1
+jne lib_bad
+load64 rax, [r14 + 40]
+cmp rax, 0
+jne lib_bad
+load64 r15, [r14 + 16]
+cmp r15, 0
+je lib_bad
+load64 rdx, [r14 + 24]
+cmp rdx, 0
+je lib_bad
+lea rcx, [rip + exports]
+load64 r8, [r14 + 32]
+mov r9, r12
+call r15
+cmp rax, 0
+jne lib_bad
+mov rax, 0
+jmp lib_return
+lib_bad:
+mov rax, 0x8000000000000015
+lib_return:
+add rsp, 48
+pop r15
+pop r14
+pop r13
+pop r12
+pop rbx
+ret
+; Signature probe 1 : u64,u64 -> somme + biais .data.
+module_sum:
+lea rax, [rip + bias]
+load64 rax, [rax]
+add rax, rcx
+add rax, rdx
+ret
+section .rdata r
+exports:
+qword 0x31303030424C544E, 1, 48, 1, 0x100000001
+qword addr(module_sum)
+loaded_guid:
+qword 0x11D295625B1B31A1, 0x3B7269C9A0003F8E
+section .data rw
+bias:
+qword 3

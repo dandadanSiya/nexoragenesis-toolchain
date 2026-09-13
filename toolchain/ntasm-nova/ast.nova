@@ -1,0 +1,29 @@
+module ntasm_ast;
+
+// Flat node layout, twelve u64 words per one-based node ID:
+// kind,token_begin,token_end,source,line,column,start,end,
+// first_child,last_child,next_sibling,aux.
+export struct Tree {
+    ok:bool,token_words:buf<u64>,token_count:u64,
+    node_words:buf<u64>,node_count:u64,
+    code:u64,reason:u64,source:u64,line:u64,column:u64,start:u64,end:u64
+}
+export struct Node {
+    kind:u64,token_begin:u64,token_end:u64,source:u64,line:u64,column:u64,
+    start:u64,end:u64,first_child:u64,last_child:u64,next_sibling:u64,aux:u64
+}
+export fn node_at(tree:Tree,id:u64)->Node {
+    let at:u64=(id-1)*12;
+    return Node{kind:tree.node_words[at],token_begin:tree.node_words[at+1],
+        token_end:tree.node_words[at+2],source:tree.node_words[at+3],
+        line:tree.node_words[at+4],column:tree.node_words[at+5],
+        start:tree.node_words[at+6],end:tree.node_words[at+7],
+        first_child:tree.node_words[at+8],last_child:tree.node_words[at+9],
+        next_sibling:tree.node_words[at+10],aux:tree.node_words[at+11]};
+}
+export fn release(tree:Tree)->u64 {
+    let tokens:buf<u64>=tree.token_words;
+    let nodes:buf<u64>=tree.node_words;
+    rt_free(runtime(),tokens);
+    return rt_free(runtime(),nodes);
+}

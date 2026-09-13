@@ -1,0 +1,709 @@
+; Registre de symboles natif et driver UEFI, aucun assembleur externe pour ce source.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 48
+mov rbx, rdx
+load64 rsi, [rbx + 0x60]
+cmp rsi, 0
+je no_pool
+mov rax, 0
+store64 [rsp + 32], rax
+mov rcx, 2
+mov rdx, 0x6420
+lea r8, [rsp + 32]
+load64 rax, [rsi + 0x40]
+call rax
+cmp rax, 0
+jne no_pool
+load64 r14, [rsp + 32]
+cmp r14, 0
+je no_pool
+mov r12, r14
+add r12, 16
+mov rdi, r12
+mov rdx, 0x6400
+mov rax, 0xA5A5A5A5A5A5A5A5
+clear_payload:
+store64 [rdi], rax
+add rdi, 8
+sub rdx, 8
+cmp rdx, 0
+jne clear_payload
+mov rax, 0
+store64 [r12], rax
+mov rax, 0x11112222
+store64 [r14], rax
+mov rax, 0x33334444
+store64 [r14 + 8], rax
+mov rax, 0x55556666
+store64 [r14 + 0x6410], rax
+mov rax, 0x77778888
+store64 [r14 + 0x6418], rax
+lea r8, [rip + phase]
+mov rax, 1
+store64 [r8], rax
+mov r13, 0
+insert_next:
+mov rcx, r13
+call make_candidate
+cmp r13, 0
+jne candidate_ready
+mov r9, 165
+store8 [rax + 31], r9
+candidate_ready:
+mov rdx, rax
+mov rcx, r12
+mov rdi, 19
+mov r15, 29
+call native_symbol_insert
+cmp r10, 0
+jne failed
+cmp rdi, 19
+jne failed
+cmp r15, 29
+jne failed
+load64 r9, [rsp + 32]
+cmp r14, r9
+jne failed
+mov r15, rax
+cmp r13, 0
+jne check_inserted
+lea r8, [rip + candidate]
+load8 r9, [r8 + 31]
+cmp r9, 165
+jne failed
+check_inserted:
+mov rcx, r13
+call make_candidate
+mov r8, r15
+imul r9, r13, 48
+add r9, r12
+add r9, 0x400
+cmp r8, r9
+jne failed
+mov rdx, 0
+insert_bytes:
+load8 r9, [r8 + rdx * 1]
+load8 r10, [rax + rdx * 1]
+cmp r9, r10
+jne failed
+add rdx, 1
+cmp rdx, 48
+jne insert_bytes
+load64 r9, [r12]
+mov rax, r13
+add rax, 1
+cmp r9, rax
+jne failed
+add r13, 1
+cmp r13, 512
+jne insert_next
+lea r8, [rip + phase]
+mov rax, 2
+store64 [r8], rax
+mov r13, 0
+find_next:
+mov rcx, r13
+call make_candidate
+mov r8, rdx
+mov rdx, rax
+mov rcx, r12
+mov rdi, 19
+mov r15, 29
+call native_symbol_find
+cmp r10, 0
+jne failed
+cmp rdi, 19
+jne failed
+cmp r15, 29
+jne failed
+load64 r9, [rsp + 32]
+cmp r14, r9
+jne failed
+imul r9, r13, 48
+add r9, r12
+add r9, 0x400
+cmp rax, r9
+jne failed
+add r13, 1
+cmp r13, 512
+jne find_next
+; Un doublon gagne contre la capacite, meme lorsque les 512 places sont prises.
+lea r8, [rip + phase]
+mov rax, 3
+store64 [r8], rax
+mov rcx, 0
+call make_candidate
+mov rdx, rax
+mov rcx, r12
+call native_symbol_insert
+cmp r10, 300
+jne failed
+cmp rax, 0
+jne failed
+mov rcx, 512
+call make_candidate
+mov rdx, rax
+mov rcx, r12
+call native_symbol_insert
+cmp r10, 500
+jne failed
+mov rcx, r12
+lea rdx, [rip + candidate]
+mov r8, 4
+call native_symbol_find
+cmp r10, 301
+jne failed
+; Recherche sensible a la casse et sans confusion entre nom et prefixe.
+mov rcx, 0
+call make_candidate
+mov r9, 115
+store8 [rax], r9
+mov rdx, rax
+mov rcx, r12
+mov r8, 4
+call native_symbol_find
+cmp r10, 301
+jne failed
+mov rcx, 0
+call make_candidate
+mov rdx, rax
+mov rcx, r12
+mov r8, 3
+call native_symbol_find
+cmp r10, 301
+jne failed
+; Identifiant invalide, vide et non termine : jamais de copie dans la table.
+lea rdx, [rip + candidate]
+mov r9, 49
+store8 [rdx], r9
+mov rcx, r12
+call native_symbol_insert
+cmp r10, 201
+jne failed
+lea rdx, [rip + candidate]
+mov r9, 0
+store8 [rdx], r9
+mov rcx, r12
+call native_symbol_insert
+cmp r10, 201
+jne failed
+lea rdx, [rip + candidate]
+mov r9, 0x6161616161616161
+store64 [rdx], r9
+store64 [rdx + 8], r9
+store64 [rdx + 16], r9
+store64 [rdx + 24], r9
+mov rcx, r12
+call native_symbol_insert
+cmp r10, 101
+jne failed
+cmp r11, 31
+jne failed
+; Compteur corrompu : refuser avant tout parcours hors du tableau.
+mov rcx, 0
+call make_candidate
+mov r9, 513
+store64 [r12], r9
+mov rdx, rax
+mov rcx, r12
+mov r8, 4
+call native_symbol_find
+cmp r10, 600
+jne failed
+mov r9, 512
+store64 [r12], r9
+; Les 256 octets en premiere position, puis apres un A.
+lea r8, [rip + phase]
+mov rax, 4
+store64 [r8], rax
+mov r13, 0
+name_class_next:
+lea rcx, [rip + candidate]
+store8 [rcx], r13
+mov rdx, 1
+call native_name_check
+lea r8, [rip + name_expected]
+imul r9, r13, 2
+add r8, r9
+load8 r9, [r8]
+cmp rax, r9
+jne failed
+cmp r11, 0
+jne failed
+lea rcx, [rip + candidate]
+mov r9, 65
+store8 [rcx], r9
+store8 [rcx + 1], r13
+mov rdx, 2
+call native_name_check
+lea r8, [rip + name_expected]
+imul r9, r13, 2
+add r8, r9
+load8 r9, [r8 + 1]
+cmp rax, r9
+jne failed
+cmp rax, 201
+jne name_tail_ok
+cmp r11, 1
+jne failed
+jmp name_class_advance
+name_tail_ok:
+cmp r11, 0
+jne failed
+name_class_advance:
+add r13, 1
+cmp r13, 256
+jne name_class_next
+; Verifier chaque octet des 512 records APRES les recherches et refus.
+lea r8, [rip + phase]
+mov rax, 5
+store64 [r8], rax
+mov r13, 0
+verify_next:
+mov rcx, r13
+call make_candidate
+imul r8, r13, 48
+add r8, r12
+add r8, 0x400
+mov rdx, 0
+verify_bytes:
+load8 r9, [r8 + rdx * 1]
+load8 r10, [rax + rdx * 1]
+cmp r9, r10
+jne failed
+add rdx, 1
+cmp rdx, 48
+jne verify_bytes
+add r13, 1
+cmp r13, 512
+jne verify_next
+lea r8, [rip + phase]
+mov rax, 6
+store64 [r8], rax
+mov rdx, 8
+verify_prefix:
+load8 r9, [r12 + rdx * 1]
+cmp r9, 165
+jne failed
+add rdx, 1
+cmp rdx, 0x400
+jne verify_prefix
+load64 r9, [r14]
+cmp r9, 0x11112222
+jne failed
+load64 r9, [r14 + 8]
+cmp r9, 0x33334444
+jne failed
+load64 r9, [r14 + 0x6410]
+cmp r9, 0x55556666
+jne failed
+load64 r9, [r14 + 0x6418]
+cmp r9, 0x77778888
+jne failed
+lea r15, [rip + pass_msg]
+jmp release_pool
+failed:
+; Diagnostic interne au driver : L=index, C=phase. Pas un code du compilateur.
+lea r8, [rip + diagnostic]
+add r8, 28
+lea r9, [rip + hex_chars]
+mov rax, r13
+mov r10, 4
+failure_hex:
+mov rcx, rax
+and rcx, 15
+load8 rdx, [r9 + rcx * 1]
+store16 [r8], rdx
+sub r8, 2
+shr rax, 4
+sub r10, 1
+cmp r10, 0
+jne failure_hex
+lea r8, [rip + phase]
+load64 rax, [r8]
+add rax, 48
+lea r8, [rip + diagnostic]
+store16 [r8 + 40], rax
+lea r15, [rip + diagnostic]
+release_pool:
+mov rcx, r14
+load64 rax, [rsi + 0x48]
+call rax
+cmp rax, 0
+je report
+lea r15, [rip + fail_msg]
+jmp report
+no_pool:
+lea r15, [rip + fail_msg]
+report:
+mov rdx, r15
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 48
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+mov rax, 0
+ret
+
+; RCX=index, RAX=candidat, RDX=longueur. L'oracle recree les records attendus.
+make_candidate:
+lea r8, [rip + candidate]
+mov rax, 0
+store64 [r8], rax
+store64 [r8 + 8], rax
+store64 [r8 + 16], rax
+store64 [r8 + 24], rax
+store64 [r8 + 32], rax
+store64 [r8 + 40], rax
+cmp rcx, 511
+je long_candidate
+mov rax, 83
+store8 [r8], rax
+lea r9, [rip + hex_chars]
+mov r10, rcx
+shr r10, 8
+and r10, 15
+load8 rax, [r9 + r10 * 1]
+store8 [r8 + 1], rax
+mov r10, rcx
+shr r10, 4
+and r10, 15
+load8 rax, [r9 + r10 * 1]
+store8 [r8 + 2], rax
+mov r10, rcx
+and r10, 15
+load8 rax, [r9 + r10 * 1]
+store8 [r8 + 3], rax
+mov rdx, 4
+jmp candidate_meta
+long_candidate:
+mov r10, 0
+mov rax, 90
+long_name_byte:
+store8 [r8 + r10 * 1], rax
+add r10, 1
+cmp r10, 31
+jne long_name_byte
+mov rdx, 31
+candidate_meta:
+mov rax, rcx
+cmp rcx, 0
+jne candidate_value
+mov rax, 18446744073709551615
+candidate_value:
+store64 [r8 + 32], rax
+mov rax, rcx
+add rax, 100
+store32 [r8 + 40], rax
+add rax, -99
+store16 [r8 + 44], rax
+mov rax, 1
+cmp rcx, 511
+jne candidate_kind
+mov rax, 162
+candidate_kind:
+store16 [r8 + 46], rax
+mov rax, r8
+ret
+
+; RCX=contexte lisible de 0x6400 octets; compteur u64 a +0, records a +0x400.
+; RDX=nom lisible, R8=longueur. RAX=record trouve ou zero, R10=code, R11=index.
+native_symbol_find:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov rsi, rdx
+mov rdi, r8
+load64 r13, [r12]
+cmp r13, 513
+jae sf_internal
+mov rcx, rsi
+mov rdx, rdi
+call native_name_check
+cmp rax, 0
+jne sf_name_error
+mov r14, r12
+add r14, 0x400
+mov rbx, 0
+sf_record:
+cmp rbx, r13
+jae sf_absent
+mov r15, 0
+sf_byte:
+cmp r15, rdi
+jae sf_length
+load8 rax, [rsi + r15 * 1]
+load8 r9, [r14 + r15 * 1]
+cmp rax, r9
+jne sf_next
+add r15, 1
+jmp sf_byte
+sf_length:
+load8 rax, [r14 + r15 * 1]
+cmp rax, 0
+jne sf_next
+mov rax, r14
+mov r10, 0
+mov r11, 0
+jmp sf_return
+sf_next:
+add r14, 48
+add rbx, 1
+jmp sf_record
+sf_absent:
+mov r10, 301
+mov r11, 0
+jmp sf_zero
+sf_internal:
+mov r10, 600
+mov r11, 0
+jmp sf_zero
+sf_name_error:
+mov r10, rax
+sf_zero:
+mov rax, 0
+sf_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RDX=candidat de 48 octets, distinct du tableau. Nom NUL, metadata a +32.
+; La metadata est preparee/validee par l'appelant; cette couche gere les noms et places.
+native_symbol_insert:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov rsi, rdx
+mov rdi, 0
+si_name_length:
+cmp rdi, 32
+jae si_name_long
+load8 rax, [rsi + rdi * 1]
+cmp rax, 0
+je si_lookup
+add rdi, 1
+jmp si_name_length
+si_lookup:
+mov rcx, r12
+mov rdx, rsi
+mov r8, rdi
+call native_symbol_find
+cmp r10, 0
+je si_duplicate
+cmp r10, 301
+jne si_return
+load64 r13, [r12]
+cmp r13, 512
+jae si_full
+imul r14, r13, 48
+add r14, r12
+add r14, 0x400
+; Aucun write precede ces validations. Le nom est canonicalise a zero jusqu'a 32.
+mov rax, 0
+store64 [r14], rax
+store64 [r14 + 8], rax
+store64 [r14 + 16], rax
+store64 [r14 + 24], rax
+mov r15, 0
+si_copy_name:
+cmp r15, rdi
+jae si_metadata
+load8 rax, [rsi + r15 * 1]
+store8 [r14 + r15 * 1], rax
+add r15, 1
+jmp si_copy_name
+si_metadata:
+load64 rax, [rsi + 32]
+store64 [r14 + 32], rax
+load64 rax, [rsi + 40]
+store64 [r14 + 40], rax
+add r13, 1
+store64 [r12], r13
+mov rax, r14
+mov r10, 0
+mov r11, 0
+jmp si_return
+si_duplicate:
+mov rax, 0
+mov r10, 300
+mov r11, 0
+jmp si_return
+si_full:
+mov rax, 0
+mov r10, 500
+mov r11, 0
+jmp si_return
+si_name_long:
+mov rax, 0
+mov r10, 101
+mov r11, 31
+si_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RCX=nom, RDX=longueur. RAX=0/101/201, R11=index invalide.
+native_name_check:
+mov r11, 0
+cmp rdx, 0
+je nc_bad
+cmp rdx, 32
+jae nc_long
+mov r8, 0
+nc_byte:
+load8 rax, [rcx + r8 * 1]
+cmp rax, 95
+je nc_next
+; Tester les chiffres AVANT le pliage de casse : 0x10 OR 0x20 ne doit pas devenir '0'.
+cmp rax, 48
+jb nc_letter
+cmp rax, 58
+jb nc_digit
+nc_letter:
+or rax, 32
+cmp rax, 97
+jb nc_bad_at
+cmp rax, 123
+jb nc_next
+jmp nc_bad_at
+nc_digit:
+cmp r8, 0
+je nc_bad_at
+nc_next:
+add r8, 1
+cmp r8, rdx
+jb nc_byte
+mov rax, 0
+ret
+nc_bad_at:
+mov r11, r8
+nc_bad:
+mov rax, 201
+ret
+nc_long:
+mov rax, 101
+mov r11, 31
+ret
+
+section .rdata r
+anchor:
+qword addr(start)
+hex_chars:
+ascii "0123456789abcdef"
+pass_msg:
+utf16z "NG_NTASM_NATIVE_SYM_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_SYM_BAD\r\n"
+name_expected:
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 0, 201, 0, 201, 0, 201, 0
+byte 201, 0, 201, 0, 201, 0, 201, 0
+byte 201, 0, 201, 0, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 201, 201
+byte 201, 201, 201, 201, 201, 201, 0, 0
+byte 201, 201, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 0, 0
+byte 0, 0, 0, 0, 0, 0, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+byte 201, 201, 201, 201, 201, 201, 201, 201
+section .data rw
+candidate:
+zero 48
+phase:
+qword 0
+diagnostic:
+utf16z "NGS0 E900 L0000 C0000 O00000000\r\n"

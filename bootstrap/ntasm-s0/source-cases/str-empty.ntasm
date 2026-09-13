@@ -1,0 +1,11 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+align 16
+section .rdata r
+ascii ""
+utf16z ""
+section .data rw
+zero 1

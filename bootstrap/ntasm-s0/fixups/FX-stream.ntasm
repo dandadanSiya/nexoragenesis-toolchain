@@ -1,0 +1,59 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+Lstart0:
+call Lnext0
+Lnext0:
+nop
+Lstart1:
+call Lstart1
+Lstart2:
+jmp Lnext2
+Lnext2:
+nop
+Lstart3:
+jmp Lstart3
+Lstart4:
+je Lnext4
+Lnext4:
+nop
+Lstart5:
+je Lstart5
+Lstart6:
+jne Lnext6
+Lnext6:
+nop
+Lstart7:
+jne Lstart7
+Lstart8:
+jb Lnext8
+Lnext8:
+nop
+Lstart9:
+jb Lstart9
+Lstart10:
+jae Lnext10
+Lnext10:
+nop
+Lstart11:
+jae Lstart11
+Lstart12:
+lea rdx, [rip + ro]
+Lstart13:
+load8 r9, [rip + ro]
+Lstart14:
+load16 r10, [rip + ro]
+Lstart15:
+load64 r15, [rip + Lstart15]
+Lstart16:
+store16 [rip + rw], r8
+Lstart17:
+store64 [rip + rw], rax
+section .rdata r
+ro:
+byte 1
+section .data rw
+rw:
+byte 0

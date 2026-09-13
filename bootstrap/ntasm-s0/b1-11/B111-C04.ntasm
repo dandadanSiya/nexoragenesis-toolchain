@@ -1,0 +1,7 @@
+format pe64
+abi efi_x64
+entry section
+section .text rx
+section:
+section .rdata r
+section .data rw

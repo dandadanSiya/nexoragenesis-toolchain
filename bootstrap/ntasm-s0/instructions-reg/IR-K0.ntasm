@@ -1,0 +1,9 @@
+format pe64
+abi efi_x64
+const K = -1
+entry start
+section .text rx
+start:
+add rax, K
+section .rdata r
+section .data rw

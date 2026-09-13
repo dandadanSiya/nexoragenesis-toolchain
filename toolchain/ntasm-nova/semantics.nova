@@ -1,0 +1,116 @@
+module semantics;
+
+import ntasm_ast;
+
+// Node kinds from parser.nova; four scratch words per tracked name
+// [section_id, kind, start, end], start/end being byte offsets of the
+// identifier text inside the source buffer.
+
+// Byte-wise name comparison over the real source text. Positions of
+// tokens are never compared: two identical spellings at different
+// offsets must compare equal, two spellings at the same offset are the
+// same node and cannot recur.
+fn same_name(source:buf<u8>,a_start:u64,a_end:u64,b_start:u64,b_end:u64)->bool {
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+// Name node of a function or data declaration: the first attached child.
+// Returns the child id, or 0 when the tree does not carry a usable name.
+fn name_node(tree:ntasm_ast.Tree,node_id:u64)->u64 {
+    let n:ntasm_ast.Node=ntasm_ast.node_at(tree,node_id);
+    if n.first_child==0 || n.first_child>tree.node_count { return 0; }
+    return n.first_child;
+}
+
+fn span_ok(source:buf<u8>,id_tree:ntasm_ast.Tree,id:u64)->bool {
+    let n:ntasm_ast.Node=ntasm_ast.node_at(id_tree,id);
+    return n.start<=n.end && n.end<=len(source);
+}
+
+// Index the semantic content of an NTASM tree.
+// Returns 0 on success after writing import/function/data counts to
+// out[0..2]. Returns 300 on a duplicate function or data name within one
+// section, writing the line and column of the second name to out[0..1]
+// after the output size is validated. Returns 800 on an invalid tree,
+// a zero-node tree or an output buffer shorter than three words, with
+// no write to out. Neither source nor tree is released or written.
+export fn index(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    let n_section:u64=17;
+    let n_function:u64=18;
+    let n_data:u64=24;
+    let n_import:u64=9;
+    let entry_words:u64=4;
+    if tree.ok==false { return 800; }
+    if tree.node_count==0 { return 800; }
+    if len(out)<3 { return 800; }
+
+    let scratch:buf<u64>=alloc(runtime(),tree.node_count*entry_words);
+    let mut used:u64=0;
+    let mut imports:u64=0;
+    let mut functions:u64=0;
+    let mut data:u64=0;
+    let mut current_section:u64=0;
+    let mut code:u64=0;
+    let mut dup_line:u64=0;
+    let mut dup_column:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+
+        if node.kind==n_section {
+            current_section=id;
+        } else if node.kind==n_import {
+            imports=imports+1;
+        } else if node.kind==n_function || node.kind==n_data {
+            if node.kind==n_function { functions=functions+1; }
+            else { data=data+1; }
+
+            let name_id:u64=name_node(tree,id);
+            if name_id==0 || span_ok(source,tree,name_id)==false {
+                code=800;
+            } else {
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                // Duplicate scan: same section, same kind, identical bytes.
+                let mut j:u64=0;
+                while j<used {
+                    let at:u64=j*entry_words;
+                    if scratch[at]==current_section && scratch[at+1]==node.kind &&
+                       same_name(source,scratch[at+2],scratch[at+3],
+                                 name.start,name.end) {
+                        code=300;
+                        dup_line=name.line;
+                        dup_column=name.column;
+                    }
+                    j=j+1;
+                }
+                if code==0 {
+                    let at:u64=used*entry_words;
+                    scratch[at]=current_section;
+                    scratch[at+1]=node.kind;
+                    scratch[at+2]=name.start;
+                    scratch[at+3]=name.end;
+                    used=used+1;
+                }
+            }
+        }
+        if code!=0 { id=tree.node_count+1; } else { id=id+1; }
+    }
+
+    if code==0 {
+        out[0]=imports;
+        out[1]=functions;
+        out[2]=data;
+    } else if code==300 && len(out)>=2 {
+        out[0]=dup_line;
+        out[1]=dup_column;
+    }
+    rt_free(runtime(),scratch);
+    return code;
+}

@@ -1,0 +1,11 @@
+module ntasm_semantics_test;
+import ntasm_parser;
+import ntasm_ast;
+import semantics;
+
+fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    let code:u64=semantics.index(source,tree,out);
+    ntasm_ast.release(tree);
+    return code;
+}

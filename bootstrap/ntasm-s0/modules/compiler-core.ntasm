@@ -1,0 +1,3470 @@
+; Module du coeur compilateur, sans I/O de diagnostic ni driver integre.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push r12
+push r13
+push r14
+push r15
+sub rsp, 48
+mov rbx, rdx
+mov r12, rcx
+load64 r13, [rbx + 0x60]
+mov rax, 0
+store64 [rsp + 32], rax
+mov rcx, r12
+lea rdx, [rip + loaded_guid]
+lea r8, [rsp + 32]
+load64 rax, [r13 + 0x98]
+call rax
+cmp rax, 0
+jne lib_bad
+load64 rax, [rsp + 32]
+cmp rax, 0
+je lib_bad
+load32 rdx, [rax + 48]
+cmp rdx, 48
+jne lib_bad
+load64 r14, [rax + 56]
+cmp r14, 0
+je lib_bad
+load64 rax, [r14]
+mov rdx, 0x31303030434C544E
+cmp rax, rdx
+jne lib_bad
+load64 rax, [r14 + 8]
+cmp rax, 1
+jne lib_bad
+load64 rax, [r14 + 40]
+cmp rax, 0
+jne lib_bad
+load64 r15, [r14 + 16]
+cmp r15, 0
+je lib_bad
+load64 rdx, [r14 + 24]
+cmp rdx, 0
+je lib_bad
+lea rcx, [rip + exports]
+load64 r8, [r14 + 32]
+mov r9, r12
+call r15
+cmp rax, 0
+jne lib_bad
+mov rax, 0
+jmp lib_return
+lib_bad:
+mov rax, 0x8000000000000015
+lib_return:
+add rsp, 48
+pop r15
+pop r14
+pop r13
+pop r12
+pop rbx
+ret
+; RCX=WORK/RDX=SRC/R8=taille; validation finale et resolutions.
+; RAX=0/code; R8=ligne/R9=colonne/R11=offset sur erreur.
+native_finish_source:
+push r12
+push r13
+push r14
+sub rsp, 32
+mov r12, rcx
+mov r13, rdx
+mov r14, r8
+load64 rax, [r12 + 0x88]
+cmp rax, 1
+jne nfs_entry_absent
+load64 rdx, [r12 + 0x90]
+load64 r8, [r12 + 0x98]
+mov rcx, r12
+call native_symbol_find
+cmp r10, 0
+jne nfs_entry_bad
+load16 rdx, [rax + 46]
+cmp rdx, 0xA2
+je nfs_entry_rva
+mov rcx, rdx
+and rcx, 0x6F
+cmp rcx, 0x22
+jne nfs_entry_bad
+and rdx, 256
+je nfs_entry_bad
+load64 rcx, [r12 + 0x110]
+cmp rcx, 0
+je nfs_entry_bad
+nfs_entry_rva:
+load64 rax, [rax + 32]
+add rax, 4096
+store64 [r12 + 0x280], rax
+mov rcx, r12
+mov rdx, r13
+mov r8, r14
+call nb_resolve
+cmp rax, 0
+jne nfs_return
+mov rcx, r12
+mov rdx, r13
+mov r8, r14
+call nr_resolve
+cmp rax, 0
+jne nfs_return
+; La recuperation ne produit jamais de PE : l'erreur source reste prioritaire.
+load64 rax, [r12 + 0x110]
+cmp rax, 0
+jne nfs_recovered
+load64 rax, [r12 + 0x60]
+cmp rax, 0
+je nfs_no_dir64
+nfs_recovered:
+mov rax, 0
+jmp nfs_return
+nfs_entry_bad:
+mov rax, 302
+load64 r8, [r12 + 0xA8]
+load64 r11, [r12 + 0xA0]
+mov r9, r11
+load64 rdx, [r12 + 0xB0]
+sub r9, rdx
+add r9, 1
+jmp nfs_return
+nfs_entry_absent:
+mov rax, 302
+mov r8, 0
+mov r9, 0
+mov r11, 0
+jmp nfs_return
+nfs_no_dir64:
+mov rax, 602
+mov r8, 0
+mov r9, 0
+mov r11, 0
+nfs_return:
+add rsp, 32
+pop r14
+pop r13
+pop r12
+ret
+nr_rva:
+load16 rdx, [rax + 46]
+mov rcx, rdx
+and rcx, 15
+cmp rcx, 2
+jne nx_absent
+shr rdx, 5
+and rdx, 3
+load64 rax, [rax + 32]
+cmp rdx, 1
+je nx_text
+cmp r10, 1
+je nx_absent
+cmp rdx, 2
+jb nx_bad
+load64 r9, [r12 + rdx * 8 + 0x40]
+sub rdx, 1
+load64 r8, [r12 + rdx * 8]
+jmp nx_bound
+nx_text:
+load64 r8, [r12 + 24]
+mov r9, 4096
+nx_bound:
+cmp r8, rax
+jb nx_bad
+add rax, r9
+mov r10, 0
+ret
+nx_absent:
+mov r10, 301
+ret
+nx_bad:
+mov r10, 600
+ret
+nr_resolve:
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 56
+mov r12, rcx
+mov r13, rdx
+mov r14, r8
+load64 rdi, [r12 + 0x60]
+cmp rdi, 513
+jae nr_bad
+lea rsi, [r12 + 0x12400]
+lea rax, [r12 + 0x14400]
+store64 [rsp + 48], rax
+mov r15, 0
+nr_next:
+cmp rdi, 0
+je nr_ok
+load16 rax, [rsi + 12]
+cmp rax, 1
+jb nr_bad
+cmp rax, 32
+jae nr_bad
+load32 rdx, [rsi]
+add rax, rdx
+cmp r14, rax
+jb nr_bad
+load16 rax, [rsi + 14]
+cmp rax, 2
+je nr_ro_site
+cmp rax, 3
+jne nr_bad
+load64 r8, [r12 + 16]
+load64 r9, [r12 + 0x58]
+jmp nr_site
+nr_ro_site:
+load64 r8, [r12 + 8]
+load64 r9, [r12 + 0x50]
+nr_site:
+load32 rax, [rsi + 4]
+mov rdx, rax
+and rdx, 7
+jne nr_bad
+lea rdx, [rax + 8]
+cmp r8, rdx
+jb nr_bad
+add rax, r9
+cmp r15, rax
+jae nr_bad
+mov r15, rax
+store64 [rsp + 32], rax
+load32 rdx, [rsi]
+add rdx, r13
+load16 r8, [rsi + 12]
+mov rcx, r12
+call native_symbol_find
+cmp r10, 301
+je nr_absent
+cmp r10, 0
+jne nr_bad
+mov r10, 2
+call nr_rva
+cmp r10, 301
+je nr_absent
+cmp r10, 0
+jne nr_bad
+mov rdx, 0x140000000
+add rax, rdx
+store64 [rsp + 40], rax
+mov rdx, rax
+load64 rax, [rsp + 48]
+store64 [rax], rdx
+add rax, 8
+store64 [rsp + 48], rax
+nr_advance:
+add rsi, 16
+sub rdi, 1
+jmp nr_next
+nr_ok:
+mov rax, 0
+jmp nr_return
+nr_absent:
+mov rax, 301
+load16 r8, [rsi + 8]
+load16 r9, [rsi + 10]
+load32 r11, [rsi]
+jmp nr_return
+nr_bad:
+mov rax, 600
+mov r8, 0
+mov r9, 0
+mov r11, 0
+nr_return:
+add rsp, 56
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+ret
+; RCX=WORK/RDX=SRC/R8=taille; fixups relatifs.
+nb_resolve:
+push rsi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov r13, rdx
+mov r14, r8
+load64 rax, [r12 + 24]
+add rax, 4095
+and rax, -4096
+add rax, 4096
+store64 [r12 + 0x50], rax
+load64 rcx, [r12 + 8]
+add rcx, 4095
+and rcx, -4096
+add rcx, rax
+store64 [r12 + 0x58], rcx
+load64 rsi, [r12 + 0x40]
+cmp rsi, 2049
+jae nb_bad
+lea r15, [r12 + 0x6400]
+nb_next:
+cmp rsi, 0
+je nb_ok
+load32 rax, [r15 + 4]
+add rax, 4
+load32 rdx, [r15 + 8]
+cmp rax, rdx
+jne nb_bad
+load64 r8, [r12 + 24]
+cmp r8, 32769
+jae nb_bad
+cmp r8, rdx
+jb nb_bad
+load16 rax, [r15 + 18]
+sub rax, 1
+cmp rax, 2
+jae nb_bad
+load16 r8, [r15 + 16]
+cmp r8, 1
+jb nb_bad
+cmp r8, 32
+jae nb_bad
+load32 rdx, [r15]
+mov rax, rdx
+add rax, r8
+cmp r14, rax
+jb nb_bad
+add rdx, r13
+mov rcx, r12
+call native_symbol_find
+cmp r10, 301
+je nb_absent
+cmp r10, 0
+jne nb_bad
+load16 r10, [r15 + 18]
+call nr_rva
+cmp r10, 301
+je nb_absent
+cmp r10, 0
+jne nb_bad
+load32 rdx, [r15 + 8]
+add rdx, 4096
+sub rax, rdx
+store32 [r15 + 20], rax
+nb_advance:
+add r15, 24
+sub rsi, 1
+jmp nb_next
+nb_ok:
+mov rax, 0
+jmp nb_return
+nb_absent:
+mov rax, 301
+load16 r8, [r15 + 12]
+load16 r9, [r15 + 14]
+load32 r11, [r15]
+jmp nb_return
+nb_bad:
+mov rax, 600
+mov r8, 0
+mov r9, 0
+mov r11, 0
+nb_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rsi
+ret
+native_front_line:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 64
+mov r12, rcx
+mov rsi, rdx
+mov rdi, r8
+mov rbx, r9
+load64 r13, [r12 + 0x80]
+cmp r13, 7
+jae ns_internal
+load64 rax, [r12]
+cmp rax, 513
+jae ns_internal
+lea r14, [r12 + 0x1C400]
+mov rcx, rsi
+mov rdx, rdi
+mov r8, r14
+call native_lex_line
+cmp r10, 0
+jne ns_zero_return
+mov r15, rax
+cmp r15, 0
+je ns_ok
+mov rax, r15
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 rcx, [rax]
+load64 rdx, [rax + 8]
+add rcx, rdx
+store64 [rsp + 0x20], rcx
+mov rcx, rbx
+mov rdx, rdi
+call ns_check_origin
+cmp rax, 0
+jne ns_internal
+cmp r13, 2
+jb ns_header
+cmp r13, 2
+je ns_const_entry
+cmp r13, 3
+je ns_header
+; Labels avant mots-cles du corps.
+cmp r15, 2
+jb ns_body_keyword
+load64 rax, [r14 + 24]
+cmp rax, 1
+jne ns_body_keyword
+load64 rax, [r14 + 16]
+load8 rax, [rsi + rax * 1]
+cmp rax, 58
+je ns_label
+ns_body_keyword:
+lea r8, [rip + ns_kw_section]
+mov r9, 7
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je ns_header
+lea r8, [rip + nf_kw_align]
+mov r9, 5
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je nf_align
+lea r8, [rip + nf_kw_zero]
+mov r9, 4
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je nf_zero
+jmp ns_body
+; En-tetes par etat; publier apres validation.
+ns_header:
+lea rax, [rip + ns_headers]
+imul rdx, r13, 56
+add rax, rdx
+store64 [rsp + 0x28], rax
+load64 rax, [rax]
+store64 [rsp + 0x30], rax
+and rax, 255
+cmp rax, 0
+je ns_order_zero
+mov rax, 0
+store64 [rsp + 0x38], rax
+ns_header_next:
+load64 rcx, [rsp + 0x38]
+load64 rax, [rsp + 0x30]
+and rax, 255
+cmp rcx, rax
+jae ns_header_done
+cmp rcx, r15
+jae ns_missing
+cmp rcx, 0
+je ns_header_token
+call ns_require_space
+cmp rax, 0
+jne ns_header_syntax
+ns_header_token:
+load64 rcx, [rsp + 0x38]
+imul rax, rcx, 16
+load64 rdx, [rsp + 0x28]
+add rax, rdx
+add rax, 8
+load64 r9, [rax]
+lea r8, [rax + 8]
+call ns_token_equals
+cmp rax, 1
+jne ns_header_order
+load64 rax, [rsp + 0x38]
+add rax, 1
+store64 [rsp + 0x38], rax
+jmp ns_header_next
+ns_header_done:
+cmp r15, rcx
+jne ns_header_syntax
+lea rax, [r13 + 1]
+store64 [r12 + 0x80], rax
+load64 rax, [rsp + 0x30]
+shr rax, 8
+jmp ns_ok
+ns_header_syntax:
+mov r10, 201
+jmp ns_header_error
+ns_header_order:
+mov r10, 200
+ns_header_error:
+load64 rax, [rsp + 0x38]
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+jmp ns_zero_return
+ns_const_entry:
+lea r8, [rip + kw_const]
+mov r9, 5
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+jne ns_maybe_entry
+mov rcx, r12
+mov rdx, rsi
+mov r8, rdi
+mov r9, rbx
+call native_add_const
+cmp r10, 0
+jne ns_return
+mov rax, 3
+jmp ns_ok
+ns_maybe_entry:
+lea r8, [rip + kw_entry]
+mov r9, 5
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+jne ns_order_zero
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+load64 rcx, [r14 + 16]
+add rcx, rsi
+load64 rdx, [r14 + 24]
+call native_name_check
+cmp rax, 0
+jne ns_name_one_error
+lea r8, [rip + kw_const]
+mov r9, 5
+mov rcx, 1
+call ns_token_equals
+cmp rax, 1
+je ns_syntax_one
+lea r8, [rip + kw_entry]
+mov r9, 5
+mov rcx, 1
+call ns_token_equals
+cmp rax, 1
+je ns_syntax_one
+cmp r15, 2
+jne ns_extra_two
+load64 rax, [r14 + 16]
+add rax, rsi
+store64 [r12 + 0x90], rax
+load64 rax, [r14 + 24]
+store64 [r12 + 0x98], rax
+load64 rax, [rbx]
+load64 rdx, [r14 + 16]
+add rax, rdx
+store64 [r12 + 0xA0], rax
+load64 rax, [rbx + 8]
+store64 [r12 + 0xA8], rax
+load64 rax, [rbx]
+store64 [r12 + 0xB0], rax
+mov rax, 1
+store64 [r12 + 0x88], rax
+mov rax, 3
+store64 [r12 + 0x80], rax
+mov rax, 4
+jmp ns_ok
+ns_label:
+load64 rcx, [r14]
+add rcx, rsi
+load64 rdx, [r14 + 8]
+call native_name_check
+cmp rax, 0
+jne ns_name_zero_error
+cmp r15, 2
+jne ns_extra_two
+cmp r13, 4
+je ns_text_offset
+cmp r13, 5
+je ns_ro_offset
+load64 rax, [r12 + 16]
+cmp rax, 8193
+jae ns_internal
+jmp ns_label_value
+ns_text_offset:
+load64 rax, [r12 + 24]
+cmp rax, 32769
+jae ns_internal
+jmp ns_label_value
+ns_ro_offset:
+load64 rax, [r12 + 8]
+cmp rax, 16385
+jae ns_internal
+ns_label_value:
+store64 [rsp + 0x28], rax
+lea r9, [r12 + 0x1CD00]
+mov rax, 0
+store64 [r9], rax
+store64 [r9 + 8], rax
+store64 [r9 + 16], rax
+store64 [r9 + 24], rax
+store64 [r9 + 32], rax
+store64 [r9 + 40], rax
+load64 rdx, [r14]
+add rdx, rsi
+load64 r8, [r14 + 8]
+mov rcx, 0
+ns_copy_label:
+cmp rcx, r8
+jae ns_label_meta
+load8 rax, [rdx + rcx * 1]
+store8 [r9 + rcx * 1], rax
+add rcx, 1
+jmp ns_copy_label
+ns_label_meta:
+load64 rax, [rsp + 0x28]
+store64 [r9 + 32], rax
+load64 rax, [rbx]
+load64 rdx, [r14]
+add rax, rdx
+store32 [r9 + 40], rax
+load64 rax, [rbx + 8]
+store16 [r9 + 44], rax
+mov rax, r13
+sub rax, 3
+shl rax, 5
+or rax, 2
+store16 [r9 + 46], rax
+mov rcx, r12
+mov rdx, r9
+call native_symbol_insert
+cmp r10, 0
+je ns_label_ok
+cmp r10, 600
+je ns_return
+load64 rdx, [r14]
+add r11, rdx
+jmp ns_return
+ns_label_ok:
+mov rax, 6
+jmp ns_ok
+; Fill decrit, jamais tronque au scratch.
+nf_align:
+mov rax, 7
+store64 [rsp + 0x28], rax
+jmp nf_argument
+nf_zero:
+cmp r13, 4
+je ns_forbidden
+mov rax, 8
+store64 [rsp + 0x28], rax
+nf_argument:
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+load64 rax, [rsp + 0x28]
+cmp rax, 8
+je nf_zero_value
+load64 rdx, [r14 + 16]
+load64 rcx, [r14 + 24]
+cmp rcx, 1
+je nf_single_align
+cmp rcx, 2
+jne ns_syntax_one
+load16 rax, [rsi + rdx * 1]
+cmp rax, 0x3631
+jne ns_syntax_one
+mov rax, 16
+jmp nf_value
+nf_single_align:
+load8 rax, [rsi + rdx * 1]
+cmp rax, 50
+je nf_align_digit
+cmp rax, 52
+je nf_align_digit
+cmp rax, 56
+jne ns_syntax_one
+nf_align_digit:
+sub rax, 48
+jmp nf_value
+nf_zero_value:
+load64 rcx, [r14 + 16]
+add rcx, rsi
+load8 rax, [rcx]
+cmp rax, 48
+jb ns_syntax_one
+cmp rax, 58
+jae ns_syntax_one
+load64 rdx, [r14 + 24]
+mov r8, 18446744073709551615
+call native_parse_u64
+cmp r10, 0
+jne nf_integer_error
+cmp rax, 0
+je ns_syntax_one
+nf_value:
+cmp r15, 2
+jne ns_extra_two
+mov rbx, r12
+cmp r13, 4
+je nf_text_cursor
+cmp r13, 5
+je nf_ro_cursor
+add rbx, 16
+mov rdi, 8192
+jmp nf_compute
+nf_text_cursor:
+add rbx, 24
+mov rdi, 32768
+jmp nf_compute
+nf_ro_cursor:
+add rbx, 8
+mov rdi, 16384
+nf_compute:
+load64 r9, [rbx]
+cmp rdi, r9
+jb nf_capacity
+load64 r8, [rsp + 0x28]
+cmp r8, 7
+jne nf_check_room
+; delta=(-offset)&(n-1), apres validation.
+mov r8, rax
+sub r8, 1
+mov rax, 0
+sub rax, r9
+and rax, r8
+nf_check_room:
+mov r8, rdi
+sub r8, r9
+cmp r8, rax
+jb nf_capacity
+mov rdx, r9
+add rdx, rax
+mov r15, rax
+mov r8, rax
+cmp r8, 1024
+jb nf_prefix_ready
+mov r8, 1024
+nf_prefix_ready:
+cmp r8, 0
+je nf_publish
+lea r9, [r12 + 0x1C500]
+mov r10, 0
+cmp r13, 4
+jne nf_fill_byte
+mov r10, 144
+nf_fill_byte:
+store8 [r9], r10
+add r9, 1
+sub r8, 1
+jne nf_fill_byte
+nf_publish:
+store64 [rbx], rdx
+store64 [r12 + 0x20], r15
+mov rax, 2
+cmp r13, 4
+jne nf_kind_ready
+mov rax, 3
+nf_kind_ready:
+store64 [r12 + 0x28], rax
+load64 rax, [rsp + 0x28]
+jmp ns_ok
+nf_integer_error:
+load64 rdx, [r14 + 16]
+add r11, rdx
+jmp ns_zero_return
+nf_capacity:
+mov r10, 500
+jmp ns_error_zero
+
+; RAX=largeur; rdata/data seulement.
+nd_scalar:
+store64 [rsp + 0x28], rax
+load64 rax, [rbx]
+store64 [r12 + 0x1CF80], rax
+load64 rax, [rbx + 8]
+store64 [r12 + 0x1CF88], rax
+mov rax, 0
+store64 [r12 + 0x1CF90], rax
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+mov rbx, r12
+cmp r13, 5
+je nd_ro
+add rbx, 16
+mov rdi, 8192
+jmp nd_alignment
+nd_ro:
+add rbx, 8
+mov rdi, 16384
+nd_alignment:
+load64 rax, [rbx]
+load64 rdx, [rsp + 0x28]
+sub rdx, 1
+and rax, rdx
+jne nd_unaligned
+mov rax, 1
+store64 [rsp + 0x30], rax
+mov rax, 0
+store64 [rsp + 0x38], rax
+nd_value:
+load64 rax, [rsp + 0x38]
+cmp rax, 8
+jae ns_internal
+imul rax, rax, 16
+add rax, r12
+add rax, 0x1CE80
+mov rdx, 0
+store64 [rax], rdx
+store64 [rax + 8], rdx
+; addr : references differees, pas constantes.
+load64 rax, [rsp + 0x30]
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 4
+jne nd_parse
+load64 rdx, [rax]
+load32 rdx, [rsi + rdx * 1]
+cmp rdx, 0x72646461
+jne nd_parse
+load64 rdx, [rsp + 0x30]
+add rdx, 1
+cmp rdx, r15
+jae nd_parse
+load64 rdx, [rax + 24]
+cmp rdx, 1
+jne nd_parse
+load64 rdx, [rax + 16]
+load8 rdx, [rsi + rdx * 1]
+cmp rdx, 40
+je nd_address
+jmp nd_parse
+nd_address:
+load64 rax, [rsp + 0x28]
+cmp rax, 8
+jne nd_addr_pending
+load64 rax, [rsp + 0x30]
+add rax, 2
+cmp rax, r15
+jae ns_missing
+imul rax, rax, 16
+add rax, r14
+load64 rcx, [rax]
+add rcx, rsi
+load64 rdx, [rax + 8]
+call native_name_check
+cmp rax, 0
+jne na_bad_name
+load64 rax, [rsp + 0x30]
+add rax, 3
+cmp rax, r15
+jae ns_missing
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne na_bad_close
+load64 rdx, [rax]
+load8 rdx, [rsi + rdx * 1]
+cmp rdx, 41
+jne na_bad_close
+load64 rax, [r12 + 0x60]
+cmp rax, 513
+jae ns_internal
+load64 rdx, [r12 + 0x1CF90]
+add rax, rdx
+cmp rax, 512
+jae na_full
+add rdx, 1
+store64 [r12 + 0x1CF90], rdx
+load64 rax, [rsp + 0x38]
+imul rax, rax, 16
+add rax, r12
+add rax, 0x1CE80
+load64 rdx, [rsp + 0x30]
+add rdx, 2
+imul rdx, rdx, 16
+add rdx, r14
+load64 rcx, [rdx]
+load64 r8, [r12 + 0x1CF80]
+add r8, rcx
+store32 [rax], r8
+add rcx, 1
+store16 [rax + 10], rcx
+load64 rcx, [rdx + 8]
+store16 [rax + 12], rcx
+load64 rcx, [r12 + 0x1CF88]
+store16 [rax + 8], rcx
+load64 rcx, [rsp + 0x38]
+shl rcx, 3
+load64 r8, [rbx]
+add rcx, r8
+store32 [rax + 4], rcx
+mov rcx, r13
+sub rcx, 3
+store16 [rax + 14], rcx
+mov rax, 0
+mov r9, 4
+jmp nd_store_temp
+na_bad_name:
+mov r10, 400
+jmp na_at_name
+na_full:
+mov r10, 500
+na_at_name:
+load64 rax, [rsp + 0x30]
+add rax, 2
+jmp na_position
+na_bad_close:
+mov r10, 201
+load64 rax, [rsp + 0x30]
+add rax, 3
+na_position:
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+jmp ns_zero_return
+nd_parse:
+load64 rcx, [rsp + 0x30]
+mov rdx, 1
+call nd_parse_value
+cmp r10, 0
+jne ns_zero_return
+load64 rcx, [rsp + 0x28]
+cmp rcx, 8
+je nd_store_temp
+cmp r8, 0
+jne nd_negative_bound
+mov rdx, 255
+cmp rcx, 1
+je nd_positive_check
+mov rdx, 65535
+cmp rcx, 2
+je nd_positive_check
+mov rdx, 4294967295
+nd_positive_check:
+cmp rdx, rax
+jb nd_range
+jmp nd_store_temp
+nd_negative_bound:
+cmp rax, 0
+je nd_store_temp
+mov rdx, 0xFFFFFFFFFFFFFF80
+cmp rcx, 1
+je nd_negative_check
+mov rdx, 0xFFFFFFFFFFFF8000
+cmp rcx, 2
+je nd_negative_check
+mov rdx, 0xFFFFFFFF80000000
+nd_negative_check:
+cmp rax, rdx
+jb nd_range
+nd_store_temp:
+load64 rcx, [rsp + 0x38]
+cmp rcx, 8
+jae ns_internal
+lea rdx, [r12 + 0x1CE00]
+store64 [rdx + rcx * 8], rax
+add rcx, 1
+store64 [rsp + 0x38], rcx
+load64 rax, [rsp + 0x30]
+add rax, r9
+store64 [rsp + 0x30], rax
+cmp rax, r15
+je nd_commit
+cmp r15, rax
+jb ns_internal
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne nd_syntax_current
+load64 rdx, [rax]
+load8 rdx, [rsi + rdx * 1]
+cmp rdx, 44
+jne nd_syntax_current
+load64 rax, [rsp + 0x30]
+add rax, 1
+store64 [rsp + 0x30], rax
+cmp rax, r15
+jae ns_missing
+jmp nd_value
+nd_commit:
+load64 r15, [rsp + 0x38]
+mov rax, r15
+load64 r8, [rsp + 0x28]
+cmp r8, 1
+je nd_length
+cmp r8, 2
+je nd_length_two
+cmp r8, 4
+je nd_length_four
+shl rax, 3
+jmp nd_length
+nd_length_two:
+shl rax, 1
+jmp nd_length
+nd_length_four:
+shl rax, 2
+nd_length:
+store64 [rsp + 0x38], rax
+load64 r9, [rbx]
+cmp rdi, r9
+jb nf_capacity
+mov r8, rdi
+sub r8, r9
+cmp r8, rax
+jb nf_capacity
+add r9, rax
+store64 [rsp + 0x30], r9
+; References publiees apres validation de ligne.
+lea r10, [r12 + 0x1CE80]
+mov r11, r15
+load64 r8, [r12 + 0x60]
+na_commit_next:
+cmp r11, 0
+je na_commit_done
+load16 rax, [r10 + 12]
+cmp rax, 0
+je na_commit_skip
+imul r9, r8, 16
+add r9, r12
+add r9, 0x12400
+load64 rax, [r10]
+store64 [r9], rax
+load64 rax, [r10 + 8]
+store64 [r9 + 8], rax
+add r8, 1
+na_commit_skip:
+add r10, 16
+sub r11, 1
+jmp na_commit_next
+na_commit_done:
+store64 [r12 + 0x60], r8
+lea rdx, [r12 + 0x1CE00]
+lea r9, [r12 + 0x1C500]
+nd_emit_value:
+load64 rax, [rdx]
+add rdx, 8
+load64 r8, [rsp + 0x28]
+nd_emit_byte:
+store8 [r9], rax
+shr rax, 8
+add r9, 1
+sub r8, 1
+jne nd_emit_byte
+sub r15, 1
+jne nd_emit_value
+load64 rax, [rsp + 0x30]
+store64 [rbx], rax
+load64 rax, [rsp + 0x38]
+store64 [r12 + 0x20], rax
+mov rax, 1
+store64 [r12 + 0x28], rax
+mov rax, 9
+jmp ns_ok
+nd_unaligned:
+mov r10, 402
+jmp ns_error_zero
+nd_addr_pending:
+mov r10, 400
+jmp nd_error_current
+nd_range:
+mov r10, 401
+jmp nd_error_current
+nd_syntax_current:
+mov r10, 201
+nd_error_current:
+load64 rax, [rsp + 0x30]
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+jmp ns_zero_return
+nt_ascii:
+mov rax, 1
+jmp nt_begin
+nt_utf16:
+mov rax, 2
+nt_begin:
+store64 [rsp + 0x28], rax
+store64 [rsp + 0x38], r15
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+load64 rdi, [r14 + 16]
+load64 rdx, [r14 + 24]
+; Une chaine lexicalement invalide garde son diagnostic exact.
+load64 rax, [r12 + 0x170]
+cmp rax, 0
+je nt_checked_token
+load64 rcx, [r12 + 0x178]
+cmp rcx, rdi
+jne nt_checked_token
+mov r11, rax
+sub r11, 1
+mov r10, 102
+jmp ns_zero_return
+nt_checked_token:
+cmp rdx, 2
+jb ns_syntax_one
+load8 rax, [rsi + rdi * 1]
+cmp rax, 34
+jne ns_syntax_one
+mov rbx, rdi
+add rbx, rdx
+sub rbx, 1
+load8 rax, [rsi + rbx * 1]
+cmp rax, 34
+jne ns_syntax_one
+add rdi, 1
+mov r15, 0
+nt_decode:
+cmp rdi, rbx
+jae nt_string_done
+store64 [rsp + 0x30], rdi
+load8 rax, [rsi + rdi * 1]
+cmp rax, 92
+jne nt_emit
+add rdi, 1
+cmp rdi, rbx
+jae nt_bad_escape
+load8 rax, [rsi + rdi * 1]
+cmp rax, 92
+je nt_emit
+cmp rax, 34
+je nt_emit
+cmp rax, 114
+je nt_cr
+cmp rax, 110
+je nt_lf
+cmp rax, 116
+je nt_tab
+cmp rax, 48
+je nt_nul
+cmp rax, 120
+jne nt_bad_escape
+lea r8, [rdi + 2]
+cmp r8, rbx
+jae nt_bad_escape
+add rdi, 1
+load8 rax, [rsi + rdi * 1]
+call nl_hex_digit
+cmp rax, -1
+je nt_bad_escape
+mov rdx, rax
+shl rdx, 4
+add rdi, 1
+load8 rax, [rsi + rdi * 1]
+call nl_hex_digit
+cmp rax, -1
+je nt_bad_escape
+or rax, rdx
+jmp nt_emit
+nt_cr:
+mov rax, 13
+jmp nt_emit
+nt_lf:
+mov rax, 10
+jmp nt_emit
+nt_tab:
+mov rax, 9
+jmp nt_emit
+nt_nul:
+mov rax, 0
+nt_emit:
+load64 r8, [rsp + 0x28]
+cmp r8, 2
+jne nt_check_capacity
+cmp rax, 128
+jae nt_utf_range
+nt_check_capacity:
+mov r9, r15
+add r9, r8
+cmp r9, 1025
+jae nt_too_long
+lea r9, [r12 + 0x1C900]
+add r9, r15
+cmp r8, 2
+je nt_emit_word
+store8 [r9], rax
+jmp nt_emitted
+nt_emit_word:
+store16 [r9], rax
+nt_emitted:
+add r15, r8
+add rdi, 1
+jmp nt_decode
+nt_string_done:
+load64 rax, [rsp + 0x28]
+cmp rax, 2
+jne nt_arity
+cmp r15, 1023
+jae nt_too_long
+lea r9, [r12 + 0x1C900]
+add r9, r15
+mov rax, 0
+store16 [r9], rax
+add r15, 2
+nt_arity:
+load64 rax, [rsp + 0x38]
+cmp rax, 2
+jne ns_extra_two
+mov rbx, r12
+cmp r13, 5
+je nt_ro
+add rbx, 16
+mov rdi, 8192
+jmp nt_room
+nt_ro:
+add rbx, 8
+mov rdi, 16384
+nt_room:
+load64 rax, [rbx]
+cmp rdi, rax
+jb nf_capacity
+mov r8, rdi
+sub r8, rax
+cmp r8, r15
+jb nf_capacity
+add rax, r15
+store64 [rsp + 0x30], rax
+lea rdx, [r12 + 0x1C900]
+lea r9, [r12 + 0x1C500]
+mov r8, r15
+nt_copy:
+cmp r8, 0
+je nt_publish
+load8 rax, [rdx]
+store8 [r9], rax
+add rdx, 1
+add r9, 1
+sub r8, 1
+jmp nt_copy
+nt_publish:
+load64 rax, [rsp + 0x30]
+store64 [rbx], rax
+store64 [r12 + 0x20], r15
+mov rax, 1
+store64 [r12 + 0x28], rax
+mov rax, 10
+jmp ns_ok
+nt_bad_escape:
+mov r11, rdi
+mov r10, 102
+jmp ns_zero_return
+nt_utf_range:
+load64 r11, [rsp + 0x30]
+mov r10, 201
+jmp ns_zero_return
+nt_too_long:
+mov r11, rdi
+mov r10, 101
+jmp ns_zero_return
+; Opcodes natifs; bornes et labels d'entree.
+; Opcode bas/famille bits8..15/extension bits16..23.
+ni_fixed:
+store64 [r12 + 0x1CF50], rbx
+mov rdx, 0
+store64 [r12 + 0x1CF48], rdx
+store64 [rsp + 0x28], rax
+mov r13, rax
+shr r13, 8
+and r13, 255
+je ni_no_args
+cmp r13, 9
+je nb_instruction
+cmp r13, 8
+je nm_instruction
+cmp r13, 8
+jae ns_internal
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+mov rcx, 1
+call ni_reg
+cmp rax, -1
+je ni_first_not_reg
+mov rbx, rax
+cmp r13, 3
+jb ni_one_arg
+mov rcx, 2
+call ni_comma
+cmp rax, 0
+jne ni_syntax_at
+cmp r15, 4
+jb ns_missing
+mov rcx, 3
+call ni_reg
+cmp r13, 6
+je ni_shift
+cmp rax, -1
+je ni_non_reg
+mov rdi, rax
+cmp r13, 7
+je ni_imul_arg
+cmp r15, 4
+jne ni_extra_four
+mov rax, 0
+store64 [rsp + 0x38], rax
+jmp ni_encode
+ni_shift:
+cmp rax, -1
+jne ni_bad_three
+jmp ni_immediate_three
+ni_non_reg:
+cmp r13, 5
+jae ni_bad_three
+load64 rax, [r14 + 48]
+load8 rax, [rsi + rax * 1]
+cmp rax, 91
+je ni_bad_three
+cmp rax, 43
+je ni_syntax_three
+ni_immediate_three:
+mov rax, 3
+store64 [rsp + 0x38], rax
+jmp ni_immediate
+ni_imul_arg:
+mov rcx, 4
+call ni_comma
+cmp rax, 0
+jne ni_syntax_at
+cmp r15, 6
+jb ns_missing
+mov rax, 5
+store64 [rsp + 0x38], rax
+ni_immediate:
+load64 rcx, [rsp + 0x38]
+mov rdx, 1
+cmp r13, 3
+jne ni_parse_immediate
+mov rdx, 0
+ni_parse_immediate:
+call nd_parse_value
+cmp r10, 0
+jne ns_zero_return
+store64 [rsp + 0x30], rax
+cmp r13, 3
+je ni_immediate_count
+cmp r13, 6
+je ni_shift_bound
+cmp r8, 0
+jne ni_negative_bound
+mov rdx, 2147483647
+cmp rdx, rax
+jb ni_range
+jmp ni_immediate_count
+ni_negative_bound:
+cmp rax, 0
+je ni_immediate_count
+mov rdx, 0xFFFFFFFF80000000
+cmp rax, rdx
+jb ni_range
+jmp ni_immediate_count
+ni_shift_bound:
+cmp rax, 64
+jae ni_range
+ni_immediate_count:
+load64 rcx, [rsp + 0x38]
+add rcx, r9
+cmp r15, rcx
+jb ns_missing
+cmp r15, rcx
+jne ni_extra_index
+mov rax, 1
+store64 [rsp + 0x38], rax
+jmp ni_encode
+ni_no_args:
+cmp r15, 1
+jne ns_syntax_one
+jmp ni_encode
+ni_one_arg:
+cmp r15, 2
+jne ns_extra_two
+ni_encode:
+mov r13, 0
+lea r15, [r12 + 0x1CF00]
+mov rax, 0
+store64 [r15 + 16], rax
+load64 rcx, [rsp + 0x28]
+shr rcx, 8
+and rcx, 255
+je ni_emit_fixed
+cmp rcx, 1
+je ni_emit_stack
+cmp rcx, 2
+je ni_emit_call
+cmp rcx, 7
+je ni_emit_imul
+load64 rax, [rsp + 0x38]
+cmp rax, 0
+je ni_emit_rr
+cmp rcx, 3
+je ni_emit_mov
+jmp ni_emit_small
+ni_emit_fixed:
+load64 rax, [rsp + 0x28]
+call ni_byte
+jmp ni_commit
+ni_emit_stack:
+cmp rbx, 8
+jb ni_stack_opcode
+mov rax, 65
+call ni_byte
+ni_stack_opcode:
+mov rax, rbx
+and rax, 7
+load64 rdx, [rsp + 0x28]
+and rdx, 255
+add rax, rdx
+call ni_byte
+jmp ni_commit
+ni_emit_call:
+cmp rbx, 8
+jb ni_call_opcode
+mov rax, 65
+call ni_byte
+ni_call_opcode:
+mov rax, 255
+call ni_byte
+mov rax, rbx
+and rax, 7
+or rax, 208
+call ni_byte
+jmp ni_commit
+ni_emit_rr:
+mov rax, rdi
+shr rax, 3
+shl rax, 2
+mov rdx, rbx
+shr rdx, 3
+or rax, rdx
+or rax, 72
+call ni_byte
+load64 rax, [rsp + 0x28]
+call ni_byte
+mov rax, rdi
+and rax, 7
+shl rax, 3
+mov rdx, rbx
+and rdx, 7
+or rax, rdx
+or rax, 192
+call ni_byte
+jmp ni_commit
+ni_emit_mov:
+mov rax, rbx
+shr rax, 3
+or rax, 72
+call ni_byte
+mov rax, rbx
+and rax, 7
+or rax, 184
+call ni_byte
+mov rcx, 8
+jmp ni_emit_immediate
+ni_emit_small:
+mov rax, rbx
+shr rax, 3
+or rax, 72
+call ni_byte
+load64 rdx, [rsp + 0x28]
+shr rdx, 8
+and rdx, 255
+mov rax, 129
+cmp rdx, 6
+jne ni_small_opcode
+mov rax, 193
+ni_small_opcode:
+call ni_byte
+load64 rax, [rsp + 0x28]
+shr rax, 16
+and rax, 7
+shl rax, 3
+mov r8, rbx
+and r8, 7
+or rax, r8
+or rax, 192
+call ni_byte
+mov rcx, 4
+cmp rdx, 6
+jne ni_emit_immediate
+mov rcx, 1
+jmp ni_emit_immediate
+ni_emit_imul:
+mov rax, rbx
+shr rax, 3
+shl rax, 2
+mov rdx, rdi
+shr rdx, 3
+or rax, rdx
+or rax, 72
+call ni_byte
+mov rax, 105
+call ni_byte
+mov rax, rbx
+and rax, 7
+shl rax, 3
+mov rdx, rdi
+and rdx, 7
+or rax, rdx
+or rax, 192
+call ni_byte
+mov rcx, 4
+ni_emit_immediate:
+load64 rax, [rsp + 0x30]
+ni_immediate_byte:
+call ni_byte
+shr rax, 8
+sub rcx, 1
+jne ni_immediate_byte
+ni_commit:
+load64 rax, [r15 + 16]
+cmp rax, 0
+jne ns_internal
+load64 rdx, [r12 + 24]
+cmp rdx, 32769
+jae nf_capacity
+mov rax, 32768
+sub rax, rdx
+cmp rax, r13
+jb nf_capacity
+load64 rax, [r12 + 0x30]
+cmp rax, 8192
+jae nf_capacity
+load64 rcx, [r12 + 0x1CF48]
+cmp rcx, 0
+je nb_record_done
+imul rcx, rcx, 16
+add rcx, r14
+load64 rax, [r12 + 0x40]
+cmp rax, 2048
+jae nb_capacity
+imul rax, rax, 24
+add rax, r12
+add rax, 0x6400
+mov r8, rdx
+add r8, r13
+store32 [rax + 8], r8
+sub r8, 4
+store32 [rax + 4], r8
+load64 r8, [rcx]
+lea r9, [r8 + 1]
+store16 [rax + 14], r9
+load64 r9, [r12 + 0x1CF50]
+load64 r10, [r9]
+add r8, r10
+store32 [rax], r8
+load64 r8, [r9 + 8]
+store16 [rax + 12], r8
+load64 r8, [rcx + 8]
+store16 [rax + 16], r8
+load64 r9, [rsp + 0x28]
+shr r9, 8
+and r9, 255
+mov r8, 10
+sub r8, r9
+store16 [rax + 18], r8
+mov r8, 0
+store32 [rax + 20], r8
+load64 rax, [r12 + 0x40]
+add rax, 1
+store64 [r12 + 0x40], rax
+nb_record_done:
+lea r8, [r12 + 0x400]
+load64 r9, [r12]
+ni_mark:
+cmp r9, 0
+je ni_publish
+load16 r11, [r8 + 46]
+and r11, 0x6F
+cmp r11, 0x22
+jne ni_next
+load64 rax, [r8 + 32]
+cmp rax, rdx
+jne ni_next
+load16 rax, [r8 + 46]
+or rax, 128
+store16 [r8 + 46], rax
+ni_next:
+add r8, 48
+sub r9, 1
+jmp ni_mark
+ni_publish:
+lea r8, [r12 + 0x1C500]
+mov rcx, 0
+ni_publish_byte:
+load8 rax, [r15 + rcx * 1]
+store8 [r8 + rcx * 1], rax
+add rcx, 1
+cmp rcx, r13
+jb ni_publish_byte
+add rdx, r13
+store64 [r12 + 24], rdx
+load64 rax, [r12 + 0x30]
+add rax, 1
+store64 [r12 + 0x30], rax
+store64 [r12 + 0x20], r13
+mov rax, 1
+store64 [r12 + 0x28], rax
+mov rax, 11
+jmp ns_ok
+nb_capacity:
+mov r10, 500
+load64 r11, [rcx]
+jmp ns_zero_return
+ni_first_not_reg:
+cmp r13, 2
+jne ni_bad_one
+mov rax, 0x9E8
+store64 [rsp + 0x28], rax
+jmp nb_instruction
+ni_bad_one:
+mov rcx, 1
+jmp ni_bad_reg
+ni_bad_three:
+mov rcx, 3
+ni_bad_reg:
+mov r10, 400
+jmp ni_position
+ni_syntax_three:
+mov rcx, 3
+jmp ni_extra_index
+ni_extra_four:
+mov rcx, 4
+ni_extra_index:
+imul rcx, rcx, 16
+add rcx, r14
+load64 r11, [rcx]
+ni_syntax_at:
+mov r10, 201
+jmp ns_zero_return
+ni_range:
+load64 rcx, [rsp + 0x38]
+mov r10, 401
+ni_position:
+imul rcx, rcx, 16
+add rcx, r14
+load64 r11, [rcx]
+jmp ns_zero_return
+
+; Branches : noms avant/arriere, placeholders puis resolution a EOF.
+nb_instruction:
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+load64 rcx, [r14 + 16]
+add rcx, rsi
+load64 rdx, [r14 + 24]
+call native_name_check
+cmp rax, 0
+jne ni_bad_one
+cmp r15, 2
+jne ns_extra_two
+mov rax, 1
+store64 [r12 + 0x1CF48], rax
+nb_room:
+lea r15, [r12 + 0x1CF00]
+mov r13, 0
+mov rax, 0
+store64 [r15 + 16], rax
+load64 rax, [rsp + 0x28]
+and rax, 255
+cmp rax, 144
+jae nb_opcode
+mov rax, 15
+call ni_byte
+nb_opcode:
+load64 rax, [rsp + 0x28]
+and rax, 255
+call ni_byte
+mov rcx, 4
+mov rax, 0
+nb_zero:
+call ni_byte
+sub rcx, 1
+jne nb_zero
+jmp ni_commit
+nm_instruction:
+cmp r15, 2
+jb ns_missing
+mov rcx, 1
+call ns_require_space
+cmp rax, 0
+jne ns_syntax_one
+load64 rax, [rsp + 0x28]
+shr rax, 16
+and rax, 1
+jne nm_store_start
+mov rcx, 1
+call ni_reg
+cmp rax, -1
+je ni_bad_one
+mov rbx, rax
+mov rcx, 2
+call ni_comma
+cmp rax, 0
+jne ni_syntax_at
+cmp r15, 4
+jb ns_missing
+mov rcx, 3
+jmp nm_address
+nm_store_start:
+mov rcx, 1
+nm_address:
+call nm_parse
+cmp r10, 0
+jne ns_zero_return
+mov rdi, rax
+load64 rax, [rsp + 0x28]
+shr rax, 16
+and rax, 1
+je nm_check_end
+mov rcx, rdi
+call ni_comma
+cmp rax, 0
+jne ni_syntax_at
+add rdi, 1
+cmp rdi, r15
+jae ns_missing
+mov rcx, rdi
+call ni_reg
+cmp rax, -1
+jne nm_store_reg
+mov rcx, rdi
+jmp ni_bad_reg
+nm_store_reg:
+mov rbx, rax
+add rdi, 1
+nm_check_end:
+cmp rdi, r15
+je nm_encode
+mov rcx, rdi
+jmp ni_extra_index
+nm_encode:
+lea r15, [r12 + 0x1CF00]
+mov r13, 0
+mov rax, 0
+store64 [r15 + 16], rax
+load64 rdx, [rsp + 0x28]
+shr rdx, 16
+mov rax, rdx
+and rax, 2
+je nm_rex
+mov rax, 102
+call ni_byte
+nm_rex:
+mov rax, rbx
+shr rax, 3
+shl rax, 2
+or rax, 64
+mov rcx, rdx
+and rcx, 8
+or rax, rcx
+load64 rcx, [r12 + 0x1CF40]
+or rax, rcx
+call ni_byte
+mov rax, rdx
+and rax, 4
+je nm_opcode
+mov rax, 15
+call ni_byte
+nm_opcode:
+load64 rax, [rsp + 0x28]
+call ni_byte
+mov rax, rbx
+and rax, 7
+shl rax, 3
+load64 rcx, [r12 + 0x1CF20]
+or rax, rcx
+call ni_byte
+load64 rax, [r12 + 0x1CF28]
+cmp rax, -1
+je nm_displacement
+call ni_byte
+nm_displacement:
+load64 rax, [r12 + 0x1CF30]
+load64 rcx, [r12 + 0x1CF38]
+nm_disp_byte:
+cmp rcx, 0
+je ni_commit
+call ni_byte
+shr rax, 8
+sub rcx, 1
+jmp nm_disp_byte
+
+; RCX='['; contexte RSI/R12/R14/R15; next/code/position.
+; +1CF20: modrm,sib,disp,dispLen,REX.BX.
+nm_parse:
+push rbx
+push rdi
+push r13
+sub rsp, 64
+store64 [rsp + 32], rcx
+mov rax, 0
+store64 [rsp + 40], rax
+store64 [rsp + 48], rax
+mov rbx, -1
+mov r13, 0
+mov rdx, 91
+call nm_expect
+cmp rax, 0
+jne nm_syntax_return
+load64 rcx, [rsp + 32]
+add rcx, 1
+store64 [rsp + 32], rcx
+cmp rcx, r15
+jae nm_missing
+call ni_reg
+cmp rax, -1
+je nm_base_bad
+mov rdi, rax
+load64 rcx, [rsp + 32]
+add rcx, 1
+store64 [rsp + 32], rcx
+nm_tail:
+load64 rcx, [rsp + 32]
+cmp rcx, r15
+jae nm_missing
+imul rax, rcx, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne nm_syntax_current
+load64 rax, [rax]
+load8 rax, [rsi + rax * 1]
+cmp rax, 93
+je nm_close
+cmp rax, 43
+je nm_plus
+cmp rax, 45
+jne nm_syntax_current
+mov rax, 1
+jmp nm_sign
+nm_plus:
+mov rax, 0
+nm_sign:
+store64 [rsp + 40], rax
+add rcx, 1
+store64 [rsp + 32], rcx
+cmp rcx, r15
+jae nm_missing
+lea rax, [rcx + 1]
+cmp rax, r15
+jae nm_disp
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne nm_disp
+load64 rax, [rax]
+load8 rax, [rsi + rax * 1]
+cmp rax, 42
+jne nm_disp
+cmp rbx, -1
+jne nm_syntax_current
+load64 rax, [rsp + 40]
+cmp rax, 0
+jne nm_syntax_current
+call ni_reg
+cmp rax, -1
+je nm_address_error
+cmp rax, 4
+je nm_address_error
+cmp rax, 12
+je nm_address_error
+mov rbx, rax
+load64 rcx, [rsp + 32]
+add rcx, 2
+store64 [rsp + 32], rcx
+cmp rcx, r15
+jae nm_missing
+imul rax, rcx, 16
+add rax, r14
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne nm_address_error
+load64 rax, [rax]
+load8 rax, [rsi + rax * 1]
+mov r13, 0
+cmp rax, 49
+je nm_scaled
+add r13, 1
+cmp rax, 50
+je nm_scaled
+add r13, 1
+cmp rax, 52
+je nm_scaled
+add r13, 1
+cmp rax, 56
+jne nm_address_error
+nm_scaled:
+add rcx, 1
+store64 [rsp + 32], rcx
+jmp nm_tail
+nm_disp:
+load64 rcx, [rsp + 32]
+imul rax, rcx, 16
+add rax, r14
+load64 rax, [rax]
+load8 rax, [rsi + rax * 1]
+cmp rax, 45
+je nm_syntax_current
+cmp rax, 43
+je nm_syntax_current
+cmp rax, 93
+je nm_syntax_current
+mov rdx, 1
+call nd_parse_value
+cmp r10, 0
+jne nm_return
+cmp r8, 0
+jne nm_range
+cmp r9, 1
+jne nm_syntax_current
+mov rdx, 2147483647
+load64 rcx, [rsp + 32]
+imul rcx, rcx, 16
+add rcx, r14
+load64 rcx, [rcx]
+load8 rcx, [rsi + rcx * 1]
+cmp rcx, 48
+jb nm_bound
+cmp rcx, 58
+jae nm_bound
+load64 rcx, [rsp + 40]
+add rdx, rcx
+nm_bound:
+cmp rdx, rax
+jb nm_range
+load64 rcx, [rsp + 40]
+cmp rcx, 0
+je nm_save_disp
+mov rdx, 0
+sub rdx, rax
+mov rax, rdx
+nm_save_disp:
+store64 [rsp + 48], rax
+load64 rcx, [rsp + 32]
+add rcx, 1
+store64 [rsp + 32], rcx
+mov rdx, 93
+call nm_expect
+cmp rax, 0
+jne nm_syntax_return
+nm_close:
+lea rdx, [r12 + 0x1CF20]
+load64 rax, [rsp + 48]
+store64 [rdx + 16], rax
+mov r8, 0
+mov r9, 0
+cmp rax, 0
+jne nm_nonzero
+mov rcx, rdi
+and rcx, 7
+cmp rcx, 5
+jne nm_mod
+nm_disp8:
+mov r8, 64
+mov r9, 1
+jmp nm_mod
+nm_nonzero:
+cmp rax, 128
+jb nm_disp8
+mov rcx, 0xFFFFFFFFFFFFFF80
+cmp rax, rcx
+jae nm_disp8
+mov r8, 128
+mov r9, 4
+nm_mod:
+store64 [rdx + 24], r9
+mov rax, rdi
+shr rax, 3
+store64 [rdx + 32], rax
+mov rax, -1
+store64 [rdx + 8], rax
+mov rax, rdi
+and rax, 7
+cmp rbx, -1
+jne nm_sib
+cmp rax, 4
+je nm_sib
+or rax, r8
+store64 [rdx], rax
+jmp nm_done
+nm_sib:
+or r8, 4
+store64 [rdx], r8
+mov rcx, 4
+cmp rbx, -1
+je nm_sib_low
+mov rcx, rbx
+shr rcx, 3
+shl rcx, 1
+load64 r9, [rdx + 32]
+or r9, rcx
+store64 [rdx + 32], r9
+mov rcx, rbx
+and rcx, 7
+nm_sib_low:
+shl rcx, 3
+or rax, rcx
+shl r13, 6
+or rax, r13
+store64 [rdx + 8], rax
+nm_done:
+load64 rax, [rsp + 32]
+add rax, 1
+mov r10, 0
+mov r11, 0
+jmp nm_return
+nm_base_bad:
+load64 rcx, [rsp + 32]
+imul rcx, rcx, 16
+add rcx, r14
+load64 rax, [rcx + 8]
+cmp rax, 3
+jne nm_address_error
+load64 rax, [rcx]
+add rax, rsi
+load16 rdx, [rax]
+cmp rdx, 0x6972
+jne nm_address_error
+load8 rax, [rax + 2]
+cmp rax, 112
+jne nm_address_error
+load64 rcx, [rsp + 32]
+add rcx, 1
+mov rdx, 43
+call nm_expect
+cmp rax, 0
+jne nm_syntax_return
+load64 rcx, [rsp + 32]
+add rcx, 2
+store64 [rsp + 32], rcx
+cmp rcx, r15
+jae nm_missing
+imul rax, rcx, 16
+add rax, r14
+load64 rcx, [rax]
+add rcx, rsi
+load64 rdx, [rax + 8]
+call native_name_check
+cmp rax, 0
+jne nm_rip_bad
+load64 rcx, [rsp + 32]
+store64 [r12 + 0x1CF48], rcx
+add rcx, 1
+store64 [rsp + 32], rcx
+mov rdx, 93
+call nm_expect
+cmp rax, 0
+jne nm_syntax_return
+lea rdx, [r12 + 0x1CF20]
+mov rax, 5
+store64 [rdx], rax
+mov rax, -1
+store64 [rdx + 8], rax
+mov rax, 0
+store64 [rdx + 16], rax
+store64 [rdx + 32], rax
+mov rax, 4
+store64 [rdx + 24], rax
+jmp nm_done
+nm_rip_bad:
+mov r10, 400
+jmp nm_at_current
+nm_address_error:
+mov r10, 402
+jmp nm_at_current
+nm_range:
+mov r10, 401
+jmp nm_at_current
+nm_syntax_current:
+mov r10, 201
+nm_at_current:
+load64 rax, [rsp + 32]
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+jmp nm_return
+nm_missing:
+mov rcx, r15
+mov rdx, 0
+call nm_expect
+nm_syntax_return:
+mov r10, 201
+nm_return:
+add rsp, 64
+pop r13
+pop rdi
+pop rbx
+ret
+nm_expect:
+cmp rcx, r15
+jae nm_expect_end
+imul rcx, rcx, 16
+add rcx, r14
+load64 r11, [rcx]
+load64 rax, [rcx + 8]
+cmp rax, 1
+jne nm_expect_bad
+load8 rax, [rsi + r11 * 1]
+cmp rax, rdx
+jne nm_expect_bad
+mov rax, 0
+ret
+nm_expect_end:
+mov rax, r15
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+load64 rax, [rax + 8]
+add r11, rax
+nm_expect_bad:
+mov rax, 1
+ret
+; ni_byte : staging borne a 15 octets.
+ni_byte:
+cmp r13, 15
+jae ni_byte_over
+store8 [r15 + r13 * 1], rax
+add r13, 1
+ret
+ni_byte_over:
+mov rax, 600
+store64 [r15 + 16], rax
+ret
+ni_comma:
+cmp rcx, r15
+jae ni_comma_missing
+imul rcx, rcx, 16
+add rcx, r14
+load64 r11, [rcx]
+load64 rax, [rcx + 8]
+cmp rax, 1
+jne ni_comma_bad
+load8 rax, [rsi + r11 * 1]
+cmp rax, 44
+jne ni_comma_bad
+mov rax, 0
+ret
+ni_comma_missing:
+load64 r11, [r14]
+mov rax, r15
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+load64 rax, [rax + 8]
+add r11, rax
+ni_comma_bad:
+mov rax, 1
+ret
+ni_reg:
+imul rcx, rcx, 16
+add rcx, r14
+load64 rdx, [rcx + 8]
+cmp rdx, 2
+jb ni_reg_bad
+cmp rdx, 4
+jae ni_reg_bad
+load64 rcx, [rcx]
+add rcx, rsi
+lea r8, [rip + ni_registers]
+mov r9, 0
+ni_reg_next:
+mov r10, 0
+ni_reg_byte:
+cmp r10, rdx
+jae ni_reg_end
+load8 rax, [rcx + r10 * 1]
+load8 r11, [r8 + r10 * 1]
+cmp rax, r11
+jne ni_reg_miss
+add r10, 1
+jmp ni_reg_byte
+ni_reg_end:
+load8 rax, [r8 + r10 * 1]
+cmp rax, 0
+je ni_reg_found
+ni_reg_miss:
+add r8, 4
+add r9, 1
+cmp r9, 16
+jb ni_reg_next
+ni_reg_bad:
+mov rax, -1
+ret
+ni_reg_found:
+mov rax, r9
+ret
+ns_body:
+lea rax, [rip + ns_body_words]
+store64 [rsp + 0x38], rax
+ns_body_word:
+load64 rax, [rsp + 0x38]
+load64 r9, [rax]
+cmp r9, 0
+je ns_unknown
+lea r8, [rax + 16]
+mov rcx, 0
+call ns_token_equals
+cmp rax, 1
+je ns_body_matched
+load64 rax, [rsp + 0x38]
+add rax, 32
+store64 [rsp + 0x38], rax
+jmp ns_body_word
+ns_body_matched:
+load64 rax, [rsp + 0x38]
+load64 rax, [rax + 8]
+cmp rax, 0
+je ns_order_zero
+cmp r13, 4
+jne ns_data_body
+cmp rax, 2
+je ns_forbidden
+load64 rax, [rsp + 0x38]
+load64 rax, [rax + 24]
+cmp rax, 0
+jne ni_fixed
+jmp ns_unknown
+ns_data_body:
+cmp rax, 1
+je ns_forbidden
+load64 rax, [rsp + 0x38]
+load64 rax, [rax + 24]
+cmp rax, 16
+je nt_ascii
+cmp rax, 32
+je nt_utf16
+cmp rax, 0
+jne nd_scalar
+ns_unknown:
+mov r10, 400
+jmp ns_error_zero
+ns_forbidden:
+mov r10, 202
+jmp ns_error_zero
+ns_order_zero:
+mov r10, 200
+ns_error_zero:
+load64 r11, [r14]
+jmp ns_zero_return
+ns_syntax_one:
+load64 r11, [r14 + 16]
+jmp ns_syntax
+ns_syntax_two:
+ns_extra_two:
+load64 r11, [r14 + 32]
+jmp ns_syntax
+ns_missing:
+; Une liste tronquee par la limite de tokens n'est pas une vraie fin de ligne.
+load64 rax, [r12 + 0x188]
+cmp rax, 0
+jne ns_truncated_line
+load64 r11, [rsp + 0x20]
+ns_syntax:
+mov r10, 201
+jmp ns_zero_return
+ns_name_one_error:
+mov r10, rax
+load64 rdx, [r14 + 16]
+add r11, rdx
+jmp ns_zero_return
+ns_name_zero_error:
+mov r10, rax
+load64 rdx, [r14]
+add r11, rdx
+jmp ns_zero_return
+ns_internal:
+mov r10, 600
+mov r11, 0
+ns_zero_return:
+mov rax, 0
+jmp ns_return
+ns_ok:
+mov r10, 0
+mov r11, 0
+ns_return:
+; Arbitrer apres l'analyse : une erreur semantique anterieure peut gagner.
+; Les erreurs internes ne sont jamais masquees par une erreur source.
+cmp r10, 600
+jae ns_return_done
+load64 rcx, [r12 + 0x170]
+cmp rcx, 0
+je ns_return_done
+sub rcx, 1
+cmp r10, 0
+je ns_return_lexical
+cmp rcx, r11
+jae ns_return_done
+ns_return_lexical:
+load64 r10, [r12 + 0x180]
+mov r11, rcx
+mov rax, 0
+jmp ns_return_done
+ns_truncated_line:
+load64 rcx, [r12 + 0x170]
+sub rcx, 1
+jmp ns_return_lexical
+ns_return_done:
+add rsp, 64
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RCX=token, RDX=constantes permises.
+; RSI/R12/R14/R15=source/WORK/tokens/n; bits,signe R8,n R9.
+nd_parse_value:
+push rbx
+push rdi
+push r12
+push r13
+sub rsp, 72
+mov rdi, r12
+mov r13, rcx
+mov rbx, rdx
+mov rax, 0
+store64 [rsp + 32], rax
+mov rax, 1
+store64 [rsp + 40], rax
+cmp r13, r15
+jae nv_missing
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 r12, [rax]
+load64 rdx, [rax + 8]
+cmp rdx, 1
+jne nv_classify
+mov rdx, r12
+load8 rdx, [rsi + rdx * 1]
+cmp rdx, 45
+jne nv_classify
+mov rax, 16
+store64 [rsp + 32], rax
+mov rax, 2
+store64 [rsp + 40], rax
+add r13, 1
+cmp r13, r15
+jae nv_sign_gap
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+lea rax, [r12 + 1]
+cmp rdx, rax
+jne nv_sign_gap
+nv_classify:
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+load8 r8, [rsi + rdx * 1]
+cmp r8, 48
+jb nv_name
+cmp r8, 58
+jb nv_literal
+nv_name:
+load64 r8, [rsp + 32]
+cmp r8, 0
+jne nv_bad_magnitude
+cmp rbx, 0
+je nv_unsupported
+load64 r8, [rax + 8]
+add rdx, rsi
+mov rcx, rdi
+call native_symbol_find
+cmp r10, 0
+jne nv_lookup_error
+load16 r10, [rax + 46]
+mov r8, r10
+and r8, 16
+and r10, 15
+cmp r10, 1
+jne nv_absent
+store64 [rsp + 32], r8
+load64 rax, [rax + 32]
+jmp nv_ok
+nv_literal:
+load64 rdx, [rax + 8]
+load64 rcx, [rax]
+add rcx, rsi
+mov r8, 18446744073709551615
+load64 rax, [rsp + 32]
+cmp rax, 0
+je nv_parse
+mov r8, 9223372036854775808
+nv_parse:
+call native_parse_u64
+cmp r10, 0
+jne nv_literal_error
+load64 r8, [rsp + 32]
+cmp r8, 0
+je nv_ok
+mov rdx, 0
+sub rdx, rax
+mov rax, rdx
+nv_ok:
+mov r10, 0
+mov r11, 0
+load64 r8, [rsp + 32]
+load64 r9, [rsp + 40]
+jmp nv_return
+nv_lookup_error:
+cmp r10, 600
+je nv_error
+add r11, r12
+jmp nv_error
+nv_literal_error:
+mov rax, r13
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+add r11, rdx
+jmp nv_error
+nv_bad_magnitude:
+mov r11, rdx
+mov r10, 102
+jmp nv_error
+nv_sign_gap:
+lea r11, [r12 + 1]
+mov r10, 102
+jmp nv_error
+nv_absent:
+mov r10, 301
+mov r11, r12
+jmp nv_error
+nv_unsupported:
+mov r10, 400
+mov r11, r12
+jmp nv_error
+nv_missing:
+mov r11, 0
+cmp r15, 0
+je nv_missing_code
+mov rax, r15
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+load64 rdx, [rax + 8]
+add r11, rdx
+nv_missing_code:
+mov r10, 201
+nv_error:
+mov rax, 0
+mov r8, 0
+mov r9, 0
+nv_return:
+add rsp, 72
+pop r13
+pop r12
+pop rdi
+pop rbx
+ret
+; Helpers RSI=source/R14=tokens.
+; RCX=index, R8/R9=mot attendu; readonly.
+ns_token_equals:
+imul rcx, rcx, 16
+add rcx, r14
+load64 rdx, [rcx + 8]
+load64 rcx, [rcx]
+add rcx, rsi
+sub rsp, 40
+call fc_equals
+add rsp, 40
+ret
+ns_require_space:
+imul rcx, rcx, 16
+add rcx, r14
+load64 rax, [rcx - 16]
+load64 rdx, [rcx - 8]
+add rax, rdx
+add rax, 1
+load64 rdx, [rcx]
+cmp rdx, rax
+jb ns_no_space
+mov rax, 0
+ret
+ns_no_space:
+mov rax, 1
+ret
+
+; RCX=provenance, RDX=taille de ligne bornee.
+ns_check_origin:
+load64 rax, [rcx]
+cmp rax, 65536
+jae ns_origin_bad
+add rax, rdx
+cmp rax, 65536
+jae ns_origin_bad
+load64 rax, [rcx + 8]
+cmp rax, 1
+jb ns_origin_bad
+cmp rax, 4097
+jae ns_origin_bad
+mov rax, 0
+ret
+ns_origin_bad:
+mov rax, 600
+ret
+
+; Garder le resultat reel pour le diagnostic.
+
+native_add_const:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 96
+mov r12, rcx
+mov rsi, rdx
+mov rdi, r8
+mov rbx, r9
+lea r14, [r12 + 0x1C400]
+lea r15, [r12 + 0x1CD00]
+mov rax, 0
+store64 [rsp + 0x20], rax
+store64 [rsp + 0x48], rax
+mov rcx, rsi
+mov rdx, rdi
+mov r8, r14
+call native_lex_line
+cmp r10, 0
+jne fc_lex_error
+mov r13, rax
+cmp r13, 0
+je fc_missing
+mov rax, r13
+sub rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 rcx, [rax]
+load64 rdx, [rax + 8]
+add rcx, rdx
+store64 [rsp + 0x20], rcx
+load64 rcx, [r14]
+add rcx, rsi
+load64 rdx, [r14 + 8]
+lea r8, [rip + kw_const]
+mov r9, 5
+call fc_equals
+cmp rax, 1
+jne fc_syntax_zero
+cmp r13, 2
+jb fc_missing
+load64 rax, [r14 + 16]
+store64 [rsp + 0x28], rax
+load64 rdx, [r14 + 24]
+store64 [rsp + 0x30], rdx
+load64 rcx, [r14]
+load64 r8, [r14 + 8]
+add rcx, r8
+add rcx, 1
+cmp rax, rcx
+jb fc_syntax_name
+mov rcx, rsi
+add rcx, rax
+call native_name_check
+cmp rax, 0
+jne fc_name_error
+load64 rcx, [rsp + 0x28]
+add rcx, rsi
+load64 rdx, [rsp + 0x30]
+lea r8, [rip + kw_const]
+mov r9, 5
+call fc_equals
+cmp rax, 1
+je fc_syntax_name
+load64 rcx, [rsp + 0x28]
+add rcx, rsi
+load64 rdx, [rsp + 0x30]
+lea r8, [rip + kw_entry]
+mov r9, 5
+call fc_equals
+cmp rax, 1
+je fc_syntax_name
+cmp r13, 3
+jb fc_missing
+load64 rax, [r14 + 40]
+cmp rax, 1
+jne fc_syntax_two
+load64 rax, [r14 + 32]
+load8 rax, [rsi + rax * 1]
+cmp rax, 61
+jne fc_syntax_two
+cmp r13, 4
+jb fc_missing
+mov rax, 3
+store64 [rsp + 0x38], rax
+load64 rax, [r14 + 48]
+store64 [rsp + 0x40], rax
+load64 rdx, [r14 + 56]
+cmp rdx, 1
+jne fc_number
+load8 rax, [rsi + rax * 1]
+cmp rax, 45
+jne fc_number
+mov rax, 16
+store64 [rsp + 0x48], rax
+mov rax, 4
+store64 [rsp + 0x38], rax
+cmp r13, 5
+jb fc_sign_gap
+load64 rax, [rsp + 0x40]
+add rax, 1
+load64 rdx, [r14 + 64]
+cmp rax, rdx
+jne fc_sign_gap
+fc_number:
+load64 rax, [rsp + 0x38]
+imul rax, rax, 16
+add rax, r14
+load64 rcx, [rax]
+add rcx, rsi
+load64 rdx, [rax + 8]
+mov r8, 18446744073709551615
+load64 rax, [rsp + 0x48]
+cmp rax, 0
+je fc_parse_number
+mov r8, 9223372036854775808
+fc_parse_number:
+call native_parse_u64
+cmp r10, 0
+jne fc_number_error
+load64 r9, [rsp + 0x48]
+cmp r9, 0
+je fc_bits
+mov r9, 0
+sub r9, rax
+mov rax, r9
+fc_bits:
+store64 [rsp + 0x50], rax
+load64 r9, [rsp + 0x38]
+add r9, 1
+cmp r13, r9
+jne fc_extra
+; Provenance bornee; candidat en scratch.
+load64 rax, [rbx]
+cmp rax, 65536
+jae fc_internal
+add rax, rdi
+cmp rax, 65536
+jae fc_internal
+load64 rax, [rbx + 8]
+cmp rax, 1
+jb fc_internal
+cmp rax, 4097
+jae fc_internal
+mov rax, 0
+store64 [r15], rax
+store64 [r15 + 8], rax
+store64 [r15 + 16], rax
+store64 [r15 + 24], rax
+store64 [r15 + 32], rax
+store64 [r15 + 40], rax
+load64 rdx, [rsp + 0x28]
+add rdx, rsi
+load64 r8, [rsp + 0x30]
+mov rcx, 0
+fc_copy_name:
+cmp rcx, r8
+jae fc_metadata
+load8 rax, [rdx + rcx * 1]
+store8 [r15 + rcx * 1], rax
+add rcx, 1
+jmp fc_copy_name
+fc_metadata:
+load64 rax, [rsp + 0x50]
+store64 [r15 + 32], rax
+load64 rax, [rbx]
+load64 rdx, [rsp + 0x28]
+add rax, rdx
+store32 [r15 + 40], rax
+load64 rax, [rbx + 8]
+store16 [r15 + 44], rax
+load64 rax, [rsp + 0x48]
+add rax, 1
+store16 [r15 + 46], rax
+mov rcx, r12
+mov rdx, r15
+call native_symbol_insert
+cmp r10, 0
+je fc_return
+cmp r10, 600
+je fc_return
+load64 rdx, [rsp + 0x28]
+add r11, rdx
+jmp fc_return
+fc_lex_error:
+mov rax, 0
+jmp fc_return
+fc_name_error:
+mov r10, rax
+load64 rdx, [rsp + 0x28]
+add r11, rdx
+mov rax, 0
+jmp fc_return
+fc_number_error:
+load64 rax, [rsp + 0x38]
+imul rax, rax, 16
+add rax, r14
+load64 rdx, [rax]
+add r11, rdx
+mov rax, 0
+jmp fc_return
+fc_sign_gap:
+load64 r11, [rsp + 0x40]
+add r11, 1
+mov r10, 102
+mov rax, 0
+jmp fc_return
+fc_syntax_zero:
+load64 r11, [r14]
+jmp fc_syntax
+fc_syntax_name:
+load64 r11, [rsp + 0x28]
+jmp fc_syntax
+fc_syntax_two:
+load64 r11, [r14 + 32]
+jmp fc_syntax
+fc_missing:
+load64 r11, [rsp + 0x20]
+jmp fc_syntax
+fc_extra:
+load64 rax, [rsp + 0x38]
+add rax, 1
+imul rax, rax, 16
+add rax, r14
+load64 r11, [rax]
+fc_syntax:
+mov rax, 0
+mov r10, 201
+jmp fc_return
+fc_internal:
+mov rax, 0
+mov r10, 600
+mov r11, 0
+fc_return:
+add rsp, 96
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; Spans bornes, casse exacte.
+fc_equals:
+cmp rdx, r9
+jne fc_not_equal
+mov r10, 0
+fc_equal_byte:
+cmp r10, rdx
+jae fc_equal
+load8 rax, [rcx + r10 * 1]
+load8 r11, [r8 + r10 * 1]
+cmp rax, r11
+jne fc_not_equal
+add r10, 1
+jmp fc_equal_byte
+fc_equal:
+mov rax, 1
+ret
+fc_not_equal:
+mov rax, 0
+ret
+
+; Coeur de native-u64.ntasm.
+native_parse_u64:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov rsi, rcx
+mov rdi, rdx
+mov r12, 0
+mov r15, 0
+cmp rdi, 0
+je np_bad
+load8 rax, [rsi]
+cmp rax, 48
+jne np_decimal
+cmp rdi, 1
+je np_ok
+mov r15, 1
+load8 rax, [rsi + 1]
+cmp rax, 120
+jne np_bad
+mov r15, 2
+cmp r15, rdi
+jae np_bad
+mov rbx, 16
+mov r13, r8
+shr r13, 4
+mov r14, r8
+and r14, 15
+jmp np_digit
+np_decimal:
+mov rbx, 10
+mov r13, 0
+mov r14, 0
+mov r9, 64
+; Division binaire par 10 (pas de DIV S0).
+; Reste <=19; jamais de shift 64.
+np_divide:
+mov rax, r8
+shr rax, 63
+shl r8, 1
+shl r13, 1
+shl r14, 1
+or r14, rax
+cmp r14, 10
+jb np_divide_next
+sub r14, 10
+or r13, 1
+np_divide_next:
+sub r9, 1
+jne np_divide
+np_digit:
+cmp r15, rdi
+jae np_ok
+load8 rax, [rsi + r15 * 1]
+cmp rbx, 16
+je np_hex
+sub rax, 48
+cmp rax, 10
+jae np_bad
+jmp np_bound
+np_hex:
+mov rcx, rax
+sub rax, 48
+cmp rax, 10
+jb np_bound
+mov rax, rcx
+or rax, 32
+sub rax, 97
+cmp rax, 6
+jae np_bad
+add rax, 10
+np_bound:
+; Verifier borne/base avant multiplication.
+cmp r12, r13
+jb np_accumulate
+cmp r12, r13
+jne np_bad
+cmp r14, rax
+jb np_bad
+np_accumulate:
+cmp rbx, 16
+je np_accumulate_hex
+imul r12, r12, 10
+jmp np_accumulate_digit
+np_accumulate_hex:
+shl r12, 4
+np_accumulate_digit:
+add r12, rax
+add r15, 1
+jmp np_digit
+np_ok:
+mov rax, r12
+mov r10, 0
+mov r11, 0
+jmp np_return
+np_bad:
+mov rax, 0
+mov r10, 102
+mov r11, r15
+np_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; Coeur de native-lexer.ntasm.
+native_lex_line:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 48
+mov rsi, rcx
+mov rdi, rdx
+mov r12, r8
+; Le lexer du coeur recoit toujours la table WORK+1C400.
+; +170 = premiere colonne fautive (1-based), +178 = debut du token.
+mov rax, r8
+sub rax, 0x1C400
+store64 [rsp + 32], rax
+mov rcx, 0
+store64 [rax + 0x170], rcx
+store64 [rax + 0x180], rcx
+store64 [rax + 0x188], rcx
+mov rcx, -1
+store64 [rax + 0x178], rcx
+mov r13, 0
+mov r14, 0
+mov r15, 0
+; Lecture bornee, commentaires compris.
+nl_physical:
+cmp r13, rdi
+jae nl_physical_done
+cmp r13, 255
+jae nl_physical_limit
+load8 rax, [rsi + r13 * 1]
+cmp rax, 9
+je nl_physical_next
+cmp rax, 32
+jb nl_physical_bad
+cmp rax, 127
+jae nl_physical_bad
+nl_physical_next:
+add r13, 1
+jmp nl_physical
+nl_physical_done:
+mov r13, 0
+nl_next:
+cmp r13, rdi
+jae nl_ok
+load8 rax, [rsi + r13 * 1]
+cmp rax, 32
+je nl_space
+cmp rax, 9
+je nl_space
+cmp rax, 59
+je nl_ok
+mov r15, r13
+cmp r14, 16
+jae nl_token_limit
+cmp rax, 34
+je nl_string_start
+mov rbx, 0
+cmp rax, 46
+je nl_section
+cmp rax, 48
+jb nl_first_letter
+cmp rax, 58
+jb nl_word
+nl_first_letter:
+cmp rax, 95
+je nl_identifier
+or rax, 32
+cmp rax, 97
+jb nl_punctuation
+cmp rax, 123
+jae nl_punctuation
+nl_identifier:
+mov rbx, 1
+jmp nl_word
+nl_section:
+add r13, 1
+jmp nl_word
+nl_punctuation:
+add r13, 1
+jmp nl_record
+nl_space:
+add r13, 1
+jmp nl_next
+; Entier lexical, chiffres valides par native_parse_u64.
+nl_word:
+cmp r13, rdi
+jae nl_record
+load8 rax, [rsi + r13 * 1]
+cmp rax, 95
+je nl_word_char
+cmp rax, 48
+jb nl_word_letter
+cmp rax, 58
+jb nl_word_char
+nl_word_letter:
+or rax, 32
+cmp rax, 97
+jb nl_record
+cmp rax, 123
+jae nl_record
+nl_word_char:
+cmp rbx, 1
+jne nl_word_advance
+mov rax, r13
+sub rax, r15
+cmp rax, 31
+jae nl_limit
+nl_word_advance:
+add r13, 1
+jmp nl_word
+nl_string_start:
+add r13, 1
+nl_string:
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+cmp rax, 34
+je nl_string_closed
+cmp rax, 32
+jb nl_escape_bad
+cmp rax, 92
+jne nl_string_advance
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+cmp rax, 92
+je nl_string_advance
+cmp rax, 34
+je nl_string_advance
+cmp rax, 114
+je nl_string_advance
+cmp rax, 110
+je nl_string_advance
+cmp rax, 116
+je nl_string_advance
+cmp rax, 48
+je nl_string_advance
+cmp rax, 120
+jne nl_escape_bad
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+call nl_hex_digit
+cmp rax, -1
+je nl_escape_bad
+add r13, 1
+cmp r13, rdi
+jae nl_escape_bad
+load8 rax, [rsi + r13 * 1]
+call nl_hex_digit
+cmp rax, -1
+je nl_escape_bad
+nl_string_advance:
+add r13, 1
+jmp nl_string
+nl_string_closed:
+add r13, 1
+nl_record:
+; Publication apres validation; pas de record partiel.
+store64 [r12], r15
+mov rax, r13
+sub rax, r15
+store64 [r12 + 8], rax
+add r12, 16
+add r14, 1
+jmp nl_next
+nl_ok:
+mov r10, 0
+mov r11, 0
+mov r9, 0
+jmp nl_return
+nl_physical_bad:
+mov r15, r13
+mov r10, 100
+jmp nl_error
+nl_physical_limit:
+mov r15, r13
+nl_limit:
+mov r10, 101
+jmp nl_error
+nl_token_limit:
+; Garder les seize tokens complets pour arbitrer les erreurs anterieures.
+load64 rdx, [rsp + 32]
+mov rax, 1
+store64 [rdx + 0x188], rax
+load64 rax, [rdx + 0x170]
+cmp rax, 0
+jne nl_ok
+lea rax, [r13 + 1]
+store64 [rdx + 0x170], rax
+mov rax, 101
+store64 [rdx + 0x180], rax
+jmp nl_ok
+nl_escape_bad:
+; Conserver la premiere erreur, puis terminer le token sans decoder.
+; Cela permet de diagnostiquer les operandes precedents avant cette chaine.
+load64 rdx, [rsp + 32]
+load64 rax, [rdx + 0x170]
+cmp rax, 0
+jne nl_recover_string
+lea rax, [r13 + 1]
+store64 [rdx + 0x170], rax
+store64 [rdx + 0x178], r15
+mov rax, 102
+store64 [rdx + 0x180], rax
+nl_recover_string:
+cmp r13, rdi
+jae nl_record
+load8 rax, [rsi + r13 * 1]
+cmp rax, 34
+je nl_string_closed
+add r13, 1
+cmp rax, 92
+jne nl_recover_string
+; Une quote echappee ne ferme pas le token malforme.
+cmp r13, rdi
+jae nl_record
+add r13, 1
+jmp nl_recover_string
+nl_error:
+mov r11, r13
+mov r9, r15
+nl_return:
+mov rax, r14
+add rsp, 48
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RAX=ASCII -> chiffre 0..15/-1, RCX volatile.
+nl_hex_digit:
+mov rcx, rax
+sub rax, 48
+cmp rax, 10
+jb nl_hex_return
+mov rax, rcx
+or rax, 32
+sub rax, 97
+cmp rax, 6
+jae nl_hex_bad
+add rax, 10
+nl_hex_return:
+ret
+nl_hex_bad:
+mov rax, -1
+ret
+
+; Coeur de native-symbols.ntasm.
+native_symbol_find:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 32
+mov r12, rcx
+mov rsi, rdx
+mov rdi, r8
+load64 r13, [r12]
+cmp r13, 513
+jae sf_internal
+mov rcx, rsi
+mov rdx, rdi
+call native_name_check
+cmp rax, 0
+jne sf_name_error
+lea r14, [r12 + 0x400]
+mov rbx, 0
+sf_record:
+cmp rbx, r13
+jae sf_absent
+mov r15, 0
+sf_byte:
+cmp r15, rdi
+jae sf_length
+load8 rax, [rsi + r15 * 1]
+load8 r9, [r14 + r15 * 1]
+cmp rax, r9
+jne sf_next
+add r15, 1
+jmp sf_byte
+sf_length:
+load8 rax, [r14 + r15 * 1]
+cmp rax, 0
+jne sf_next
+mov rax, r14
+mov r10, 0
+mov r11, 0
+jmp sf_return
+sf_next:
+add r14, 48
+add rbx, 1
+jmp sf_record
+sf_absent:
+mov r10, 301
+mov r11, 0
+jmp sf_zero
+sf_internal:
+mov r10, 600
+mov r11, 0
+jmp sf_zero
+sf_name_error:
+mov r10, rax
+sf_zero:
+mov rax, 0
+sf_return:
+add rsp, 32
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+; RDX=candidat48, nom NUL, metadata+32.
+; Metadata preparee par appelant; noms/places ici.
+native_symbol_insert:
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 40
+mov r12, rcx
+mov rsi, rdx
+mov rdi, 0
+si_name_length:
+cmp rdi, 32
+jae si_name_long
+load8 rax, [rsi + rdi * 1]
+cmp rax, 0
+je si_lookup
+add rdi, 1
+jmp si_name_length
+si_lookup:
+mov rcx, r12
+mov rdx, rsi
+mov r8, rdi
+call native_symbol_find
+cmp r10, 0
+je si_duplicate
+cmp r10, 301
+jne si_return
+load64 r13, [r12]
+cmp r13, 512
+jae si_full
+imul r14, r13, 48
+add r14, r12
+add r14, 0x400
+; Valider avant write; nom zero jusqu'a 32.
+mov rax, 0
+store64 [r14], rax
+store64 [r14 + 8], rax
+store64 [r14 + 16], rax
+store64 [r14 + 24], rax
+mov r15, 0
+si_copy_name:
+cmp r15, rdi
+jae si_metadata
+load8 rax, [rsi + r15 * 1]
+store8 [r14 + r15 * 1], rax
+add r15, 1
+jmp si_copy_name
+si_metadata:
+load64 rax, [rsi + 32]
+store64 [r14 + 32], rax
+load64 rax, [rsi + 40]
+store64 [r14 + 40], rax
+add r13, 1
+store64 [r12], r13
+mov rax, r14
+mov r10, 0
+mov r11, 0
+jmp si_return
+si_duplicate:
+mov rax, 0
+mov r10, 300
+mov r11, 0
+jmp si_return
+si_full:
+mov rax, 0
+mov r10, 500
+mov r11, 0
+jmp si_return
+si_name_long:
+mov rax, 0
+mov r10, 101
+mov r11, 31
+si_return:
+add rsp, 40
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+ret
+
+; RCX=nom/RDX=len; RAX=0/101/201, R11=index.
+native_name_check:
+mov r11, 0
+cmp rdx, 0
+je nc_bad
+cmp rdx, 32
+jae nc_long
+mov r8, 0
+nc_byte:
+load8 rax, [rcx + r8 * 1]
+cmp rax, 95
+je nc_next
+; Chiffres avant casse : 0x10|0x20 n'est pas '0'.
+cmp rax, 48
+jb nc_letter
+cmp rax, 58
+jb nc_digit
+nc_letter:
+or rax, 32
+cmp rax, 97
+jb nc_bad_at
+cmp rax, 123
+jb nc_next
+jmp nc_bad_at
+nc_digit:
+cmp r8, 0
+je nc_bad_at
+nc_next:
+add r8, 1
+cmp r8, rdx
+jb nc_byte
+mov rax, 0
+ret
+nc_bad_at:
+mov r11, r8
+nc_bad:
+mov rax, 201
+ret
+nc_long:
+mov rax, 101
+mov r11, 31
+ret
+section .rdata r
+exports:
+qword 0x31303030424C544E, 1, 96, 4
+qword 0x200000064, addr(native_front_line)
+qword 0x300000065, addr(nb_resolve)
+qword 0x300000066, addr(nr_resolve)
+qword 0x300000067, addr(native_finish_source)
+loaded_guid:
+qword 0x11D295625B1B31A1, 0x3B7269C9A0003F8E
+kw_const:
+ascii "const"
+kw_entry:
+ascii "entry"
+nf_kw_align:
+ascii "align"
+nf_kw_zero:
+ascii "zero"
+ns_kw_section:
+ascii "section"
+; Record56 : compte|(tag<<8), trois couples len/mot.
+align 8
+ns_headers:
+qword 258, 6, 0x74616d726f66, 4, 0x34366570, 0, 0
+qword 514, 3, 0x696261, 7, 0x3436785f696665, 0, 0
+qword 0, 0, 0, 0, 0, 0, 0
+qword 1283, 7, 0x6e6f6974636573, 5, 0x747865742e, 2, 0x7872
+qword 1283, 7, 0x6e6f6974636573, 6, 0x61746164722e, 1, 0x72
+qword 1283, 7, 0x6e6f6974636573, 5, 0x617461642e, 2, 0x7772
+qword 0, 0, 0, 0, 0, 0, 0
+align 8
+ns_body_words:
+qword 6, 0, 0x74616d726f66, 0
+qword 3, 0, 0x696261, 0
+qword 5, 0, 0x74736e6f63, 0
+qword 5, 0, 0x7972746e65, 0
+qword 4, 2, 0x65747962, 1
+qword 4, 2, 0x64726f77, 2
+qword 5, 2, 0x64726f7764, 4
+qword 5, 2, 0x64726f7771, 8
+qword 5, 2, 0x6969637361, 16
+qword 6, 2, 0x7a3631667475, 32
+qword 4, 2, 0x6f72657a, 0
+qword 3, 1, 0x766f6d, 905
+qword 3, 1, 0x61656c, 526477
+qword 5, 1, 0x3864616f6c, 264374
+qword 6, 1, 0x363164616f6c, 264375
+qword 6, 1, 0x323364616f6c, 2187
+qword 6, 1, 0x343664616f6c, 526475
+qword 6, 1, 0x3865726f7473, 67720
+qword 7, 1, 0x363165726f7473, 198793
+qword 7, 1, 0x323365726f7473, 67721
+qword 7, 1, 0x343665726f7473, 592009
+qword 3, 1, 0x646461, 1025
+qword 3, 1, 0x627573, 328745
+qword 3, 1, 0x646e61, 263201
+qword 2, 1, 0x726f, 66569
+qword 3, 1, 0x726f78, 394289
+qword 3, 1, 0x706d63, 459833
+qword 4, 1, 0x74736574, 1413
+qword 3, 1, 0x6c6873, 263873
+qword 3, 1, 0x726873, 329409
+qword 4, 1, 0x6c756d69, 1897
+qword 4, 1, 0x68737570, 336
+qword 3, 1, 0x706f70, 344
+qword 4, 1, 0x6c6c6163, 131839
+qword 3, 1, 0x746572, 195
+qword 3, 1, 0x706d6a, 0x9E9
+qword 2, 1, 0x656a, 0x984
+qword 3, 1, 0x656e6a, 0x985
+qword 2, 1, 0x626a, 0x982
+qword 3, 1, 0x65616a, 0x983
+qword 3, 1, 0x706f6e, 144
+qword 0
+align 8
+ni_registers:
+ascii "rax\0rcx\0rdx\0rbx\0rsp\0rbp\0rsi\0rdi\0r8\0\0r9\0\0r10\0r11\0r12\0r13\0r14\0r15\0"
+section .data rw
+zero 8

@@ -1,0 +1,6 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+section .rdata r
+jae

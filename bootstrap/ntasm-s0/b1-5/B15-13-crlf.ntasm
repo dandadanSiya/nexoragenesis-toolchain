@@ -1,0 +1,4 @@
+; pre
+	format	pe64 ; f
+abi	 efi_x64	; a
+	const	Hex9	=	0x2A	; c

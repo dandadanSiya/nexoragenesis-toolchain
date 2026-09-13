@@ -1,0 +1,10 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+nop rax
+section .rdata r
+byte 0
+section .data rw
+zero 1

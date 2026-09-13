@@ -1,0 +1,5 @@
+;lead
+
+	format	pe64 ;f
+ 	;gap
+	abi	efi_x64;a

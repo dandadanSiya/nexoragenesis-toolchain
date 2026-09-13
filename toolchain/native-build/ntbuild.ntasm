@@ -1,0 +1,749 @@
+; NTBUILD S0 : lanceur natif ferme. Producteur du PE : NTASM maison uniquement.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rbp
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 56
+mov rbx, rdx
+mov r15, rcx
+lea rbp, [rip + state]
+mov rax, 910
+store64 [rbp], rax
+load64 r14, [rbx + 96]
+mov rcx, r15
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 8]
+load64 rax, [r14 + 152]
+call rax
+cmp rax, 0
+jne finish
+load64 rax, [rbp + 8]
+load64 rcx, [rax + 24]
+store64 [rbp + 16], rcx
+lea rdx, [rip + fs_guid]
+lea r8, [rbp + 24]
+load64 rax, [r14 + 152]
+call rax
+cmp rax, 0
+jne finish
+load64 rcx, [rbp + 24]
+lea rdx, [rbp + 32]
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne finish
+mov rcx, 2
+mov rdx, 65664
+lea r8, [rbp + 48]
+load64 rax, [r14 + 64]
+call rax
+cmp rax, 0
+jne cleanup
+lea rcx, [rip + job_name]
+mov rdx, 256
+call read_file
+cmp rax, 1
+jne cleanup
+load64 rax, [rbp + 56]
+cmp rax, 153
+jne cleanup
+load64 rsi, [rbp + 48]
+lea rdi, [rip + recipe_prefix]
+mov rcx, 9
+version_loop:
+load8 rax, [rsi]
+load8 rdx, [rdi]
+cmp rax, rdx
+jne cleanup
+add rsi, 1
+add rdi, 1
+sub rcx, 1
+jne version_loop
+mov rax, 911
+store64 [rbp], rax
+mov rcx, 17
+profile_loop:
+load8 rax, [rsi]
+load8 rdx, [rdi]
+cmp rax, rdx
+jne cleanup
+add rsi, 1
+add rdi, 1
+sub rcx, 1
+jne profile_loop
+mov rax, 910
+store64 [rbp], rax
+mov rcx, 62
+prefix_loop:
+load8 rax, [rsi]
+load8 rdx, [rdi]
+cmp rax, rdx
+jne cleanup
+add rsi, 1
+add rdi, 1
+sub rcx, 1
+jne prefix_loop
+mov rcx, 64
+lea rdi, [rip + source_hash]
+hex_loop:
+load8 rax, [rsi]
+cmp rax, 48
+jb cleanup
+cmp rax, 58
+jb hex_next
+cmp rax, 97
+jb cleanup
+cmp rax, 103
+jae cleanup
+hex_next:
+store8 [rdi], rax
+add rdi, 1
+add rsi, 1
+sub rcx, 1
+jne hex_loop
+load8 rax, [rsi]
+cmp rax, 10
+jne cleanup
+; La recette controle la source; les producteurs sont epingles dans le binaire.
+mov rax, 912
+store64 [rbp], rax
+lea rcx, [rip + source_name]
+mov rdx, 65535
+call read_file
+cmp rax, 1
+jne cleanup
+load64 rdx, [rbp + 56]
+cmp rdx, 0
+je cleanup
+load64 rcx, [rbp + 48]
+call sha256
+lea rdx, [rip + source_hash]
+call digest_equal
+cmp rax, 1
+jne cleanup
+mov rax, 913
+store64 [rbp], rax
+lea rcx, [rip + core_name]
+mov rdx, 20992
+call read_file
+cmp rax, 1
+jne cleanup
+load64 rdx, [rbp + 56]
+cmp rdx, 20992
+jne cleanup
+load64 rcx, [rbp + 48]
+call sha256
+lea rdx, [rip + core_hash]
+call digest_equal
+cmp rax, 1
+jne cleanup
+mov rax, 914
+store64 [rbp], rax
+lea rcx, [rip + host_name]
+mov rdx, 17408
+call read_file
+cmp rax, 1
+jne cleanup
+load64 rdx, [rbp + 56]
+cmp rdx, 17408
+jne cleanup
+load64 rcx, [rbp + 48]
+call sha256
+lea rdx, [rip + host_hash]
+call digest_equal
+cmp rax, 1
+jne cleanup
+; SourceBuffer transmet les octets qui viennent d'etre haches, sans relecture.
+mov rax, 915
+store64 [rbp], rax
+mov rcx, 0
+mov rdx, r15
+mov r8, 0
+load64 r9, [rbp + 48]
+mov rax, 17408
+store64 [rsp + 32], rax
+lea rax, [rbp + 88]
+store64 [rsp + 40], rax
+load64 rax, [r14 + 200]
+call rax
+cmp rax, 0
+je image_loaded
+; SECURITY_VIOLATION peut rendre une image chargee mais interdite de demarrage.
+mov rdx, 0x800000000000001A
+cmp rax, rdx
+jne cleanup
+load64 rcx, [rbp + 88]
+cmp rcx, 0
+je cleanup
+jmp unload_child
+image_loaded:
+load64 rcx, [rbp + 88]
+cmp rcx, 0
+je cleanup
+lea rdx, [rip + loaded_guid]
+lea r8, [rbp + 96]
+load64 rax, [r14 + 152]
+call rax
+cmp rax, 0
+jne unload_child
+; Le fils lit NTCORE/source sur le meme volume de confiance que le lanceur.
+load64 rcx, [rbp + 96]
+load64 rax, [rbp + 16]
+store64 [rcx + 24], rax
+load64 rcx, [rbp + 88]
+mov rdx, 0
+mov r8, 0
+load64 rax, [r14 + 208]
+call rax
+; Le producteur peut propager tout EFI_STATUS. Ne pas deviner s'il a execute.
+store64 [rbp + 104], rax
+; Enumerer les handles vivants sans dereferencer le handle potentiellement
+; decharge. Une application retournee de son entree est retiree par UEFI.
+mov rax, 2048
+store64 [rbp + 128], rax
+mov rcx, 2
+lea rdx, [rip + loaded_guid]
+mov r8, 0
+lea r9, [rbp + 128]
+lea rax, [rip + loaded_handles]
+store64 [rsp + 32], rax
+load64 rax, [r14 + 176]
+call rax
+cmp rax, 0
+jne registry_error
+load64 rcx, [rbp + 128]
+cmp rcx, 8
+jb registry_error
+cmp rcx, 2049
+jae registry_error
+mov rax, rcx
+and rax, 7
+jne registry_error
+lea rsi, [rip + loaded_handles]
+load64 rdi, [rbp + 88]
+resident_loop:
+load64 rax, [rsi]
+cmp rax, rdi
+je unload_child
+add rsi, 8
+sub rcx, 8
+jne resident_loop
+child_completed:
+; Le handle n'est plus resident : preserver le statut reel du producteur.
+mov rax, 1
+store64 [rbp + 112], rax
+mov rax, 0
+store64 [rbp + 88], rax
+jmp cleanup
+registry_error:
+; Ownership indetermine : ne jamais decharger un handle non prouve vivant.
+mov rax, 917
+store64 [rbp], rax
+jmp cleanup
+unload_child:
+load64 rcx, [rbp + 88]
+mov rax, 0
+store64 [rbp + 88], rax
+load64 rax, [r14 + 224]
+call rax
+call cleanup_status
+cleanup:
+load64 rcx, [rbp + 48]
+cmp rcx, 0
+je close_root
+mov rax, 0
+store64 [rbp + 48], rax
+load64 rax, [r14 + 72]
+call rax
+call cleanup_status
+close_root:
+load64 rcx, [rbp + 32]
+cmp rcx, 0
+je finish
+mov rax, 0
+store64 [rbp + 32], rax
+load64 rax, [rcx + 16]
+call rax
+call cleanup_status
+finish:
+load64 rax, [rbp + 112]
+cmp rax, 1
+je child_return
+; Un seul diagnostic avant lancement; suffixe choisi par l'etape refusee.
+lea rdx, [rip + error_recipe]
+load64 rax, [rbp]
+sub rax, 910
+add rax, 48
+store16 [rdx + 38], rax
+print:
+load64 rcx, [rbx + 64]
+load64 rax, [rcx + 8]
+call rax
+mov rax, 0x8000000000000015
+jmp restore
+child_return:
+load64 rax, [rbp + 104]
+restore:
+add rsp, 56
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbp
+pop rbx
+ret
+; Le premier echec producteur/entree reste prioritaire. Un cleanup qui echoue
+; apres un succes transforme celui-ci en E916; aucun double Close/Free tente.
+; state+120 conserve le premier EFI_STATUS cleanup, meme s'il est secondaire.
+cleanup_status:
+cmp rax, 0
+je cleanup_status_done
+load64 rdx, [rbp + 120]
+cmp rdx, 0
+jne cleanup_keep_status
+store64 [rbp + 120], rax
+cleanup_keep_status:
+load64 rdx, [rbp + 112]
+cmp rdx, 1
+jne cleanup_status_done
+load64 rdx, [rbp + 104]
+cmp rdx, 0
+jne cleanup_status_done
+mov rax, 0
+store64 [rbp + 112], rax
+mov rax, 916
+store64 [rbp], rax
+cleanup_status_done:
+ret
+; RCX=nom racine UTF16, RDX=maximum. Lit exactement FileSize et EOF.
+; RAX=1 succes; state+56 longueur. Tampon state+48, capacite 65664.
+read_file:
+push rsi
+push rdi
+push r12
+push r13
+sub rsp, 40
+mov r12, rdx
+mov r8, rcx
+mov rsi, 0
+mov r13, 0
+mov rax, 0
+store64 [rbp + 40], rax
+load64 rcx, [rbp + 32]
+lea rdx, [rbp + 40]
+mov r9, 1
+store64 [rsp + 32], rax
+load64 rax, [rcx + 8]
+call rax
+cmp rax, 0
+jne read_done
+load64 rsi, [rbp + 40]
+mov rax, 512
+store64 [rbp + 72], rax
+mov rcx, rsi
+lea rdx, [rip + info_guid]
+lea r8, [rbp + 72]
+lea r9, [rip + info]
+load64 rax, [rsi + 64]
+call rax
+cmp rax, 0
+jne read_close
+load64 rax, [rbp + 72]
+cmp rax, 80
+jb read_close
+cmp rax, 513
+jae read_close
+lea rcx, [rip + info]
+load64 rax, [rcx + 72]
+and rax, 16
+jne read_close
+load64 rax, [rcx + 8]
+cmp r12, rax
+jb read_close
+store64 [rbp + 64], rax
+mov rdi, 0
+read_loop:
+lea rax, [r12 + 1]
+sub rax, rdi
+store64 [rbp + 72], rax
+store64 [rbp + 80], rax
+mov rcx, rsi
+lea rdx, [rbp + 72]
+load64 r8, [rbp + 48]
+add r8, rdi
+load64 rax, [rsi + 32]
+call rax
+cmp rax, 0
+jne read_close
+load64 rax, [rbp + 72]
+load64 rdx, [rbp + 80]
+cmp rdx, rax
+jb read_close
+cmp rax, 0
+je read_eof
+add rdi, rax
+cmp r12, rdi
+jb read_close
+jmp read_loop
+read_eof:
+load64 rax, [rbp + 64]
+cmp rax, rdi
+jne read_close
+store64 [rbp + 56], rdi
+mov r13, 1
+read_close:
+mov rcx, rsi
+load64 rax, [rcx + 16]
+call rax
+cmp rax, 0
+je read_done
+mov r13, 0
+read_done:
+mov rax, r13
+add rsp, 40
+pop r13
+pop r12
+pop rdi
+pop rsi
+ret
+; RDX=64 octets ASCII attendus; le SHA maison rend ses 64 octets ASCII.
+digest_equal:
+lea rcx, [rip + sha_digest]
+mov r8, 64
+digest_loop:
+load8 rax, [rcx]
+load8 r9, [rdx]
+cmp rax, r9
+jne digest_bad
+add rcx, 1
+add rdx, 1
+sub r8, 1
+jne digest_loop
+mov rax, 1
+ret
+digest_bad:
+mov rax, 0
+ret
+; SHA-256, RCX=tampon inscriptible, RDX=longueur <=65536, marge 128.
+; Le padding ne modifie aucun octet des donnees; calcul modulo 2^32 explicite.
+sha256:
+push rbx
+push rbp
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+mov rsi, rcx
+mov r12, rdx
+mov r15, 0xFFFFFFFF
+lea rbp, [rip + sha_state]
+lea rdi, [rip + sha_initial]
+mov rcx, 8
+mov r8, rbp
+sha_init:
+load64 rax, [rdi]
+store64 [r8], rax
+add rdi, 8
+add r8, 8
+sub rcx, 1
+jne sha_init
+lea r13, [r12 + 72]
+and r13, -64
+mov rax, 128
+mov rdi, rsi
+add rdi, r12
+store8 [rdi], rax
+lea rdi, [r12 + 1]
+lea rcx, [r13 - 8]
+mov rax, 0
+sha_pad:
+cmp rdi, rcx
+jae sha_length
+store8 [rsi + rdi * 1], rax
+add rdi, 1
+jmp sha_pad
+sha_length:
+mov rax, r12
+shl rax, 3
+mov rcx, 8
+sha_length_loop:
+mov rdx, rax
+shr rdx, 56
+store8 [rsi + rdi * 1], rdx
+shl rax, 8
+add rdi, 1
+sub rcx, 1
+jne sha_length_loop
+add r13, rsi
+sha_block:
+lea rdi, [rip + sha_words]
+mov rcx, 0
+mov r8, rsi
+sha_read_words:
+load8 rax, [r8]
+shl rax, 8
+load8 rdx, [r8 + 1]
+or rax, rdx
+shl rax, 8
+load8 rdx, [r8 + 2]
+or rax, rdx
+shl rax, 8
+load8 rdx, [r8 + 3]
+or rax, rdx
+store64 [rdi + rcx * 8], rax
+add r8, 4
+add rcx, 1
+cmp rcx, 16
+jb sha_read_words
+sha_schedule:
+load64 rax, [rdi + rcx * 8 - 120]
+mov r8, rax
+shr r8, 7
+mov r9, rax
+shl r9, 25
+or r8, r9
+mov r9, rax
+shr r9, 18
+mov r10, rax
+shl r10, 14
+or r9, r10
+xor r8, r9
+shr rax, 3
+xor r8, rax
+load64 rax, [rdi + rcx * 8 - 16]
+mov r9, rax
+shr r9, 17
+mov r10, rax
+shl r10, 15
+or r9, r10
+mov r10, rax
+shr r10, 19
+mov r11, rax
+shl r11, 13
+or r10, r11
+xor r9, r10
+shr rax, 10
+xor r9, rax
+load64 rax, [rdi + rcx * 8 - 128]
+add rax, r8
+load64 rdx, [rdi + rcx * 8 - 56]
+add rax, rdx
+add rax, r9
+and rax, r15
+store64 [rdi + rcx * 8], rax
+add rcx, 1
+cmp rcx, 64
+jb sha_schedule
+lea r12, [rip + sha_work]
+mov rcx, 0
+sha_copy_state:
+load64 rax, [rbp + rcx * 8]
+store64 [r12 + rcx * 8], rax
+add rcx, 1
+cmp rcx, 8
+jb sha_copy_state
+mov r14, 0
+sha_round:
+; S1(e) = ror6 xor ror11 xor ror25.
+load64 rax, [r12 + 32]
+mov r8, rax
+shr r8, 6
+mov r9, rax
+shl r9, 26
+or r8, r9
+mov r9, rax
+shr r9, 11
+mov r10, rax
+shl r10, 21
+or r9, r10
+xor r8, r9
+mov r9, rax
+shr r9, 25
+mov r10, rax
+shl r10, 7
+or r9, r10
+xor r8, r9
+; Ch(e,f,g) = (e and f) xor ((not e) and g).
+load64 r9, [r12 + 40]
+and r9, rax
+xor rax, r15
+load64 r10, [r12 + 48]
+and rax, r10
+xor r9, rax
+add r8, r9
+load64 rax, [r12 + 56]
+add r8, rax
+lea r9, [rip + sha_k]
+load64 rax, [r9 + r14 * 8]
+add r8, rax
+load64 rax, [rdi + r14 * 8]
+add r8, rax
+and r8, r15
+; T1 dans RBX; S0(a) = ror2 xor ror13 xor ror22.
+mov rbx, r8
+load64 rax, [r12]
+mov r8, rax
+shr r8, 2
+mov r9, rax
+shl r9, 30
+or r8, r9
+mov r9, rax
+shr r9, 13
+mov r10, rax
+shl r10, 19
+or r9, r10
+xor r8, r9
+mov r9, rax
+shr r9, 22
+mov r10, rax
+shl r10, 10
+or r9, r10
+xor r8, r9
+; Maj(a,b,c).
+load64 r9, [r12 + 8]
+load64 r10, [r12 + 16]
+mov r11, rax
+and r11, r9
+and rax, r10
+xor r11, rax
+and r9, r10
+xor r11, r9
+add r8, r11
+and r8, r15
+add r8, rbx
+and r8, r15
+load64 rax, [r12 + 24]
+add rbx, rax
+and rbx, r15
+; Deplacer h..b, puis remplacer a et e.
+mov rcx, 7
+sha_shift:
+load64 rax, [r12 + rcx * 8 - 8]
+store64 [r12 + rcx * 8], rax
+sub rcx, 1
+jne sha_shift
+store64 [r12], r8
+store64 [r12 + 32], rbx
+add r14, 1
+cmp r14, 64
+jb sha_round
+mov rcx, 0
+sha_add_state:
+load64 rax, [rbp + rcx * 8]
+load64 rdx, [r12 + rcx * 8]
+add rax, rdx
+and rax, r15
+store64 [rbp + rcx * 8], rax
+add rcx, 1
+cmp rcx, 8
+jb sha_add_state
+add rsi, 64
+cmp rsi, r13
+jb sha_block
+; Rendre 64 chiffres hexadecimaux minuscules, independants de l'endian hote.
+lea rdi, [rip + sha_digest]
+lea rsi, [rip + hex_chars]
+mov rcx, 0
+sha_hex_word:
+load64 rax, [rbp + rcx * 8]
+mov r8, 8
+sha_hex_digit:
+mov rdx, rax
+shr rdx, 28
+and rdx, 15
+load8 r9, [rsi + rdx * 1]
+store8 [rdi], r9
+add rdi, 1
+shl rax, 4
+sub r8, 1
+jne sha_hex_digit
+add rcx, 1
+cmp rcx, 8
+jb sha_hex_word
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbp
+pop rbx
+ret
+section .rdata r
+anchor:
+qword addr(start)
+loaded_guid:
+qword 0x11D295625B1B31A1, 0x3B7269C9A0003F8E
+fs_guid:
+qword 0x11D26459964E5B22, 0x3B7269C9A000398E
+info_guid:
+qword 0x11D26D3F09576E92, 0x3B7269C9A000398E
+job_name:
+utf16z "NTBUILD.JOB"
+source_name:
+utf16z "NTASM1.NTASM"
+core_name:
+utf16z "NTCORE.EFI"
+host_name:
+utf16z "NTASM.EFI"
+host_hash:
+ascii "82826f458aff21d4f5167b296b56813899ea422caedb9d8fda2d8120a9b4882d"
+core_hash:
+ascii "a02425be642b839586593b6b5468bc13f4f85d29a503987aa972e4750d1d428f"
+recipe_prefix:
+ascii "NTBUILD2\nprofile=ntasm-s0\nsource=NTASM1.NTASM\nproducer=NTASM.EFI\ncore=NTCORE.EFI\nsha256="
+hex_chars:
+ascii "0123456789abcdef"
+align 8
+sha_initial:
+qword 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a
+qword 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+sha_k:
+qword 0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5
+qword 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5
+qword 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3
+qword 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174
+qword 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc
+qword 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da
+qword 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7
+qword 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967
+qword 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13
+qword 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85
+qword 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3
+qword 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070
+qword 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5
+qword 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3
+qword 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208
+qword 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+section .data rw
+state:
+zero 256
+info:
+zero 512
+source_hash:
+zero 64
+sha_state:
+zero 64
+sha_work:
+zero 64
+sha_words:
+zero 512
+sha_digest:
+zero 64
+loaded_handles:
+zero 2048
+error_recipe:
+utf16z "NG_NTASM_MODULE_E910\r\n"

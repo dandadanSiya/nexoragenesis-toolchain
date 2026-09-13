@@ -1,0 +1,36 @@
+; Programme de preuve pour la future sortie du writer NTASM-S0.
+; Ce source ne devient executable que lorsque notre assembleur emet son PE.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+; Sauver RBX, non volatil, et aligner la pile avant l'appel UEFI.
+push rbx
+; Reserver les 32 octets de shadow space de l'ABI efi_x64.
+sub rsp, 32
+; RDX contient SystemTable a l'entree du programme EFI.
+mov rbx, rdx
+; SystemTable+0x40 contient le protocole de sortie console ConOut.
+load64 rcx, [rbx + 0x40]
+; ConOut+8 contient l'adresse de sa fonction OutputString.
+load64 rax, [rcx + 8]
+; Le message est adresse relativement a RIP, sans adresse absolue codee.
+lea rdx, [rip + message]
+; RCX=this, RDX=message UTF16; RAX est la cible de l'appel indirect.
+call rax
+; Liberer le shadow space et restaurer le registre du firmware.
+add rsp, 32
+pop rbx
+; Retourner EFI_SUCCESS (zero) au firmware, sans arreter la machine.
+mov rax, 0
+ret
+section .rdata r
+; Cet ancrage exige une relocation DIR64 si le firmware change ImageBase.
+anchor:
+qword addr(start)
+message:
+utf16z "NG_NTASM_OUTPUT_OK\r\n"
+section .data rw
+; Les trois sections utilisateur doivent contenir un payload reel.
+zero 8

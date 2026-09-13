@@ -1,0 +1,16 @@
+module ntasm_parser_test;
+import ntasm_parser;
+import ntasm_ast;
+
+fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    let needed:u64=10+tree.node_count*12;
+    if (len(out)<(needed)) { ntasm_ast.release(tree);return 901; }
+    out[0]=0;if (tree.ok==true) { out[0]=1; }
+    out[1]=tree.code;out[2]=tree.reason;out[3]=tree.source;
+    out[4]=tree.line;out[5]=tree.column;out[6]=tree.start;out[7]=tree.end;
+    out[8]=tree.token_count;out[9]=tree.node_count;
+    let mut i:u64=0;
+    while (i<tree.node_count*12) { out[10+i]=tree.node_words[i];i=i+1; }
+    ntasm_ast.release(tree);return tree.code;
+}

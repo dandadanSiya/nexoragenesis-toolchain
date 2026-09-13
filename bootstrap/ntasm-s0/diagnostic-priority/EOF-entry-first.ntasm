@@ -1,0 +1,6 @@
+format pe64
+abi efi_x64
+entry absent
+section .text rx
+start:
+nop

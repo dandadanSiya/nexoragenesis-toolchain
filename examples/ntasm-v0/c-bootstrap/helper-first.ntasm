@@ -1,0 +1,14 @@
+module bootstrap.helper_first
+target x86_64-nexora-uefi
+section .text {
+    fn helper()->u64
+    effects {}
+    clobbers {} {
+        return 2
+    }
+    export fn main()->u64
+    effects {}
+    clobbers {} {
+        return helper()+40
+    }
+}

@@ -1,0 +1,5 @@
+format pe64
+abi efi_x64
+const ZERO = 0
+const MAX = 18446744073709551615
+const HEXMAX = 0xFFFFFFFFFFFFFFFF

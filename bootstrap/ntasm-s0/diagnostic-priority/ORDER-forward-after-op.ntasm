@@ -1,0 +1,13 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+jmp later
+ud2
+later:
+ret
+section .rdata r
+qword addr(start)
+section .data rw
+zero 8

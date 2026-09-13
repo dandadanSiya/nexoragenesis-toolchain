@@ -1,0 +1,4 @@
+format pe64
+abi efi_x64
+const start = 0
+entry start

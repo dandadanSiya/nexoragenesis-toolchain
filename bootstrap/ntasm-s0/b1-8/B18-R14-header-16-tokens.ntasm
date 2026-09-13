@@ -1,0 +1,4 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx a b c d e f g h i j k l m

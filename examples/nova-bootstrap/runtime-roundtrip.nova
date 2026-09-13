@@ -1,0 +1,37 @@
+// BOOTSTRAP_EXTERNAL_C runtime consumer. The runtime only moves bytes;
+// Nova itself constructs "42", reads the file and computes the number.
+// main ABI: RCX=NovaRuntimeV1*, RDX=path pointer, R8=path byte length.
+// The path must be fresh: rt_open_new never overwrites a file.
+fn main(rt:runtime,path:buf<u8>) -> u64 {
+    let bytes:buf<u8> = alloc(rt,16);
+    bytes[0]=52;
+    bytes[1]=50;
+    let contents:buf<u8> = slice(bytes,0,2);
+    let writer:u64=rt_open_new(rt,path);
+    if writer==18446744073709551615 {
+        rt_free(rt,bytes);
+        return writer;
+    }
+    let wrote:u64=rt_write(rt,writer,contents);
+    let closed:u64=rt_close(rt,writer);
+    if wrote!=2 || closed!=0 {
+        rt_free(rt,bytes);
+        return 10;
+    }
+    bytes[0]=0;
+    bytes[1]=0;
+    let reader:u64=rt_open_read(rt,path);
+    if reader==18446744073709551615 {
+        rt_free(rt,bytes);
+        return reader;
+    }
+    let received:u64=rt_read(rt,reader,bytes);
+    rt_close(rt,reader);
+    if received!=2 {
+        rt_free(rt,bytes);
+        return 11;
+    }
+    let result:u64=(bytes[0]-48)*10+(bytes[1]-48);
+    rt_free(rt,bytes);
+    return result;
+}

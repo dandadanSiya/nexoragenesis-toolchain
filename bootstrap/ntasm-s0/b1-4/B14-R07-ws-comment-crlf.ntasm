@@ -1,0 +1,6 @@
+; before format
+ 	format	pe64 ; format
+	 	
+abi	 efi_x64	; abi
+; before const
+	const	_A9	=	; const

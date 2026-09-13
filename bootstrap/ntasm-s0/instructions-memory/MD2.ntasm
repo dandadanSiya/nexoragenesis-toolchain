@@ -1,0 +1,8 @@
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+lea rax, [rbx - 128]
+section .rdata r
+section .data rw

@@ -1,0 +1,22 @@
+module nxo_entry;
+import ntasm_nxo;
+fn put64(out:buf<u8>,at:u64,value:u64)->u64 {
+    let mut i:u64=0;while i<8{out[at+i]=u8(value>>(i*8));i=i+1;}return 0;
+}
+fn main(input:buf<u8>,out:buf<u8>,mode:u64)->u64 {
+    let read_result:ntasm_nxo.ReadResult=ntasm_nxo.read(input);
+    if read_result.code!=0 { return 9223372036854775808+read_result.code; }
+    let object:ntasm_nxo.Object=read_result.object;
+    if mode==1 { object.target=3; }
+    if mode==2 { object.entry=65537; }
+    if mode==3 && len(object.symbols)>=8 { object.symbols[3]=16; }
+    let encoded:ntasm_nxo.WriteResult=ntasm_nxo.emit(object);
+    ntasm_nxo.release(object);
+    if encoded.code!=0 { return 9223372036854775808+encoded.code; }
+    let bytes:buf<u8>=encoded.bytes;
+    if len(out)<len(bytes) { return 9223372036854776509; }
+    let size:u64=len(bytes);
+    let mut i:u64=0;while i<(size){out[i]=bytes[i];i=i+1;}
+    rt_free(runtime(),bytes);
+    return size;
+}

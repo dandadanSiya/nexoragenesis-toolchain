@@ -1,0 +1,2434 @@
+; NX64ENC1 native encoding library. Driver/oracles are in encoder-caller.ntasm.
+; LoadImage then call table exports before UnloadImage; no StartImage setup.
+format pe64
+abi efi_x64
+entry library_entry
+section .text rx
+library_entry:
+mov rax, 0
+ret
+encode_x64:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 64
+mov r12, rcx
+mov r13, rdx
+mov r14, r8
+mov r15, r9
+mov rax, 0
+store64 [rsp + 32], rax
+load64 rsi, [r12]
+lea rdi, [rip + fixed_forms]
+ef_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je rr_begin
+mov rcx, 0
+ef_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne ef_other
+cmp rax, 0
+je ef_found
+add rcx, 1
+jmp ef_name
+ef_other:
+add rdi, 40
+jmp ef_next
+ef_found:
+load64 rax, [r12 + 8]
+cmp rax, 0
+jne ef_count
+load64 rax, [rdi + 24]
+mov rcx, rax
+and rcx, r14
+cmp rcx, rax
+jne ef_feature
+cmp r15, 4
+jae ef_privilege
+load64 rax, [rdi + 32]
+cmp r15, rax
+jb ef_emit
+je ef_emit
+jmp ef_privilege
+ef_emit:
+load64 rdx, [rdi + 8]
+load64 rax, [rdi + 16]
+mov rcx, 0
+ef_byte:
+cmp rcx, rdx
+jae ef_success
+store8 [r13 + rcx * 1], rax
+shr rax, 8
+add rcx, 1
+jmp ef_byte
+ef_success:
+mov rax, 0
+jmp ef_return
+ef_unknown:
+mov rax, 401
+jmp ef_error
+ef_width:
+mov rax, 403
+jmp ef_error
+ef_register:
+mov rax, 406
+jmp ef_error
+ef_form:
+mov rax, 409
+jmp ef_error
+ef_range:
+mov rax, 407
+jmp ef_error
+ef_space:
+mov rax, 410
+jmp ef_error
+ef_address:
+mov rax, 411
+jmp ef_error
+ef_count:
+mov rax, 402
+jmp ef_error
+ef_feature:
+mov rax, 404
+jmp ef_error
+ef_privilege:
+mov rax, 405
+ef_error:
+mov rdx, 0
+ef_return:
+add rsp, 64
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+
+rr_begin:
+lea rdi, [rip + rr_forms]
+rr_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je unary_begin
+mov rcx, 0
+rr_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne rr_other
+cmp rax, 0
+je rr_found
+add rcx, 1
+jmp rr_name
+rr_other:
+add rdi, 16
+jmp rr_next
+rr_found:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 3
+je alu_mem_destination
+cmp rax, 1
+jne ef_form
+load64 rax, [r12 + 40]
+cmp rax, 3
+je alu_mem_source
+cmp rax, 2
+je ri_begin
+cmp rax, 1
+jne ef_form
+load64 rbx, [r12 + 24]
+load64 rax, [r12 + 48]
+cmp rax, rbx
+jne ef_width
+cmp rbx, 8
+je rr_width_ok
+cmp rbx, 16
+je rr_width_ok
+cmp rbx, 32
+je rr_width_ok
+cmp rbx, 64
+jne ef_width
+rr_width_ok:
+load64 r8, [r12 + 32]
+load64 r9, [r12 + 56]
+mov rcx, r8
+mov rdx, rbx
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r8, rax
+mov rcx, r9
+mov rdx, rbx
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r9, rax
+mov rax, r14
+and rax, 1
+cmp rax, 0
+je ef_feature
+cmp r15, 4
+jae ef_privilege
+load64 r15, [rdi + 8]
+mov r10, 0
+cmp rbx, 16
+jne rr_rex
+mov rax, 0x66
+store8 [rsp + r10 * 1], rax
+add r10, 1
+rr_rex:
+mov r11, 0x40
+cmp rbx, 64
+jne rr_extension
+or r11, 8
+rr_extension:
+cmp r8, 0x100
+jae rr_src_extension
+cmp r8, 8
+jb rr_src_extension
+or r11, 1
+rr_src_extension:
+cmp r9, 0x100
+jae rr_need_rex
+cmp r9, 8
+jb rr_need_rex
+or r11, 4
+rr_need_rex:
+cmp r8, 0x100
+jae rr_high8
+cmp r9, 0x100
+jae rr_high8
+cmp r11, 0x40
+jne rr_emit_rex
+cmp rbx, 8
+jne rr_opcode
+cmp r8, 4
+jae rr_emit_rex
+cmp r9, 4
+jb rr_opcode
+jmp rr_emit_rex
+rr_high8:
+cmp r11, 0x40
+jne ef_register
+cmp r8, 0x100
+jae rr_high8_src
+cmp r8, 4
+jae ef_register
+rr_high8_src:
+cmp r9, 0x100
+jae rr_opcode
+cmp r9, 4
+jae ef_register
+jmp rr_opcode
+rr_emit_rex:
+store8 [rsp + r10 * 1], r11
+add r10, 1
+rr_opcode:
+cmp rbx, 8
+jne rr_opcode_wide
+sub r15, 1
+rr_opcode_wide:
+store8 [rsp + r10 * 1], r15
+add r10, 1
+mov rax, r9
+and rax, 7
+shl rax, 3
+mov rcx, r8
+and rcx, 7
+or rax, rcx
+or rax, 0xC0
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rdx, r10
+mov rcx, 0
+rr_commit:
+cmp rcx, rdx
+jae ef_success
+load8 rax, [rsp + rcx * 1]
+store8 [r13 + rcx * 1], rax
+add rcx, 1
+jmp rr_commit
+
+alu_mem_source:
+load64 rax, [rdi + 8]
+cmp rax, 0x89
+je ef_form
+store64 [rsp + 16], r15
+mov r15, rax
+cmp rax, 0x85
+je alu_mem_read_ready
+cmp rax, 0x87
+je alu_mem_read_ready
+add r15, 2
+alu_mem_read_ready:
+load64 r8, [r12 + 32]
+jmp alu_mem_width
+alu_mem_destination:
+load64 rcx, [rdi + 8]
+cmp rcx, 0x89
+je ef_form
+cmp rcx, 0x87
+je ef_form
+load64 rax, [r12 + 40]
+cmp rax, 2
+je alu_mem_immediate
+cmp rax, 1
+jne ef_form
+store64 [rsp + 16], r15
+mov r15, rcx
+load64 r8, [r12 + 56]
+alu_mem_width:
+load64 rbx, [r12 + 24]
+load64 rax, [r12 + 48]
+cmp rax, rbx
+jne ef_width
+cmp rbx, 8
+je mem_register
+cmp rbx, 16
+je mem_register
+cmp rbx, 32
+je mem_register
+cmp rbx, 64
+jne ef_width
+jmp mem_register
+alu_mem_immediate:
+store64 [rsp + 16], r15
+call prepare_mem_immediate
+cmp rax, 0
+jne ef_error
+jmp mem_group_entry
+
+ri_begin:
+load64 rax, [rdi + 8]
+cmp rax, 0x87
+je ef_form
+load64 rbx, [r12 + 24]
+load64 rax, [r12 + 48]
+cmp rax, rbx
+jne ef_width
+cmp rbx, 8
+je ri_width_ok
+cmp rbx, 16
+je ri_width_ok
+cmp rbx, 32
+je ri_width_ok
+cmp rbx, 64
+jne ef_width
+ri_width_ok:
+load64 r8, [r12 + 32]
+mov rcx, r8
+mov rdx, rbx
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r8, rax
+load64 r9, [r12 + 56]
+cmp rbx, 64
+je ri_value_ok
+cmp rbx, 32
+je ri_check32
+cmp rbx, 16
+je ri_check16
+cmp r9, 256
+jae ef_range
+jmp ri_value_ok
+ri_check16:
+cmp r9, 65536
+jae ef_range
+jmp ri_value_ok
+ri_check32:
+mov rax, 0x100000000
+cmp r9, rax
+jae ef_range
+ri_value_ok:
+mov rax, r14
+and rax, 1
+cmp rax, 0
+je ef_feature
+cmp r15, 4
+jae ef_privilege
+load64 r15, [rdi + 8]
+mov rdi, rbx
+shr rdi, 3
+mov rax, 0
+store64 [rsp + 24], rax
+cmp r15, 0x89
+je ri_mov_opcode
+mov rax, 1
+store64 [rsp + 24], rax
+cmp rbx, 64
+jne ri_arith_range
+mov rdi, 4
+mov rax, 0x7FFFFFFF
+cmp r9, rax
+jb ri_arith_range
+je ri_arith_range
+mov rax, 0xFFFFFFFF80000000
+cmp r9, rax
+jb ef_range
+ri_arith_range:
+cmp r15, 0x85
+je ri_test_opcode
+mov rsi, r15
+shr rsi, 3
+and rsi, 7
+shl rsi, 3
+or rsi, 0xC0
+mov r15, 0x81
+cmp rbx, 8
+je ri_byte_opcode
+cmp r9, 128
+jb ri_compact
+mov rax, 0xFFFFFFFFFFFFFF80
+cmp rbx, 64
+je ri_compact_compare
+mov rax, 0xFFFFFF80
+cmp rbx, 32
+je ri_compact_compare
+mov rax, 0xFF80
+ri_compact_compare:
+cmp r9, rax
+jb ri_arith_modrm
+ri_compact:
+mov r15, 0x83
+mov rdi, 1
+jmp ri_arith_modrm
+ri_byte_opcode:
+mov r15, 0x80
+jmp ri_arith_modrm
+ri_test_opcode:
+mov rsi, 0xC0
+mov r15, 0xF7
+cmp rbx, 8
+jne ri_arith_modrm
+mov r15, 0xF6
+ri_arith_modrm:
+mov rax, r8
+and rax, 7
+or rsi, rax
+jmp ri_prefix
+ri_mov_opcode:
+mov r15, 0xB8
+cmp rbx, 8
+jne ri_mov_reg
+mov r15, 0xB0
+ri_mov_reg:
+mov rax, r8
+and rax, 7
+add r15, rax
+ri_prefix:
+mov r10, 0
+cmp rbx, 16
+jne ri_rex
+mov rax, 0x66
+store8 [rsp], rax
+add r10, 1
+ri_rex:
+mov r11, 0x40
+cmp rbx, 64
+jne ri_ext
+or r11, 8
+ri_ext:
+cmp r8, 0x100
+jae ri_need_rex
+cmp r8, 8
+jb ri_need_rex
+or r11, 1
+ri_need_rex:
+cmp r8, 0x100
+jb ri_normal_rex
+cmp r11, 0x40
+jne ef_register
+jmp ri_emit_opcode
+ri_normal_rex:
+cmp r11, 0x40
+jne ri_emit_rex
+cmp rbx, 8
+jne ri_emit_opcode
+cmp r8, 4
+jb ri_emit_opcode
+ri_emit_rex:
+store8 [rsp + r10 * 1], r11
+add r10, 1
+ri_emit_opcode:
+store8 [rsp + r10 * 1], r15
+add r10, 1
+load64 rax, [rsp + 24]
+cmp rax, 0
+je ri_immediate
+store8 [rsp + r10 * 1], rsi
+add r10, 1
+ri_immediate:
+cmp rdi, 0
+je ri_commit
+store8 [rsp + r10 * 1], r9
+add r10, 1
+shr r9, 8
+sub rdi, 1
+jmp ri_immediate
+ri_commit:
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+unary_begin:
+lea rdi, [rip + unary_forms]
+un_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je shift_begin
+mov rcx, 0
+un_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne un_other
+cmp rax, 0
+je un_found
+add rcx, 1
+jmp un_name
+un_other:
+add rdi, 32
+jmp un_next
+un_found:
+load64 rax, [r12 + 8]
+cmp rax, 1
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rbx, [r12 + 24]
+load64 r10, [rdi + 24]
+cmp r10, 0
+je un_general_width
+cmp r10, 3
+je un_bswap_width
+cmp rbx, 64
+jne ef_width
+jmp un_reg
+un_bswap_width:
+cmp rbx, 32
+je un_reg
+cmp rbx, 64
+jne ef_width
+jmp un_reg
+un_general_width:
+cmp rbx, 8
+je un_reg
+cmp rbx, 16
+je un_reg
+cmp rbx, 32
+je un_reg
+cmp rbx, 64
+jne ef_width
+un_reg:
+load64 r8, [r12 + 32]
+mov rcx, r8
+mov rdx, rbx
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r8, rax
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+mov rsi, r10
+load64 r15, [rdi + 8]
+load64 r9, [rdi + 16]
+mov r10, 0
+cmp rbx, 16
+jne un_rex
+mov rax, 0x66
+store8 [rsp], rax
+add r10, 1
+un_rex:
+mov r11, 0x40
+cmp rbx, 64
+jne un_ext
+cmp rsi, 1
+je un_ext
+cmp rsi, 2
+je un_ext
+or r11, 8
+un_ext:
+cmp r8, 0x100
+jae un_need_rex
+cmp r8, 8
+jb un_need_rex
+or r11, 1
+un_need_rex:
+cmp r8, 0x100
+jb un_normal_rex
+cmp r11, 0x40
+jne ef_register
+jmp un_opcode
+un_normal_rex:
+cmp r11, 0x40
+jne un_emit_rex
+cmp rbx, 8
+jne un_opcode
+cmp r8, 4
+jb un_opcode
+un_emit_rex:
+store8 [rsp + r10 * 1], r11
+add r10, 1
+un_opcode:
+cmp rsi, 3
+jne un_select_opcode
+mov rax, 0x0F
+store8 [rsp + r10 * 1], rax
+add r10, 1
+un_select_opcode:
+cmp rsi, 0
+je un_group_opcode
+mov rax, r8
+and rax, 7
+add r15, rax
+jmp un_emit_opcode
+un_group_opcode:
+cmp rbx, 8
+jne un_emit_opcode
+sub r15, 1
+un_emit_opcode:
+store8 [rsp + r10 * 1], r15
+add r10, 1
+cmp rsi, 0
+jne un_commit
+mov rax, r8
+and rax, 7
+shl r9, 3
+or rax, r9
+or rax, 0xC0
+store8 [rsp + r10 * 1], rax
+add r10, 1
+un_commit:
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+shift_begin:
+lea rdi, [rip + shift_forms]
+sh_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je wide_begin
+mov rcx, 0
+sh_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne sh_other
+cmp rax, 0
+je sh_found
+add rcx, 1
+jmp sh_name
+sh_other:
+add rdi, 16
+jmp sh_next
+sh_found:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rbx, [r12 + 24]
+cmp rbx, 8
+je sh_reg
+cmp rbx, 16
+je sh_reg
+cmp rbx, 32
+je sh_reg
+cmp rbx, 64
+jne ef_width
+sh_reg:
+load64 r8, [r12 + 32]
+mov rcx, r8
+mov rdx, rbx
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r8, rax
+load64 rax, [r12 + 48]
+cmp rax, 8
+jne ef_width
+load64 rsi, [r12 + 40]
+load64 r9, [r12 + 56]
+cmp rsi, 2
+je sh_immediate_check
+cmp rsi, 1
+jne ef_form
+cmp r9, 1
+jne ef_register
+jmp sh_features
+sh_immediate_check:
+cmp r9, 256
+jae ef_range
+sh_features:
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+mov r15, 0xD3
+mov rax, 0
+store64 [rsp + 24], rax
+cmp rsi, 1
+je sh_prefix
+mov r15, 0xD1
+cmp r9, 1
+je sh_prefix
+mov r15, 0xC1
+mov rax, 1
+store64 [rsp + 24], rax
+sh_prefix:
+mov r10, 0
+cmp rbx, 16
+jne sh_rex
+mov rax, 0x66
+store8 [rsp], rax
+add r10, 1
+sh_rex:
+mov r11, 0x40
+cmp rbx, 64
+jne sh_ext
+or r11, 8
+sh_ext:
+cmp r8, 0x100
+jae sh_need_rex
+cmp r8, 8
+jb sh_need_rex
+or r11, 1
+sh_need_rex:
+cmp r8, 0x100
+jb sh_normal_rex
+cmp r11, 0x40
+jne ef_register
+jmp sh_opcode
+sh_normal_rex:
+cmp r11, 0x40
+jne sh_emit_rex
+cmp rbx, 8
+jne sh_opcode
+cmp r8, 4
+jb sh_opcode
+sh_emit_rex:
+store8 [rsp + r10 * 1], r11
+add r10, 1
+sh_opcode:
+cmp rbx, 8
+jne sh_opcode_wide
+sub r15, 1
+sh_opcode_wide:
+store8 [rsp + r10 * 1], r15
+add r10, 1
+load64 rax, [rdi + 8]
+shl rax, 3
+or rax, 0xC0
+mov rcx, r8
+and rcx, 7
+or rax, rcx
+store8 [rsp + r10 * 1], rax
+add r10, 1
+load64 rax, [rsp + 24]
+cmp rax, 0
+je sh_commit
+store8 [rsp + r10 * 1], r9
+add r10, 1
+sh_commit:
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+wide_begin:
+lea rdi, [rip + wide_forms]
+wi_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je bit_begin
+mov rcx, 0
+wi_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne wi_other
+cmp rax, 0
+je wi_found
+add rcx, 1
+jmp wi_name
+wi_other:
+add rdi, 24
+jmp wi_next
+wi_found:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rax, [r12 + 40]
+cmp rax, 1
+jne ef_form
+load64 rbx, [r12 + 24]
+load64 r10, [r12 + 48]
+load64 rsi, [rdi + 16]
+cmp rbx, 16
+je wi_source_width
+cmp rbx, 32
+je wi_source_width
+cmp rbx, 64
+jne ef_width
+wi_source_width:
+cmp rsi, 0
+je wi_equal
+cmp rsi, 3
+je wi_sxd
+cmp r10, 8
+je wi_registers
+cmp r10, 16
+jne ef_width
+cmp rbx, 16
+je ef_width
+jmp wi_registers
+wi_equal:
+cmp rbx, r10
+jne ef_width
+jmp wi_registers
+wi_sxd:
+cmp rbx, 64
+jne ef_width
+cmp r10, 32
+jne ef_width
+wi_registers:
+load64 r8, [r12 + 32]
+load64 r9, [r12 + 56]
+cmp r8, 16
+jae ef_register
+mov rcx, r9
+mov rdx, r10
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r9, rax
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+store64 [rsp + 24], r10
+load64 r15, [rdi + 8]
+cmp rsi, 1
+je wi_extend_opcode
+cmp rsi, 2
+jne wi_prefix
+wi_extend_opcode:
+cmp r10, 16
+jne wi_prefix
+add r15, 1
+wi_prefix:
+mov r10, 0
+cmp rbx, 16
+jne wi_rex
+mov rax, 0x66
+store8 [rsp], rax
+add r10, 1
+wi_rex:
+mov r11, 0x40
+cmp rbx, 64
+jne wi_rex_r
+or r11, 8
+wi_rex_r:
+cmp r8, 8
+jb wi_rex_b
+or r11, 4
+wi_rex_b:
+cmp r9, 0x100
+jae wi_need_rex
+cmp r9, 8
+jb wi_need_rex
+or r11, 1
+wi_need_rex:
+cmp r9, 0x100
+jb wi_normal_rex
+cmp r11, 0x40
+jne ef_register
+jmp wi_opcode_prefix
+wi_normal_rex:
+cmp r11, 0x40
+jne wi_emit_rex
+load64 rax, [rsp + 24]
+cmp rax, 8
+jne wi_opcode_prefix
+cmp r9, 4
+jb wi_opcode_prefix
+wi_emit_rex:
+store8 [rsp + r10 * 1], r11
+add r10, 1
+wi_opcode_prefix:
+cmp rsi, 3
+je wi_opcode
+mov rax, 0x0F
+store8 [rsp + r10 * 1], rax
+add r10, 1
+wi_opcode:
+store8 [rsp + r10 * 1], r15
+add r10, 1
+mov rax, r8
+and rax, 7
+shl rax, 3
+mov rcx, r9
+and rcx, 7
+or rax, rcx
+or rax, 0xC0
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+bit_begin:
+lea rdi, [rip + bit_forms]
+bi_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je control_begin
+mov rcx, 0
+bi_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne bi_other
+cmp rax, 0
+je bi_found
+add rcx, 1
+jmp bi_name
+bi_other:
+add rdi, 24
+jmp bi_next
+bi_found:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rbx, [r12 + 24]
+cmp rbx, 16
+je bi_reg
+cmp rbx, 32
+je bi_reg
+cmp rbx, 64
+jne ef_width
+bi_reg:
+load64 r8, [r12 + 32]
+cmp r8, 16
+jae ef_register
+load64 rsi, [r12 + 40]
+load64 r9, [r12 + 56]
+load64 rax, [r12 + 48]
+cmp rsi, 2
+je bi_imm
+cmp rsi, 1
+jne ef_form
+cmp rax, rbx
+jne ef_width
+cmp r9, 16
+jae ef_register
+jmp bi_features
+bi_imm:
+cmp rax, 8
+jne ef_width
+cmp r9, 256
+jae ef_range
+bi_features:
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+store64 [rsp + 24], rsi
+load64 r15, [rdi + 8]
+cmp rsi, 2
+jne bi_prefix
+mov r15, 0xBA
+bi_prefix:
+mov r10, 0
+cmp rbx, 16
+jne bi_rex
+mov rax, 0x66
+store8 [rsp], rax
+add r10, 1
+bi_rex:
+mov r11, 0x40
+cmp rbx, 64
+jne bi_rex_b
+or r11, 8
+bi_rex_b:
+cmp r8, 8
+jb bi_rex_r
+or r11, 1
+bi_rex_r:
+cmp rsi, 2
+je bi_emit_rex
+cmp r9, 8
+jb bi_emit_rex
+or r11, 4
+bi_emit_rex:
+cmp r11, 0x40
+je bi_opcode
+store8 [rsp + r10 * 1], r11
+add r10, 1
+bi_opcode:
+mov rax, 0x0F
+store8 [rsp + r10 * 1], rax
+add r10, 1
+store8 [rsp + r10 * 1], r15
+add r10, 1
+mov rax, r9
+and rax, 7
+cmp rsi, 2
+jne bi_modrm
+load64 rax, [rdi + 16]
+bi_modrm:
+shl rax, 3
+or rax, 0xC0
+mov rcx, r8
+and rcx, 7
+or rax, rcx
+store8 [rsp + r10 * 1], rax
+add r10, 1
+cmp rsi, 2
+jne bi_commit
+store8 [rsp + r10 * 1], r9
+add r10, 1
+bi_commit:
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+control_begin:
+lea rdi, [rip + control_forms]
+cr_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je port_begin
+mov rcx, 0
+cr_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne cr_other
+cmp rax, 0
+je cr_found
+add rcx, 1
+jmp cr_name
+cr_other:
+add rdi, 16
+jmp cr_next
+cr_found:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [rdi + 8]
+cmp rax, 0x22
+je cr_write
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rax, [r12 + 40]
+cmp rax, 4
+jne ef_form
+load64 r8, [r12 + 32]
+load64 r9, [r12 + 56]
+jmp cr_width
+cr_write:
+load64 rax, [r12 + 16]
+cmp rax, 4
+jne ef_form
+load64 rax, [r12 + 40]
+cmp rax, 1
+jne ef_form
+load64 r8, [r12 + 56]
+load64 r9, [r12 + 32]
+cr_width:
+load64 rax, [r12 + 24]
+cmp rax, 64
+jne ef_width
+load64 rax, [r12 + 48]
+cmp rax, 64
+jne ef_width
+cmp r8, 16
+jae ef_register
+cmp r9, 0
+je cr_features
+cmp r9, 2
+je cr_features
+cmp r9, 3
+je cr_features
+cmp r9, 4
+je cr_features
+cmp r9, 8
+jne ef_register
+cr_features:
+mov rax, r14
+and rax, 1
+cmp rax, 0
+je ef_feature
+cmp r15, 0
+jne ef_privilege
+load64 r15, [rdi + 8]
+mov r10, 0
+mov r11, 0x40
+cmp r8, 8
+jb cr_rex_r
+or r11, 1
+cr_rex_r:
+cmp r9, 8
+jb cr_rex_emit
+or r11, 4
+cr_rex_emit:
+cmp r11, 0x40
+je cr_opcode
+store8 [rsp], r11
+add r10, 1
+cr_opcode:
+mov rax, 0x0F
+store8 [rsp + r10 * 1], rax
+add r10, 1
+store8 [rsp + r10 * 1], r15
+add r10, 1
+mov rax, r9
+and rax, 7
+shl rax, 3
+or rax, 0xC0
+mov rcx, r8
+and rcx, 7
+or rax, rcx
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+port_begin:
+lea rdi, [rip + port_forms]
+io_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je descriptor_begin
+mov rcx, 0
+io_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne io_other
+cmp rax, 0
+je io_found
+add rcx, 1
+jmp io_name
+io_other:
+add rdi, 16
+jmp io_next
+io_found:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [rdi + 8]
+cmp rax, 0xE6
+je io_output
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rbx, [r12 + 24]
+load64 r8, [r12 + 32]
+load64 r10, [r12 + 40]
+load64 rsi, [r12 + 48]
+load64 r9, [r12 + 56]
+jmp io_width
+io_output:
+load64 rax, [r12 + 40]
+cmp rax, 1
+jne ef_form
+load64 rbx, [r12 + 48]
+load64 r8, [r12 + 56]
+load64 r10, [r12 + 16]
+load64 rsi, [r12 + 24]
+load64 r9, [r12 + 32]
+io_width:
+cmp rbx, 8
+je io_accumulator
+cmp rbx, 16
+je io_accumulator
+cmp rbx, 32
+jne ef_width
+io_accumulator:
+cmp r8, 0
+jne ef_register
+cmp r10, 2
+je io_immediate
+cmp r10, 1
+jne ef_form
+cmp rsi, 16
+jne ef_width
+cmp r9, 2
+jne ef_register
+jmp io_features
+io_immediate:
+cmp rsi, 8
+jne ef_width
+cmp r9, 256
+jae ef_range
+io_features:
+mov rax, r14
+and rax, 1
+cmp rax, 0
+je ef_feature
+cmp r15, 0
+jne ef_privilege
+load64 r15, [rdi + 8]
+mov rsi, r10
+cmp rsi, 2
+je io_opcode_width
+add r15, 8
+io_opcode_width:
+cmp rbx, 8
+je io_prefix
+add r15, 1
+io_prefix:
+mov r10, 0
+cmp rbx, 16
+jne io_emit
+mov rax, 0x66
+store8 [rsp], rax
+add r10, 1
+io_emit:
+store8 [rsp + r10 * 1], r15
+add r10, 1
+cmp rsi, 2
+jne io_commit
+store8 [rsp + r10 * 1], r9
+add r10, 1
+io_commit:
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+descriptor_begin:
+lea rdi, [rip + descriptor_forms]
+df_next:
+load64 rbx, [rdi]
+cmp rbx, 0
+je mem_begin
+mov rcx, 0
+df_name:
+cmp rcx, 31
+jae ef_unknown
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rbx + rcx * 1]
+cmp rax, rdx
+jne df_other
+cmp rax, 0
+je df_found
+add rcx, 1
+jmp df_name
+df_other:
+add rdi, 32
+jmp df_next
+df_found:
+load64 rax, [r12 + 8]
+cmp rax, 1
+jne ef_count
+load64 rax, [r12 + 24]
+load64 rdx, [rdi + 8]
+cmp rax, rdx
+jne ef_width
+load64 rsi, [r12 + 16]
+cmp rsi, 3
+je df_features
+cmp rsi, 1
+jne ef_form
+cmp rdx, 16
+jne ef_form
+load64 r8, [r12 + 32]
+cmp r8, 16
+jae ef_register
+df_features:
+mov rax, r14
+and rax, 1
+cmp rax, 0
+je ef_feature
+cmp r15, 0
+jne ef_privilege
+cmp rsi, 1
+je df_ltr_register
+store64 [rsp + 16], r15
+load64 r15, [rdi + 16]
+load64 r8, [rdi + 24]
+mov rbx, 0
+jmp mem_register
+df_ltr_register:
+mov r10, 0
+cmp r8, 8
+jb df_ltr_opcode
+mov rax, 0x41
+store8 [rsp], rax
+add r10, 1
+df_ltr_opcode:
+mov rax, 0x0F
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rax, 0
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rax, r8
+and rax, 7
+or rax, 0xD8
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+mem_begin:
+store64 [rsp + 16], r15
+load8 rax, [rsi]
+cmp rax, 108
+je mem_load_name
+cmp rax, 115
+jne cc_begin
+load8 rax, [rsi + 1]
+cmp rax, 116
+jne cc_begin
+load8 rax, [rsi + 2]
+cmp rax, 111
+jne cc_begin
+load8 rax, [rsi + 3]
+cmp rax, 114
+jne cc_begin
+load8 rax, [rsi + 4]
+cmp rax, 101
+jne cc_begin
+load8 rax, [rsi + 5]
+cmp rax, 0
+jne cc_begin
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 3
+jne ef_form
+load64 rax, [r12 + 40]
+cmp rax, 2
+je store_mem_immediate
+cmp rax, 1
+jne ef_form
+load64 r8, [r12 + 56]
+mov r15, 0x89
+jmp mem_width
+store_mem_immediate:
+mov rcx, 0xC7
+call prepare_mem_immediate
+cmp rax, 0
+jne ef_error
+jmp mem_group_entry
+mem_load_name:
+load8 rax, [rsi + 1]
+cmp rax, 101
+je mem_lea_name
+cmp rax, 111
+jne cc_begin
+load8 rax, [rsi + 2]
+cmp rax, 97
+jne cc_begin
+load8 rax, [rsi + 3]
+cmp rax, 100
+jne cc_begin
+load8 rax, [rsi + 4]
+cmp rax, 0
+jne cc_begin
+mov r15, 0x8B
+jmp mem_load_operands
+mem_lea_name:
+load8 rax, [rsi + 2]
+cmp rax, 97
+jne cc_begin
+load8 rax, [rsi + 3]
+cmp rax, 0
+jne cc_begin
+mov r15, 0x8D
+mem_load_operands:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rax, [r12 + 40]
+cmp rax, 3
+jne ef_form
+load64 r8, [r12 + 32]
+mem_width:
+load64 rbx, [r12 + 24]
+cmp r15, 0x8D
+jne mem_width_regular
+cmp rbx, 64
+jne ef_width
+mem_width_regular:
+load64 rax, [r12 + 48]
+cmp rax, rbx
+jne ef_width
+cmp rbx, 8
+je mem_register
+cmp rbx, 16
+je mem_register
+cmp rbx, 32
+je mem_register
+cmp rbx, 64
+jne ef_width
+mem_register:
+mov rcx, r8
+mov rdx, rbx
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r8, rax
+jmp mem_after_register
+mem_group_entry:
+; Private tagged ModRM extension, never derived from an unchecked GPR ID.
+or r8, 0x200
+mem_after_register:
+load64 r9, [r12 + 88]
+cmp r9, 0
+je ef_address
+load64 rdi, [r9]
+load64 rsi, [r9 + 8]
+cmp rdi, 18
+jae ef_address
+cmp rsi, 17
+jae ef_address
+cmp rsi, 4
+je ef_address
+cmp rdi, 17
+jne mem_scale
+cmp rsi, 16
+jne ef_address
+mem_scale:
+load64 rax, [r9 + 16]
+cmp rsi, 16
+jne mem_scale_present
+cmp rax, 1
+jne ef_address
+mem_scale_present:
+cmp rax, 1
+je mem_segment
+cmp rax, 2
+je mem_segment
+cmp rax, 4
+je mem_segment
+cmp rax, 8
+jne ef_address
+mem_segment:
+load64 rax, [r9 + 32]
+cmp rax, 3
+jae ef_address
+load64 rax, [r9 + 48]
+cmp rax, 0
+jne ef_address
+load64 rax, [r9 + 56]
+cmp rax, 0
+jne ef_address
+load64 rax, [r9 + 40]
+cmp rax, 1
+je mem_displacement
+cmp rax, 2
+je mem_displacement
+cmp rax, 6
+jne ef_space
+mem_displacement:
+load64 rcx, [r9 + 24]
+mov rax, 0x7FFFFFFF
+cmp rcx, rax
+jb mem_features
+je mem_features
+mov rax, 0xFFFFFFFF80000000
+cmp rcx, rax
+jb ef_range
+mem_features:
+mov rax, r14
+and rax, 1
+cmp rax, 0
+je ef_feature
+load64 rax, [rsp + 16]
+cmp rax, 4
+jae ef_privilege
+mov rax, 4
+cmp rdi, 17
+jne mem_choose_rm
+mov rax, 5
+jmp mem_rm_chosen
+mem_choose_rm:
+cmp rdi, 16
+je mem_rm_chosen
+cmp rsi, 16
+jne mem_rm_chosen
+mov rax, rdi
+and rax, 7
+mem_rm_chosen:
+store64 [rsp + 16], rax
+cmp rdi, 16
+jae mem_disp_four
+cmp rcx, 0
+jne mem_disp_nonzero
+mov rax, rdi
+and rax, 7
+cmp rax, 5
+je mem_disp_one
+mov rax, 0
+store64 [rsp + 24], rax
+jmp mem_regfield
+mem_disp_nonzero:
+cmp rcx, 128
+jb mem_disp_one
+mov rax, 0xFFFFFFFFFFFFFF80
+cmp rcx, rax
+jae mem_disp_one
+load64 rax, [rsp + 16]
+or rax, 0x80
+store64 [rsp + 16], rax
+mem_disp_four:
+mov rax, 4
+store64 [rsp + 24], rax
+jmp mem_regfield
+mem_disp_one:
+load64 rax, [rsp + 16]
+or rax, 0x40
+store64 [rsp + 16], rax
+mov rax, 1
+store64 [rsp + 24], rax
+mem_regfield:
+mov rax, r8
+and rax, 7
+shl rax, 3
+load64 rcx, [rsp + 16]
+or rax, rcx
+store64 [rsp + 16], rax
+mov r11, 0x40
+cmp rbx, 64
+jne mem_rex_r
+or r11, 8
+mem_rex_r:
+cmp r8, 0x100
+jae mem_rex_x
+cmp r8, 8
+jb mem_rex_x
+or r11, 4
+mem_rex_x:
+cmp rsi, 16
+je mem_rex_b
+cmp rsi, 8
+jb mem_rex_b
+or r11, 2
+mem_rex_b:
+cmp rdi, 16
+jae mem_prefix
+cmp rdi, 8
+jb mem_prefix
+or r11, 1
+mem_prefix:
+mov r10, 0
+load64 rax, [r9 + 32]
+cmp rax, 0
+je mem_prefix_width
+add rax, 0x63
+store8 [rsp], rax
+add r10, 1
+mem_prefix_width:
+cmp rbx, 16
+jne mem_prefix_rex
+mov rax, 0x66
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mem_prefix_rex:
+cmp r8, 0x200
+jb mem_not_group
+cmp r11, 0x40
+je mem_opcode
+jmp mem_emit_rex
+mem_not_group:
+cmp r8, 0x100
+jb mem_normal_rex
+cmp r11, 0x40
+jne ef_register
+jmp mem_opcode
+mem_normal_rex:
+cmp r11, 0x40
+jne mem_emit_rex
+cmp rbx, 8
+jne mem_opcode
+cmp r8, 4
+jb mem_opcode
+mem_emit_rex:
+store8 [rsp + r10 * 1], r11
+add r10, 1
+mem_opcode:
+cmp rbx, 8
+jne mem_opcode_wide
+sub r15, 1
+mem_opcode_wide:
+; Bit16 tags a two-byte opcode; low bytes retain even 0F00 exactly.
+cmp r15, 0x10000
+jb mem_single_opcode
+store8 [rsp + r10 * 1], r15
+add r10, 1
+shr r15, 8
+mem_single_opcode:
+store8 [rsp + r10 * 1], r15
+add r10, 1
+load64 rax, [rsp + 16]
+store8 [rsp + r10 * 1], rax
+add r10, 1
+and rax, 7
+cmp rax, 4
+jne mem_disp_emit
+load64 rax, [r9 + 16]
+cmp rax, 8
+je mem_scale_three
+cmp rax, 4
+je mem_scale_two
+cmp rax, 2
+je mem_scale_one
+mov rax, 0
+jmp mem_index
+mem_scale_three:
+mov rax, 3
+jmp mem_index
+mem_scale_two:
+mov rax, 2
+jmp mem_index
+mem_scale_one:
+mov rax, 1
+mem_index:
+shl rax, 6
+mov rcx, 4
+cmp rsi, 16
+je mem_index_ready
+mov rcx, rsi
+and rcx, 7
+mem_index_ready:
+shl rcx, 3
+or rax, rcx
+mov rcx, 5
+cmp rdi, 16
+je mem_base_ready
+mov rcx, rdi
+and rcx, 7
+mem_base_ready:
+or rax, rcx
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mem_disp_emit:
+load64 rcx, [rsp + 24]
+load64 rax, [r9 + 24]
+mem_disp_byte:
+cmp rcx, 0
+je mem_commit
+store8 [rsp + r10 * 1], rax
+add r10, 1
+shr rax, 8
+sub rcx, 1
+jmp mem_disp_byte
+mem_commit:
+load64 rcx, [rsp + 32]
+load64 rax, [rsp + 40]
+mem_immediate_byte:
+cmp rcx, 0
+je mem_commit_ready
+store8 [rsp + r10 * 1], rax
+add r10, 1
+shr rax, 8
+sub rcx, 1
+jmp mem_immediate_byte
+mem_commit_ready:
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+
+cc_begin:
+load8 rax, [rsi]
+cmp rax, 106
+je cc_jprefix
+cmp rax, 115
+je cc_sprefix
+cmp rax, 99
+jne ef_unknown
+load8 rax, [rsi + 1]
+cmp rax, 109
+jne ef_unknown
+load8 rax, [rsi + 2]
+cmp rax, 111
+jne ef_unknown
+load8 rax, [rsi + 3]
+cmp rax, 118
+jne ef_unknown
+add rsi, 4
+mov r10, 2
+jmp cc_suffix
+cc_sprefix:
+load8 rax, [rsi + 1]
+cmp rax, 101
+jne ef_unknown
+load8 rax, [rsi + 2]
+cmp rax, 116
+jne ef_unknown
+add rsi, 3
+mov r10, 1
+jmp cc_suffix
+cc_jprefix:
+load8 rax, [rsi + 1]
+cmp rax, 109
+jne cc_condition_prefix
+load8 rax, [rsi + 2]
+cmp rax, 112
+jne cc_condition_prefix
+load8 rax, [rsi + 3]
+cmp rax, 0
+je jump_encode
+cc_condition_prefix:
+add rsi, 1
+mov r10, 0
+cc_suffix:
+store64 [rsp + 24], r10
+lea rdi, [rip + cc_suffixes]
+mov rbx, 0
+cc_suffix_next:
+cmp rbx, 16
+jae ef_unknown
+mov rcx, 0
+cc_suffix_byte:
+load8 rax, [rsi + rcx * 1]
+load8 rdx, [rdi + rcx * 1]
+cmp rax, rdx
+jne cc_suffix_skip
+cmp rax, 0
+je cc_found
+add rcx, 1
+jmp cc_suffix_byte
+cc_suffix_skip:
+load8 rax, [rdi]
+add rdi, 1
+cmp rax, 0
+jne cc_suffix_skip
+add rbx, 1
+jmp cc_suffix_next
+cc_found:
+load64 r10, [rsp + 24]
+cmp r10, 1
+je cc_set
+cmp r10, 2
+je cc_cmov
+load64 rax, [r12 + 8]
+cmp rax, 1
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 2
+jne ef_form
+load64 rax, [r12 + 24]
+cmp rax, 32
+jne ef_width
+load64 r8, [r12 + 32]
+mov rax, 0x7FFFFFFF
+cmp r8, rax
+jb cc_jrange
+je cc_jrange
+mov rax, 0xFFFFFFFF80000000
+cmp r8, rax
+jb ef_range
+cc_jrange:
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+mov rax, 0x0F
+store8 [rsp], rax
+add rbx, 0x80
+store8 [rsp + 1], rbx
+store32 [rsp + 2], r8
+mov rdx, 6
+mov rcx, 0
+jmp rr_commit
+cc_set:
+load64 rax, [r12 + 8]
+cmp rax, 1
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rax, [r12 + 24]
+cmp rax, 8
+jne ef_width
+load64 r8, [r12 + 32]
+mov rcx, r8
+mov rdx, 8
+call normalize_gpr
+cmp rax, -1
+je ef_register
+mov r8, rax
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+mov r10, 0
+cmp r8, 0x100
+jae cc_set_opcode
+cmp r8, 4
+jb cc_set_opcode
+mov rax, 0x40
+cmp r8, 8
+jb cc_set_rex
+or rax, 1
+cc_set_rex:
+store8 [rsp], rax
+add r10, 1
+cc_set_opcode:
+mov rax, 0x0F
+store8 [rsp + r10 * 1], rax
+add r10, 1
+add rbx, 0x90
+store8 [rsp + r10 * 1], rbx
+add r10, 1
+mov rax, r8
+and rax, 7
+or rax, 0xC0
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+cc_cmov:
+load64 rax, [r12 + 8]
+cmp rax, 2
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+jne ef_form
+load64 rax, [r12 + 40]
+cmp rax, 1
+jne ef_form
+load64 r10, [r12 + 24]
+load64 rax, [r12 + 48]
+cmp rax, r10
+jne ef_width
+cmp r10, 16
+je cc_cmov_width
+cmp r10, 32
+je cc_cmov_width
+cmp r10, 64
+jne ef_width
+cc_cmov_width:
+load64 r8, [r12 + 32]
+load64 r9, [r12 + 56]
+cmp r8, 16
+jae ef_register
+cmp r9, 16
+jae ef_register
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+mov r11, 0x40
+cmp r10, 64
+jne cc_cmov_r
+or r11, 8
+cc_cmov_r:
+cmp r8, 8
+jb cc_cmov_b
+or r11, 4
+cc_cmov_b:
+cmp r9, 8
+jb cc_cmov_prefix
+or r11, 1
+cc_cmov_prefix:
+mov rcx, r10
+mov r10, 0
+cmp rcx, 16
+jne cc_cmov_rex
+mov rax, 0x66
+store8 [rsp], rax
+add r10, 1
+cc_cmov_rex:
+cmp r11, 0x40
+je cc_cmov_opcode
+store8 [rsp + r10 * 1], r11
+add r10, 1
+cc_cmov_opcode:
+mov rax, 0x0F
+store8 [rsp + r10 * 1], rax
+add r10, 1
+add rbx, 0x40
+store8 [rsp + r10 * 1], rbx
+add r10, 1
+mov rax, r8
+and rax, 7
+shl rax, 3
+mov rcx, r9
+and rcx, 7
+or rax, rcx
+or rax, 0xC0
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+cc_feature_check:
+mov rax, r14
+and rax, 1
+cmp rax, 0
+je ccf_missing
+cmp r15, 4
+jae ccf_privilege
+mov rax, 0
+ret
+ccf_missing:
+mov rax, 404
+ret
+ccf_privilege:
+mov rax, 405
+ret
+jump_encode:
+load64 rax, [r12 + 8]
+cmp rax, 1
+jne ef_count
+load64 rax, [r12 + 16]
+cmp rax, 1
+je jump_register
+cmp rax, 3
+je jump_memory
+cmp rax, 2
+jne ef_form
+load64 rax, [r12 + 24]
+cmp rax, 32
+jne ef_width
+load64 r8, [r12 + 32]
+mov rax, 0x7FFFFFFF
+cmp r8, rax
+jb jump_relative_ok
+je jump_relative_ok
+mov rax, 0xFFFFFFFF80000000
+cmp r8, rax
+jb ef_range
+jump_relative_ok:
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+mov rax, 0xE9
+store8 [rsp], rax
+store32 [rsp + 1], r8
+mov rdx, 5
+mov rcx, 0
+jmp rr_commit
+jump_register:
+load64 rax, [r12 + 24]
+cmp rax, 64
+jne ef_width
+load64 r8, [r12 + 32]
+cmp r8, 16
+jae ef_register
+call cc_feature_check
+cmp rax, 0
+jne ef_error
+mov r10, 0
+cmp r8, 8
+jb jump_register_opcode
+mov rax, 0x41
+store8 [rsp], rax
+add r10, 1
+jump_register_opcode:
+mov rax, 0xFF
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rax, r8
+and rax, 7
+or rax, 0xE0
+store8 [rsp + r10 * 1], rax
+add r10, 1
+mov rdx, r10
+mov rcx, 0
+jmp rr_commit
+jump_memory:
+load64 rax, [r12 + 24]
+cmp rax, 64
+jne ef_width
+store64 [rsp + 16], r15
+mov r15, 0xFF
+mov r8, 4
+; Internal zero width means long-mode default64, without redundant REX.W.
+mov rbx, 0
+jmp mem_register
+; Encoding IDs16..19 are AH/CH/DH/BH, not physical roots or SPL-family.
+; Packed internal bit8 marks high-byte registers until REX checks complete.
+; Private ABI: opcode RCX, request R12; returns status RAX and
+; RBX width, R8 ModRM group, R15 opcode. Frame immediate slots32/40.
+prepare_mem_immediate:
+mov rsi, rcx
+load64 rbx, [r12 + 24]
+load64 rax, [r12 + 48]
+cmp rax, rbx
+jne pmi_width
+load64 r9, [r12 + 56]
+mov rdi, 1
+cmp rbx, 8
+je pmi_eight
+mov rdi, 2
+cmp rbx, 16
+je pmi_sixteen
+mov rdi, 4
+cmp rbx, 32
+je pmi_thirtytwo
+cmp rbx, 64
+jne pmi_width
+mov rax, 0x7FFFFFFF
+cmp r9, rax
+jb pmi_select
+je pmi_select
+mov rax, 0xFFFFFFFF80000000
+cmp r9, rax
+jb pmi_range
+jmp pmi_select
+pmi_eight:
+cmp r9, 256
+jae pmi_range
+jmp pmi_select
+pmi_sixteen:
+cmp r9, 65536
+jae pmi_range
+jmp pmi_select
+pmi_thirtytwo:
+mov rax, 0x100000000
+cmp r9, rax
+jae pmi_range
+pmi_select:
+mov r8, 0
+cmp rsi, 0xC7
+je pmi_store
+cmp rsi, 0x85
+je pmi_test
+mov r8, rsi
+shr r8, 3
+and r8, 7
+mov r15, 0x81
+cmp rbx, 8
+je pmi_publish
+cmp r9, 128
+jb pmi_compact
+mov rax, 0xFFFFFFFFFFFFFF80
+cmp rbx, 64
+je pmi_compact_compare
+mov rax, 0xFFFFFF80
+cmp rbx, 32
+je pmi_compact_compare
+mov rax, 0xFF80
+pmi_compact_compare:
+cmp r9, rax
+jb pmi_publish
+pmi_compact:
+mov r15, 0x83
+mov rdi, 1
+jmp pmi_publish
+pmi_store:
+mov r15, 0xC7
+jmp pmi_publish
+pmi_test:
+mov r15, 0xF7
+pmi_publish:
+; mem_opcode applies the8-bit opcode decrement exactly once.
+store64 [rsp + 40], rdi
+store64 [rsp + 48], r9
+mov rax, 0
+ret
+pmi_width:
+mov rax, 403
+ret
+pmi_range:
+mov rax, 407
+ret
+normalize_gpr:
+cmp rcx, 16
+jb ng_low
+cmp rdx, 8
+jne ng_bad
+cmp rcx, 20
+jae ng_bad
+mov rax, rcx
+sub rax, 12
+or rax, 0x100
+ret
+ng_low:
+mov rax, rcx
+ret
+ng_bad:
+mov rax, -1
+ret
+section .rdata r
+encoder_exports:
+ascii "NX64ENC1"
+qword 64, 1, 1
+qword addr(encode_x64), 96, 32, 0
+cc_suffixes:
+ascii "o\0no\0b\0ae\0e\0ne\0be\0a\0s\0ns\0p\0np\0l\0ge\0le\0g\0"
+name_nop:
+ascii "nop"
+byte 0
+name_pause:
+ascii "pause"
+byte 0
+name_udtwo:
+ascii "ud2"
+byte 0
+name_cpuid:
+ascii "cpuid"
+byte 0
+name_rdmsr:
+ascii "rdmsr"
+byte 0
+name_lfence:
+ascii "lfence"
+byte 0
+name_ret:
+ascii "ret"
+byte 0
+name_mov:
+ascii "mov"
+byte 0
+name_add:
+ascii "add"
+byte 0
+name_test:
+ascii "test"
+byte 0
+name_cmp:
+ascii "cmp"
+byte 0
+name_cbw:
+ascii "cbw"
+byte 0
+name_cwde:
+ascii "cwde"
+byte 0
+name_cdqe:
+ascii "cdqe"
+byte 0
+name_cwd:
+ascii "cwd"
+byte 0
+name_cdq:
+ascii "cdq"
+byte 0
+name_cqo:
+ascii "cqo"
+byte 0
+name_pushfq:
+ascii "pushfq"
+byte 0
+name_popfq:
+ascii "popfq"
+byte 0
+name_rdtsc:
+ascii "rdtsc"
+byte 0
+name_sfence:
+ascii "sfence"
+byte 0
+name_mfence:
+ascii "mfence"
+byte 0
+name_cli:
+ascii "cli"
+byte 0
+name_sti:
+ascii "sti"
+byte 0
+name_hlt:
+ascii "hlt"
+byte 0
+name_swapgs:
+ascii "swapgs"
+byte 0
+name_wrmsr:
+ascii "wrmsr"
+byte 0
+name_syscall:
+ascii "syscall"
+byte 0
+name_sysretq:
+ascii "sysretq"
+byte 0
+name_iretq:
+ascii "iretq"
+byte 0
+name_je:
+ascii "je"
+byte 0
+name_jg:
+ascii "jg"
+byte 0
+name_sete:
+ascii "sete"
+byte 0
+name_setg:
+ascii "setg"
+byte 0
+name_cmove:
+ascii "cmove"
+byte 0
+name_cmovg:
+ascii "cmovg"
+byte 0
+name_load:
+ascii "load"
+byte 0
+name_store:
+ascii "store"
+byte 0
+name_sub:
+ascii "sub"
+byte 0
+name_adc:
+ascii "adc"
+byte 0
+name_sbb:
+ascii "sbb"
+byte 0
+name_and:
+ascii "and"
+byte 0
+name_or:
+ascii "or"
+byte 0
+name_xor:
+ascii "xor"
+byte 0
+name_inc:
+ascii "inc"
+byte 0
+name_dec:
+ascii "dec"
+byte 0
+name_not:
+ascii "not"
+byte 0
+name_neg:
+ascii "neg"
+byte 0
+name_mul:
+ascii "mul"
+byte 0
+name_div:
+ascii "div"
+byte 0
+name_idiv:
+ascii "idiv"
+byte 0
+name_push:
+ascii "push"
+byte 0
+name_pop:
+ascii "pop"
+byte 0
+name_bswap:
+ascii "bswap"
+byte 0
+name_shl:
+ascii "shl"
+byte 0
+name_shr:
+ascii "shr"
+byte 0
+name_sar:
+ascii "sar"
+byte 0
+name_rol:
+ascii "rol"
+byte 0
+name_ror:
+ascii "ror"
+byte 0
+name_movzx:
+ascii "movzx"
+byte 0
+name_movsx:
+ascii "movsx"
+byte 0
+name_movsxd:
+ascii "movsxd"
+byte 0
+name_imul:
+ascii "imul"
+byte 0
+name_bsf:
+ascii "bsf"
+byte 0
+name_bsr:
+ascii "bsr"
+byte 0
+name_xchg:
+ascii "xchg"
+byte 0
+name_lea:
+ascii "lea"
+byte 0
+name_jmp:
+ascii "jmp"
+byte 0
+name_bt:
+ascii "bt"
+byte 0
+name_bts:
+ascii "bts"
+byte 0
+name_btr:
+ascii "btr"
+byte 0
+name_btc:
+ascii "btc"
+byte 0
+name_read_cr:
+ascii "read_cr"
+byte 0
+name_write_cr:
+ascii "write_cr"
+byte 0
+name_in:
+ascii "in"
+byte 0
+name_out:
+ascii "out"
+byte 0
+name_lgdt:
+ascii "lgdt"
+byte 0
+name_lidt:
+ascii "lidt"
+byte 0
+name_sgdt:
+ascii "sgdt"
+byte 0
+name_sidt:
+ascii "sidt"
+byte 0
+name_ltr:
+ascii "ltr"
+byte 0
+name_invlpg:
+ascii "invlpg"
+byte 0
+align 8
+fixed_forms:
+qword addr(name_nop), 1, 0x90, 1, 3
+qword addr(name_pause), 2, 0x90F3, 1, 3
+qword addr(name_udtwo), 2, 0x0B0F, 1, 3
+qword addr(name_cpuid), 2, 0xA20F, 1, 3
+qword addr(name_rdmsr), 2, 0x320F, 3, 0
+qword addr(name_lfence), 3, 0xE8AE0F, 9, 3
+qword addr(name_cbw), 2, 0x9866, 1, 3
+qword addr(name_cwde), 1, 0x98, 1, 3
+qword addr(name_cdqe), 2, 0x9848, 1, 3
+qword addr(name_cwd), 2, 0x9966, 1, 3
+qword addr(name_cdq), 1, 0x99, 1, 3
+qword addr(name_cqo), 2, 0x9948, 1, 3
+qword addr(name_pushfq), 1, 0x9C, 1, 0
+qword addr(name_popfq), 1, 0x9D, 1, 0
+qword addr(name_rdtsc), 2, 0x310F, 17, 0
+qword addr(name_sfence), 3, 0xF8AE0F, 9, 3
+qword addr(name_mfence), 3, 0xF0AE0F, 9, 3
+qword addr(name_cli), 1, 0xFA, 1, 0
+qword addr(name_sti), 1, 0xFB, 1, 0
+qword addr(name_hlt), 1, 0xF4, 1, 0
+qword addr(name_swapgs), 3, 0xF8010F, 1, 0
+qword addr(name_wrmsr), 2, 0x300F, 3, 0
+qword addr(name_syscall), 2, 0x050F, 5, 3
+qword addr(name_sysretq), 3, 0x070F48, 5, 0
+qword addr(name_iretq), 3, 0xCF0F48, 1, 0
+qword 0
+rr_forms:
+qword addr(name_mov), 0x89
+qword addr(name_add), 0x01
+qword addr(name_test), 0x85
+qword addr(name_cmp), 0x39
+qword addr(name_sub), 0x29
+qword addr(name_adc), 0x11
+qword addr(name_sbb), 0x19
+qword addr(name_and), 0x21
+qword addr(name_or), 0x09
+qword addr(name_xor), 0x31
+qword addr(name_xchg), 0x87
+qword 0
+unary_forms:
+qword addr(name_inc), 0xFF, 0, 0
+qword addr(name_dec), 0xFF, 1, 0
+qword addr(name_not), 0xF7, 2, 0
+qword addr(name_neg), 0xF7, 3, 0
+qword addr(name_mul), 0xF7, 4, 0
+qword addr(name_div), 0xF7, 6, 0
+qword addr(name_idiv), 0xF7, 7, 0
+qword addr(name_push), 0x50, 0, 1
+qword addr(name_pop), 0x58, 0, 2
+qword addr(name_bswap), 0xC8, 0, 3
+qword 0
+shift_forms:
+qword addr(name_shl), 4
+qword addr(name_shr), 5
+qword addr(name_sar), 7
+qword addr(name_rol), 0
+qword addr(name_ror), 1
+qword 0
+wide_forms:
+qword addr(name_movzx), 0xB6, 1
+qword addr(name_movsx), 0xBE, 2
+qword addr(name_movsxd), 0x63, 3
+qword addr(name_imul), 0xAF, 0
+qword addr(name_bsf), 0xBC, 0
+qword addr(name_bsr), 0xBD, 0
+qword 0
+bit_forms:
+qword addr(name_bt), 0xA3, 4
+qword addr(name_bts), 0xAB, 5
+qword addr(name_btr), 0xB3, 6
+qword addr(name_btc), 0xBB, 7
+qword 0
+control_forms:
+qword addr(name_read_cr), 0x20
+qword addr(name_write_cr), 0x22
+qword 0
+port_forms:
+qword addr(name_in), 0xE4
+qword addr(name_out), 0xE6
+qword 0
+descriptor_forms:
+qword addr(name_lgdt), 80, 0x1010F, 2
+qword addr(name_lidt), 80, 0x1010F, 3
+qword addr(name_sgdt), 80, 0x1010F, 0
+qword addr(name_sidt), 80, 0x1010F, 1
+qword addr(name_ltr), 16, 0x1000F, 3
+qword addr(name_invlpg), 0, 0x1010F, 7
+qword 0
+section .data rw
+qword 0

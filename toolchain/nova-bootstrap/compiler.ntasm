@@ -1,0 +1,396 @@
+; Compilateur Nova Bootstrap : premiere verticale fonction/return vers S0.
+format pe64
+abi efi_x64
+entry start
+section .text rx
+start:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+sub rsp, 32
+mov rbx, rdx
+lea r12, [rip + cases]
+mov r13, 3
+case_next:
+lea rdi, [rip + output]
+mov rcx, 256
+mov rax, 165
+poison_next:
+store8 [rdi], rax
+add rdi, 1
+sub rcx, 1
+jne poison_next
+load64 rcx, [r12]
+load64 rdx, [r12 + 8]
+lea r8, [rip + output]
+load64 r9, [r12 + 40]
+call compile
+load64 rcx, [r12 + 16]
+cmp rax, rcx
+jne failed
+load64 rcx, [r12 + 32]
+cmp rdx, rcx
+jne failed
+load64 rsi, [r12 + 24]
+lea rdi, [rip + output]
+mov rcx, 0
+compare_next:
+cmp rcx, 256
+jae case_done
+mov rax, 165
+cmp rcx, rdx
+jae compare_byte
+load8 rax, [rsi + rcx * 1]
+compare_byte:
+load8 r10, [rdi + rcx * 1]
+cmp rax, r10
+jne failed
+add rcx, 1
+jmp compare_next
+case_done:
+add r12, 48
+sub r13, 1
+jne case_next
+lea rdx, [rip + pass_msg]
+jmp report
+failed:
+lea rdx, [rip + fail_msg]
+report:
+load64 rcx, [rbx + 0x40]
+load64 rax, [rcx + 8]
+call rax
+add rsp, 32
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+mov rax, 0
+ret
+; RCX=source,RDX=len,R8=out,R9=capacity -> RAX=code,RDX=out_len,R8=error_offset.
+compile:
+push rbx
+push rsi
+push rdi
+push r12
+push r13
+push r14
+push r15
+sub rsp, 64
+mov r12, rcx
+mov r13, rdx
+mov r14, r8
+mov r15, r9
+lea rbx, [rsp + 32]
+store64 [rbx], r12
+store64 [rbx + 8], r13
+mov rax, 0
+store64 [rbx + 16], rax
+lea rdi, [rip + pattern]
+mov rsi, 13
+compile_next:
+mov rcx, rbx
+call next_token
+cmp rax, 100
+jae compile_lexical
+load64 rcx, [rdi]
+cmp rax, rcx
+jne compile_syntax
+cmp rax, 1
+je compile_word
+cmp rax, 2
+je compile_integer
+cmp rax, 3
+jne compile_advance
+load64 rax, [rdi + 8]
+cmp rax, r9
+jne compile_syntax
+jmp compile_advance
+compile_integer:
+store64 [rsp + 56], r9
+jmp compile_advance
+compile_word:
+load64 rax, [rdi + 16]
+cmp rax, r8
+jne compile_syntax
+load64 r10, [rdi + 8]
+lea r9, [r12 + rdx * 1]
+mov rcx, 0
+compile_char:
+cmp rcx, r8
+jae compile_advance
+load8 rax, [r9 + rcx * 1]
+load8 r11, [r10 + rcx * 1]
+cmp rax, r11
+jne compile_syntax
+add rcx, 1
+jmp compile_char
+compile_advance:
+add rdi, 24
+sub rsi, 1
+jne compile_next
+; Parser complet avant emission, puis capacite totale avant premiere ecriture.
+lea rcx, [rip + s0_prefix_end]
+lea rax, [rip + s0_prefix]
+sub rcx, rax
+add rcx, 16
+lea rdx, [rip + s0_suffix_end]
+lea rax, [rip + s0_suffix]
+sub rdx, rax
+add rcx, rdx
+cmp r15, rcx
+jb compile_capacity
+cmp r14, 0
+je compile_capacity
+mov rdi, r14
+lea rsi, [rip + s0_prefix]
+lea rcx, [rip + s0_prefix_end]
+sub rcx, rsi
+compile_prefix:
+cmp rcx, 0
+je compile_hex_begin
+load8 rax, [rsi]
+store8 [rdi], rax
+add rsi, 1
+add rdi, 1
+sub rcx, 1
+jmp compile_prefix
+compile_hex_begin:
+load64 rax, [rsp + 56]
+lea rsi, [rip + hex_digits]
+mov rdx, 16
+compile_hex:
+mov r10, rax
+shr r10, 60
+load8 r11, [rsi + r10 * 1]
+store8 [rdi], r11
+shl rax, 4
+add rdi, 1
+sub rdx, 1
+jne compile_hex
+lea rsi, [rip + s0_suffix]
+lea rcx, [rip + s0_suffix_end]
+sub rcx, rsi
+compile_suffix:
+cmp rcx, 0
+je compile_ok
+load8 rax, [rsi]
+store8 [rdi], rax
+add rsi, 1
+add rdi, 1
+sub rcx, 1
+jmp compile_suffix
+compile_ok:
+mov rdx, rdi
+sub rdx, r14
+mov rax, 0
+mov r8, 0
+jmp compile_return
+compile_syntax:
+mov rax, 200
+compile_lexical:
+mov r8, rdx
+mov rdx, 0
+jmp compile_return
+compile_capacity:
+mov rax, 301
+mov rdx, 0
+mov r8, 0
+compile_return:
+add rsp, 64
+pop r15
+pop r14
+pop r13
+pop r12
+pop rdi
+pop rsi
+pop rbx
+ret
+next_token:
+push rbx
+push rsi
+push r12
+push rdi
+push r13
+sub rsp, 32
+mov rbx, rcx
+load64 rsi, [rbx]
+load64 r12, [rbx + 8]
+load64 rdi, [rbx + 16]
+cmp r12, rdi
+jb nt_bad
+nt_space:
+cmp rdi, r12
+jae nt_eof
+load8 rax, [rsi + rdi * 1]
+cmp rax, 32
+je nt_skip
+cmp rax, 9
+je nt_skip
+cmp rax, 10
+je nt_skip
+cmp rax, 13
+jne nt_classify
+nt_skip:
+add rdi, 1
+jmp nt_space
+nt_classify:
+mov r13, rdi
+cmp rax, 32
+jb nt_bad
+cmp rax, 127
+jae nt_bad
+cmp rax, 48
+jb nt_identifier
+cmp rax, 58
+jb nt_number
+nt_identifier:
+call ident_start
+cmp rax, 1
+je nt_word
+mov r11, 3
+load8 r9, [rsi + rdi * 1]
+add rdi, 1
+jmp nt_commit
+nt_word:
+mov r11, 1
+mov r9, 0
+add rdi, 1
+nt_word_next:
+cmp rdi, r12
+jae nt_commit
+load8 rax, [rsi + rdi * 1]
+cmp rax, 48
+jb nt_word_letter
+cmp rax, 58
+jb nt_word_advance
+nt_word_letter:
+call ident_start
+cmp rax, 1
+jne nt_commit
+nt_word_advance:
+add rdi, 1
+jmp nt_word_next
+nt_number:
+mov r11, 2
+mov r9, 0
+nt_digit:
+cmp rdi, r12
+jae nt_commit
+load8 rax, [rsi + rdi * 1]
+sub rax, 48
+cmp rax, 10
+jae nt_commit
+mov r10, 1844674407370955161
+cmp r9, r10
+jb nt_accumulate
+cmp r9, r10
+jne nt_overflow
+cmp rax, 6
+jae nt_overflow
+nt_accumulate:
+imul r9, r9, 10
+add r9, rax
+add rdi, 1
+jmp nt_digit
+nt_eof:
+mov r13, rdi
+mov r11, 0
+mov r9, 0
+nt_commit:
+store64 [rbx + 16], rdi
+mov rax, r11
+mov rdx, r13
+mov r8, rdi
+sub r8, r13
+jmp nt_return
+nt_bad:
+mov rax, 100
+jmp nt_error
+nt_overflow:
+mov rax, 101
+nt_error:
+mov rdx, rdi
+mov r8, 0
+mov r9, 0
+nt_return:
+add rsp, 32
+pop r13
+pop rdi
+pop r12
+pop rsi
+pop rbx
+ret
+ident_start:
+cmp rax, 95
+je ids_yes
+or rax, 32
+cmp rax, 97
+jb ids_no
+cmp rax, 123
+jae ids_no
+ids_yes:
+mov rax, 1
+ret
+ids_no:
+mov rax, 0
+ret
+section .rdata r
+compiler_exports:
+ascii "NVBC0001"
+qword 64, 1, 1
+qword addr(compile), 0, 0, 0
+kw_fn:
+ascii "fn"
+kw_main:
+ascii "main"
+kw_u64:
+ascii "u64"
+kw_return:
+ascii "return"
+hex_digits:
+ascii "0123456789ABCDEF"
+s0_prefix:
+ascii "format pe64\nabi efi_x64\nentry start\nsection .text rx\nstart:\nmov rax, 0x"
+s0_prefix_end:
+s0_suffix:
+ascii "\nret\nsection .rdata r\nqword addr(start)\nsection .data rw\nzero 8\n"
+s0_suffix_end:
+align 8
+pattern:
+qword 1, addr(kw_fn), 2
+qword 1, addr(kw_main), 4
+qword 3, 40, 0
+qword 3, 41, 0
+qword 3, 45, 0
+qword 3, 62, 0
+qword 1, addr(kw_u64), 3
+qword 3, 123, 0
+qword 1, addr(kw_return), 6
+qword 2, 0, 0
+qword 3, 59, 0
+qword 3, 125, 0
+qword 0, 0, 0
+source_good:
+ascii "fn main() -> u64 { return 42; }\n"
+source_bad:
+ascii "fn nope() -> u64 { return 42; }\n"
+golden:
+ascii "format pe64\nabi efi_x64\nentry start\nsection .text rx\nstart:\nmov rax, 0x000000000000002A\nret\nsection .rdata r\nqword addr(start)\nsection .data rw\nzero 8\n"
+align 8
+cases:
+qword addr(source_good), 32, 0
+qword addr(golden), 151, 256
+qword addr(source_bad), 32, 200
+qword 0, 0, 256
+qword addr(source_good), 32, 301
+qword 0, 0, 1
+pass_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_OK\r\n"
+fail_msg:
+utf16z "NG_NTASM_NATIVE_FRONT_BAD\r\n"
+section .data rw
+output:
+zero 256

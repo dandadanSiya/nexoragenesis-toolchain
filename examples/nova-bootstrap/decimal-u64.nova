@@ -1,0 +1,41 @@
+// Nova Bootstrap ABI 1. Decimal-u64 component port of NTASM's checked
+// accumulator (frontend.c lexer): value <= (UINT64_MAX-digit)/10.
+// main(input, result) uses two bounded buffers, four ms_abi scalar slots.
+// result must hold 16 bytes: value LE64 at 0, source byte position LE64 at 8.
+// Status is separate from the value: 0=success, 1=empty, 2=invalid, 3=overflow.
+// No C callback parses characters or computes this result.
+fn put64(out:buf<u8>, offset:u64, value:u64) -> u64 {
+    let mut i:u64=0;
+    while i<8 {
+        out[offset+i]=u8(value>>(i*8));
+        i=i+1;
+    }
+    return 0;
+}
+
+fn main(input:buf<u8>, result:buf<u8>) -> u64 {
+    if len(result)<16 { return 4; }
+    put64(result,0,0);
+    put64(result,8,0);
+    if len(input)==0 { return 1; }
+    let mut value:u64=0;
+    let mut i:u64=0;
+    while i<len(input) {
+        let ch:u8=input[i];
+        if ch<48 || ch>57 {
+            put64(result,8,i);
+            return 2;
+        }
+        let digit:u64=ch-48;
+        if value>1844674407370955161 ||
+           (value==1844674407370955161 && digit>5) {
+            put64(result,8,i);
+            return 3;
+        }
+        value=value*10+digit;
+        i=i+1;
+    }
+    put64(result,0,value);
+    put64(result,8,i);
+    return 0;
+}

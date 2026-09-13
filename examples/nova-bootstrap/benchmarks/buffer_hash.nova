@@ -1,0 +1,14 @@
+// FNV-like dependent recurrence. Nova retains its managed-buffer checks.
+fn main(n:u64, seed:u64, data:buf<u8>) -> u64 {
+    let mut sum:u64=seed;
+    let mut pass:u64=0;
+    while (pass<n) {
+        let mut i:u64=0;
+        while i<len(data) {
+            sum=(sum^u64(data[i]))*1099511628211;
+            i=i+1;
+        }
+        pass=pass+1;
+    }
+    return sum;
+}

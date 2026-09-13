@@ -1,0 +1,9 @@
+module bootstrap.returnmax
+target x86_64-nexora-uefi
+section .text {
+    export fn main() -> u64
+    effects {}
+    clobbers {rax} {
+        return 18446744073709551615;
+    }
+}

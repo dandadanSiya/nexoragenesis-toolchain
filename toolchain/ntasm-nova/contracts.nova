@@ -1,0 +1,171 @@
+module contracts;
+
+import ntasm_ast;
+
+// Node kinds: requires22, ensures23, predicate33, qualified91, name90.
+
+fn same_bytes(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool {
+    if start>end || end>len(source) || (end-start)!=len(text) { return false; }
+    let mut i:u64=0;
+    while i<len(text) {
+        if source[start+i]!=text[i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+// 0 structural error, 1 one name, 2 valid but qualified (forbidden here).
+fn qualified_shape(tree:ntasm_ast.Tree,id:u64)->u64 {
+    if id==0 || id>tree.node_count { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    if q.kind!=91 || q.first_child==0 || q.last_child==0
+       || q.first_child>tree.node_count || q.last_child>tree.node_count {
+        return 0;
+    }
+    if q.first_child!=q.last_child { return 2; }
+    let name:ntasm_ast.Node=ntasm_ast.node_at(tree,q.first_child);
+    if name.kind!=90 { return 0; }
+    return 1;
+}
+
+fn single_name(tree:ntasm_ast.Tree,id:u64)->ntasm_ast.Node {
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    return ntasm_ast.node_at(tree,q.first_child);
+}
+
+// 99 means unknown. Other values are the required argument count.
+fn predicate_arity(source:buf<u8>,start:u64,end:u64)->u64 {
+    let feature:buf<u8>="feature";
+    if same_bytes(source,start,end,feature) { return 1; }
+    let non_null:buf<u8>="non_null";
+    if same_bytes(source,start,end,non_null) { return 1; }
+    let canonical:buf<u8>="canonical";
+    if same_bytes(source,start,end,canonical) { return 1; }
+    let stack_in:buf<u8>="stack_in";
+    if same_bytes(source,start,end,stack_in) { return 1; }
+    let stack_aligned:buf<u8>="stack_aligned";
+    if same_bytes(source,start,end,stack_aligned) { return 1; }
+    let msr_initialized:buf<u8>="msr_initialized";
+    if same_bytes(source,start,end,msr_initialized) { return 1; }
+    let interrupts_enabled:buf<u8>="interrupts_enabled";
+    if same_bytes(source,start,end,interrupts_enabled) { return 0; }
+    let interrupts_disabled:buf<u8>="interrupts_disabled";
+    if same_bytes(source,start,end,interrupts_disabled) { return 0; }
+    let mapping_present:buf<u8>="mapping_present";
+    if same_bytes(source,start,end,mapping_present) { return 1; }
+    let valid_user_return:buf<u8>="valid_user_return";
+    if same_bytes(source,start,end,valid_user_return) { return 2; }
+    return 99;
+}
+
+// Validate the closed predicate vocabulary and arity of requires/ensures.
+// Success writes sets, predicates, requires sets and ensures sets. 323 reports
+// unknown (reason1) or qualified (reason2) predicate names. 324 reports arity
+// mismatch with expected/actual in out[2..3]. 800 is transactional.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    if tree.ok==false || tree.node_count==0 || len(out)<4 { return 800; }
+    let mut sets:u64=0;
+    let mut predicates:u64=0;
+    let mut requires_sets:u64=0;
+    let mut ensures_sets:u64=0;
+    let mut code:u64=0;
+    let mut reason:u64=0;
+    let mut bad_line:u64=0;
+    let mut bad_column:u64=0;
+    let mut expected:u64=0;
+    let mut actual:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count && code==0 {
+        let set:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if set.kind==22 || set.kind==23 {
+            // The parser keeps a keyword wrapper whose single child is the
+            // predicate-set node with the same kind. Ignore the inner node
+            // when the flat traversal reaches it later.
+            let mut wrapper:u64=0;
+            let mut body:ntasm_ast.Node=set;
+            if set.first_child!=0 && set.first_child<=tree.node_count {
+                let candidate:ntasm_ast.Node=
+                    ntasm_ast.node_at(tree,set.first_child);
+                if candidate.kind==set.kind {
+                    if set.first_child!=set.last_child { code=800; }
+                    else { wrapper=1;body=candidate; }
+                }
+            }
+            if wrapper!=0 && code==0 {
+                sets=sets+1;
+                if set.kind==22 { requires_sets=requires_sets+1; }
+                else { ensures_sets=ensures_sets+1; }
+                let mut predicate_id:u64=body.first_child;
+                let mut last_predicate:u64=0;
+                while predicate_id!=0 && code==0 {
+                if predicate_id>tree.node_count { code=800; }
+                else {
+                    let predicate:ntasm_ast.Node=ntasm_ast.node_at(tree,predicate_id);
+                    if predicate.kind!=33 || predicate.first_child==0
+                       || predicate.last_child==0
+                       || predicate.first_child>tree.node_count
+                       || predicate.last_child>tree.node_count {
+                        code=800;
+                    } else {
+                        let shape:u64=qualified_shape(tree,predicate.first_child);
+                        if shape==0 { code=800; }
+                        else if shape==2 {
+                            code=323;reason=2;bad_line=predicate.line;
+                            bad_column=predicate.column;
+                        } else {
+                            let name:ntasm_ast.Node=
+                                single_name(tree,predicate.first_child);
+                            if name.start>name.end || name.end>len(source) {
+                                code=800;
+                            } else {
+                                expected=predicate_arity(source,name.start,name.end);
+                                if expected==99 {
+                                    code=323;reason=1;bad_line=name.line;
+                                    bad_column=name.column;
+                                } else {
+                                    let q:ntasm_ast.Node=
+                                        ntasm_ast.node_at(tree,predicate.first_child);
+                                    actual=0;
+                                    let mut argument_id:u64=q.next_sibling;
+                                    let mut last_child:u64=predicate.first_child;
+                                    while argument_id!=0 && code==0 {
+                                        if argument_id>tree.node_count { code=800; }
+                                        else {
+                                            let argument:ntasm_ast.Node=
+                                                ntasm_ast.node_at(tree,argument_id);
+                                            actual=actual+1;last_child=argument_id;
+                                            argument_id=argument.next_sibling;
+                                        }
+                                    }
+                                    if code==0 && last_child!=predicate.last_child {
+                                        code=800;
+                                    } else if code==0 && actual!=expected {
+                                        code=324;bad_line=name.line;
+                                        bad_column=name.column;
+                                    } else if code==0 { predicates=predicates+1; }
+                                }
+                            }
+                        }
+                    }
+                    last_predicate=predicate_id;
+                    if code==0 { predicate_id=predicate.next_sibling; }
+                }
+                }
+                if code==0 && body.first_child!=0
+                   && last_predicate!=body.last_child { code=800; }
+            }
+        }
+        if code==0 { id=id+1; }
+    }
+
+    if code==0 {
+        out[0]=sets;out[1]=predicates;
+        out[2]=requires_sets;out[3]=ensures_sets;
+    } else if code==323 {
+        out[0]=bad_line;out[1]=bad_column;out[2]=reason;out[3]=0;
+    } else if code==324 {
+        out[0]=bad_line;out[1]=bad_column;out[2]=expected;out[3]=actual;
+    }
+    return code;
+}

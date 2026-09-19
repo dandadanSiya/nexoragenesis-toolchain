@@ -1,0 +1,255 @@
+module effects;
+
+import ntasm_ast;
+
+// Node kinds: effects set 20, qualified name 91, name 90.
+
+fn same_bytes(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool {
+    if start>end || end>len(source) || (end-start)!=len(text) { return false; }
+    let mut i:u64=0;
+    while i<len(text) {
+        if source[start+i]!=text[i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+fn same_span(source:buf<u8>,a_start:u64,a_end:u64,
+             b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+fn skip_space(source:buf<u8>,start:u64,limit:u64)->u64 {
+    let mut at:u64=start;
+    while at<limit {
+        let byte:u64=source[at];
+        if byte!=32 && byte!=9 && byte!=10 && byte!=13 { return at; }
+        at=at+1;
+    }
+    return at;
+}
+
+// 0 is structurally invalid, 1 is one name, 2 is a valid qualified name with
+// multiple components (forbidden by the v0 effect vocabulary).
+fn qualified_shape(tree:ntasm_ast.Tree,id:u64)->u64 {
+    if id==0 || id>tree.node_count { return 0; }
+    let qualified:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    if qualified.kind!=91 || qualified.first_child==0
+       || qualified.last_child==0 || qualified.first_child>tree.node_count
+       || qualified.last_child>tree.node_count { return 0; }
+    if qualified.first_child!=qualified.last_child { return 2; }
+    let name:ntasm_ast.Node=ntasm_ast.node_at(tree,qualified.first_child);
+    if name.kind!=90 { return 0; }
+    return 1;
+}
+
+fn single_name(tree:ntasm_ast.Tree,id:u64)->ntasm_ast.Node {
+    if id==0 || id>tree.node_count {
+        return ntasm_ast.Node{kind:0,token_begin:0,token_end:0,source:0,
+            line:0,column:0,start:0,end:0,first_child:0,last_child:0,
+            next_sibling:0,aux:0};
+    }
+    let qualified:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    if qualified_shape(tree,id)!=1 {
+        return ntasm_ast.Node{kind:0,token_begin:0,token_end:0,source:0,
+            line:0,column:0,start:0,end:0,first_child:0,last_child:0,
+            next_sibling:0,aux:0};
+    }
+    let name:ntasm_ast.Node=ntasm_ast.node_at(tree,qualified.first_child);
+    if name.kind!=90 {
+        return ntasm_ast.Node{kind:0,token_begin:0,token_end:0,source:0,
+            line:0,column:0,start:0,end:0,first_child:0,last_child:0,
+            next_sibling:0,aux:0};
+    }
+    return name;
+}
+
+fn atom_kind(source:buf<u8>,start:u64,end:u64)->u64 {
+    let w1:buf<u8>="privileged";if same_bytes(source,start,end,w1) { return 1; }
+    let w2:buf<u8>="changes_flags";if same_bytes(source,start,end,w2) { return 2; }
+    let w3:buf<u8>="mmio";if same_bytes(source,start,end,w3) { return 3; }
+    let w4:buf<u8>="io_port";if same_bytes(source,start,end,w4) { return 4; }
+    let w5:buf<u8>="msr";if same_bytes(source,start,end,w5) { return 5; }
+    let w6:buf<u8>="control";if same_bytes(source,start,end,w6) { return 6; }
+    let w7:buf<u8>="interrupt_state";if same_bytes(source,start,end,w7) { return 7; }
+    let w8:buf<u8>="no_return";if same_bytes(source,start,end,w8) { return 8; }
+    let w9:buf<u8>="memory_ordering";if same_bytes(source,start,end,w9) { return 9; }
+    let w10:buf<u8>="reads_clock";if same_bytes(source,start,end,w10) { return 10; }
+    let w11:buf<u8>="suspends";if same_bytes(source,start,end,w11) { return 11; }
+    return 0;
+}
+
+fn memory_kind(source:buf<u8>,start:u64,end:u64)->u64 {
+    let reads:buf<u8>="reads_mem";
+    if same_bytes(source,start,end,reads) { return 1; }
+    let writes:buf<u8>="writes_mem";
+    if same_bytes(source,start,end,writes) { return 2; }
+    return 0;
+}
+
+fn valid_space(source:buf<u8>,start:u64,end:u64)->bool {
+    let user:buf<u8>="user";if same_bytes(source,start,end,user) { return true; }
+    let kernel:buf<u8>="kernel";if same_bytes(source,start,end,kernel) { return true; }
+    let physical:buf<u8>="physical";
+    if same_bytes(source,start,end,physical) { return true; }
+    let mmio:buf<u8>="mmio";if same_bytes(source,start,end,mmio) { return true; }
+    let device:buf<u8>="device";if same_bytes(source,start,end,device) { return true; }
+    let firmware:buf<u8>="firmware";
+    return same_bytes(source,start,end,firmware);
+}
+
+// Validate the closed v0 effect vocabulary and exact duplicates per set.
+// Success writes sets, entries, memory entries and scoped memory entries.
+// 321 reports an invalid effect with reason 1 unknown, 2 argument on an atom,
+// 3 invalid memory space, 4 malformed AST/source grouping. 322 reports the
+// second exact duplicate. 800 is transactional for invalid input/out shape.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    let n_effects:u64=20;
+    let entry_words:u64=5;
+    if tree.ok==false || tree.node_count==0 || len(out)<4 { return 800; }
+
+    let scratch:buf<u64>=alloc(runtime(),tree.node_count*entry_words);
+    let mut sets:u64=0;
+    let mut entries:u64=0;
+    let mut memory_entries:u64=0;
+    let mut scoped_entries:u64=0;
+    let mut used:u64=0;
+    let mut code:u64=0;
+    let mut reason:u64=0;
+    let mut bad_line:u64=0;
+    let mut bad_column:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count && code==0 {
+        let set:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if set.kind==n_effects {
+            if set.start>set.end || set.end>len(source) { code=800; }
+            else {
+                sets=sets+1;used=0;
+                let mut child_id:u64=set.first_child;
+                while child_id!=0 && code==0 {
+                    if child_id>tree.node_count { code=800; }
+                    else {
+                        let effect_node:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+                        let effect_shape:u64=qualified_shape(tree,child_id);
+                        if effect_shape==0 { code=800; }
+                        else if effect_shape==2 {
+                            code=321;reason=4;bad_line=effect_node.line;
+                            bad_column=effect_node.column;
+                        } else {
+                            let effect:ntasm_ast.Node=single_name(tree,child_id);
+                            if effect.start>effect.end || effect.end>len(source) {
+                                code=800;
+                            } else {
+                            let atom:u64=atom_kind(source,effect.start,effect.end);
+                            let memory:u64=memory_kind(source,effect.start,effect.end);
+                            let mut has_scope:u64=0;
+                            let mut scope_start:u64=0;
+                            let mut scope_end:u64=0;
+                            let after_effect:u64=skip_space(source,effect.end,set.end);
+                            if after_effect<set.end && source[after_effect]==40 {
+                                has_scope=1;
+                                let scope_id:u64=effect_node.next_sibling;
+                                let scope_shape:u64=qualified_shape(tree,scope_id);
+                                if scope_shape==0 { code=800; }
+                                else if scope_shape==2 {
+                                    let scope_node:ntasm_ast.Node=
+                                        ntasm_ast.node_at(tree,scope_id);
+                                    code=321;reason=4;bad_line=scope_node.line;
+                                    bad_column=scope_node.column;
+                                } else {
+                                    let scope:ntasm_ast.Node=single_name(tree,scope_id);
+                                    if scope.start>scope.end || scope.end>len(source) {
+                                        code=800;
+                                    } else {
+                                    scope_start=scope.start;scope_end=scope.end;
+                                    let after_scope:u64=skip_space(source,scope.end,set.end);
+                                    if after_scope>=set.end || source[after_scope]!=41 {
+                                        code=800;
+                                    } else if atom!=0 {
+                                        code=321;reason=2;bad_line=effect.line;
+                                        bad_column=effect.column;
+                                    } else if memory!=0
+                                              && valid_space(source,scope.start,
+                                                             scope.end)==false {
+                                        code=321;reason=3;bad_line=scope.line;
+                                        bad_column=scope.column;
+                                    }
+                                    }
+                                }
+                            }
+                            if code==0 && atom==0 && memory==0 {
+                                code=321;reason=1;bad_line=effect.line;
+                                bad_column=effect.column;
+                            }
+                            if code==0 && memory!=0 && has_scope!=0
+                               && valid_space(source,scope_start,scope_end)==false {
+                                code=321;reason=3;bad_line=effect.line;
+                                bad_column=effect.column;
+                            }
+                            if code==0 {
+                                let mut seen:u64=0;
+                                let mut j:u64=0;
+                                while j<used && seen==0 {
+                                    let at:u64=j*entry_words;
+                                    if same_span(source,scratch[at],scratch[at+1],
+                                                 effect.start,effect.end)
+                                       && scratch[at+2]==has_scope {
+                                        if has_scope==0
+                                           || same_span(source,scratch[at+3],
+                                                scratch[at+4],scope_start,scope_end) {
+                                            seen=1;
+                                        }
+                                    }
+                                    j=j+1;
+                                }
+                                if seen!=0 {
+                                    code=322;bad_line=effect.line;
+                                    bad_column=effect.column;
+                                } else {
+                                    let at:u64=used*entry_words;
+                                    scratch[at]=effect.start;
+                                    scratch[at+1]=effect.end;
+                                    scratch[at+2]=has_scope;
+                                    scratch[at+3]=scope_start;
+                                    scratch[at+4]=scope_end;
+                                    used=used+1;entries=entries+1;
+                                    if memory!=0 { memory_entries=memory_entries+1; }
+                                    if memory!=0 && has_scope!=0 {
+                                        scoped_entries=scoped_entries+1;
+                                    }
+                                }
+                            }
+                            if code==0 {
+                                if has_scope!=0 {
+                                    let scope_node:ntasm_ast.Node=
+                                        ntasm_ast.node_at(tree,effect_node.next_sibling);
+                                    child_id=scope_node.next_sibling;
+                                } else { child_id=effect_node.next_sibling; }
+                            }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if code==0 { id=id+1; }
+    }
+
+    if code==0 {
+        out[0]=sets;out[1]=entries;out[2]=memory_entries;out[3]=scoped_entries;
+    } else if code==321 || code==322 {
+        out[0]=bad_line;out[1]=bad_column;out[2]=reason;out[3]=0;
+    }
+    rt_free(runtime(),scratch);
+    return code;
+}

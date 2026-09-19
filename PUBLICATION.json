@@ -600,7 +600,9 @@
     "bootstrap/quarantine/c/nova/tests_ntasm_callable_names.c",
     "bootstrap/quarantine/c/nova/tests_ntasm_calls.c",
     "bootstrap/quarantine/c/nova/tests_ntasm_clobbers.c",
+    "bootstrap/quarantine/c/nova/tests_ntasm_contracts.c",
     "bootstrap/quarantine/c/nova/tests_ntasm_decls.c",
+    "bootstrap/quarantine/c/nova/tests_ntasm_effects.c",
     "bootstrap/quarantine/c/nova/tests_ntasm_lexer.c",
     "bootstrap/quarantine/c/nova/tests_ntasm_locals.c",
     "bootstrap/quarantine/c/nova/tests_ntasm_nxo_link_pe.c",
@@ -719,7 +721,9 @@
     "toolchain/ntasm-nova/callable_names.nova",
     "toolchain/ntasm-nova/calls.nova",
     "toolchain/ntasm-nova/clobbers.nova",
+    "toolchain/ntasm-nova/contracts.nova",
     "toolchain/ntasm-nova/decls.nova",
+    "toolchain/ntasm-nova/effects.nova",
     "toolchain/ntasm-nova/lexer.nova",
     "toolchain/ntasm-nova/locals.nova",
     "toolchain/ntasm-nova/nxo_inspect.nova",
@@ -739,7 +743,9 @@
     "toolchain/ntasm-nova/tests/callable-names-entry.nova",
     "toolchain/ntasm-nova/tests/calls-entry.nova",
     "toolchain/ntasm-nova/tests/clobbers-entry.nova",
+    "toolchain/ntasm-nova/tests/contracts-entry.nova",
     "toolchain/ntasm-nova/tests/decls-entry.nova",
+    "toolchain/ntasm-nova/tests/effects-entry.nova",
     "toolchain/ntasm-nova/tests/fixtures/negative-isolated-cr.ntasm",
     "toolchain/ntasm-nova/tests/fixtures/negative-overflow.ntasm",
     "toolchain/ntasm-nova/tests/fixtures/negative-unterminated-string.ntasm",
@@ -795,11 +801,13 @@
     "complete_build_verified": false
   },
   "verification": {
-    "ntasm_validate": "51 checks, 0 failures, 16 cases",
+    "ntasm_validate": "63 checks, 0 failures, 20 cases",
     "nxo_link_pe": "35 checks, 0 failures, 5 cases",
     "complete_toolchain_verified": false,
     "nova_v2": "59 checks, 0 failures",
     "environment": "WSL Linux x86_64 GCC ASan UBSan",
-    "date": "2026-09-19"
+    "date": "2026-09-19",
+    "effects": "54 checks, 0 failures, 17 cases",
+    "contracts": "36 checks, 0 failures, 11 cases"
   }
 }

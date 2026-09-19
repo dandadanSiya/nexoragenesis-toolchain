@@ -6,7 +6,7 @@ Chaîne NTASM/Nova pour produire des programmes exécutables.
 
 ## État de ce dépôt
 
-**Snapshot de recherche, pas encore une toolchain complète livrable.** Cette copie de publication est mise à jour le **19 septembre 2026**, avec les modules validés lors de la campagne du 13 septembre et les validateurs déclaratifs d'effets et contrats du 19 septembre. Elle ne contient pas l’historique Git des originaux.
+**Snapshot de recherche, pas encore une toolchain complète livrable.** Cette copie de publication est mise à jour le **19 septembre 2026**, avec le pipeline NTASM en Nova de 33 passes et les modules validés des campagnes des 13 et 19 septembre. Elle ne contient pas l’historique Git des originaux.
 
 Les deux catégories de preuve sont séparées : les anciens résultats concernent l’espace de travail original ; seuls les tests explicitement marqués « rejoué » ci-dessous concernent cette copie.
 
@@ -32,10 +32,13 @@ La liste exhaustive des sources sélectionnées figure dans [PUBLICATION.json](P
 ## Modules désormais inclus
 
 - Analyse des déclarations, références, appels et arité ; contrôle des noms, paramètres, variables et registres dans `toolchain/ntasm-nova/`.
-- Validation sémantique commune en Nova : [validate.nova](toolchain/ntasm-nova/validate.nova), comprenant treize passes et les alias physiques x86_64.
-- [Effets déclarés](toolchain/ntasm-nova/effects.nova) : vocabulaire fermé et espaces mémoire ; [contrats déclarés](toolchain/ntasm-nova/contracts.nova) : noms et arités des prédicats `requires`/`ensures`. Ces contrôles ne prouvent pas encore les prédicats aux appels et ne calculent pas les effets réels des corps.
+- Validation sémantique commune en Nova : [validate.nova](toolchain/ntasm-nova/validate.nova), comprenant 33 passes et les alias physiques x86_64.
+- Effets et clobbers déclarés, propagation aux appels, contrôles des accès mémoire et d'intrinsèques ; preuve aux appels d'un sous-ensemble des contrats, décrit dans la [spécification](spec/ntasm.md).
+- Contrôle de flot terminal, ABI nx64, types des arguments et retours, espaces de pointeurs, cibles, versions et fonctionnalités CPU.
+- Types des initialisations, constantes et conditions `if`. Les expressions non prises en charge sont refusées lorsque leur type doit être prouvé ; l'inférence arithmétique générale reste ouverte.
 - Inspection des symboles et relocations NXO, fusion de deux objets et chaîne [NXO vers PE](toolchain/ntasm-nova/nxo_link_pe.nova).
 - Correction du bootstrap Nova pour passer un champ buffer aux fonctions et à `slice`.
+- Capacité du bootstrap Nova portée à 524 288 nœuds et 131 072 variables locales après reproduction de limites sur le pipeline composé ; la suite Nova v2 reste verte.
 
 Ces composants ne constituent pas encore NTASM v0 complet. Restent notamment les effets et contrats complets, l'ABI, les macros/comptime, la couverture d'encodage, les stubs système et la reconstruction autonome.
 

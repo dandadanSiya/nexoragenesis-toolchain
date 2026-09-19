@@ -1,0 +1,57 @@
+module body_intrinsics;
+import ntasm_ast;import effects;
+fn same(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool{if start>end||end>len(source)||(end-start)!=len(text){return false;}let mut i:u64=0;while i<len(text){if source[start+i]!=text[i]{return false;}i=i+1;}return true;}
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64{if parent==0||parent>tree.node_count{return 0;}let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);let mut id:u64=p.first_child;let mut index:u64=0;while id!=0&&index<ordinal{if id>tree.node_count{return 0;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);id=n.next_sibling;index=index+1;}if id>tree.node_count{return 0;}return id;}
+fn effect_set_id(tree:ntasm_ast.Tree,id:u64)->u64{let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,id);let mut child_id:u64=fn_.first_child;let mut found:u64=0;while child_id!=0{if child_id>tree.node_count{return 0;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);if n.kind==20{if found!=0{return 0;}found=child_id;}child_id=n.next_sibling;}return found;}
+fn changes_flags(source:buf<u8>,name:ntasm_ast.Node)->bool{let a:buf<u8>="add";if same(source,name.start,name.end,a){return true;}let b:buf<u8>="adc";if same(source,name.start,name.end,b){return true;}let c:buf<u8>="sub";if same(source,name.start,name.end,c){return true;}let d:buf<u8>="sbb";if same(source,name.start,name.end,d){return true;}let e:buf<u8>="and";if same(source,name.start,name.end,e){return true;}let f:buf<u8>="or";if same(source,name.start,name.end,f){return true;}let g:buf<u8>="xor";if same(source,name.start,name.end,g){return true;}let h:buf<u8>="cmp";if same(source,name.start,name.end,h){return true;}let i:buf<u8>="test";if same(source,name.start,name.end,i){return true;}let j:buf<u8>="inc";if same(source,name.start,name.end,j){return true;}let k:buf<u8>="dec";if same(source,name.start,name.end,k){return true;}let l:buf<u8>="neg";if same(source,name.start,name.end,l){return true;}let m:buf<u8>="shl";if same(source,name.start,name.end,m){return true;}let n:buf<u8>="shr";if same(source,name.start,name.end,n){return true;}let o:buf<u8>="sar";if same(source,name.start,name.end,o){return true;}let p:buf<u8>="rol";if same(source,name.start,name.end,p){return true;}let q:buf<u8>="ror";if same(source,name.start,name.end,q){return true;}let r:buf<u8>="imul";if same(source,name.start,name.end,r){return true;}let s:buf<u8>="mul";if same(source,name.start,name.end,s){return true;}let t:buf<u8>="div";if same(source,name.start,name.end,t){return true;}let u:buf<u8>="idiv";if same(source,name.start,name.end,u){return true;}let v:buf<u8>="bt";if same(source,name.start,name.end,v){return true;}let w:buf<u8>="bts";if same(source,name.start,name.end,w){return true;}let x:buf<u8>="btr";if same(source,name.start,name.end,x){return true;}let y:buf<u8>="btc";if same(source,name.start,name.end,y){return true;}let z:buf<u8>="bsf";if same(source,name.start,name.end,z){return true;}let aa:buf<u8>="bsr";return same(source,name.start,name.end,aa);}
+fn required(source:buf<u8>,name:ntasm_ast.Node)->u64{
+ let a:buf<u8>="rdtsc";if same(source,name.start,name.end,a){return 512;}
+ let b:buf<u8>="lfence";if same(source,name.start,name.end,b){return 256;}
+ let c:buf<u8>="sfence";if same(source,name.start,name.end,c){return 256;}
+ let d:buf<u8>="mfence";if same(source,name.start,name.end,d){return 256;}
+ let e:buf<u8>="ud2";if same(source,name.start,name.end,e){return 128;}
+ let f:buf<u8>="cli";if same(source,name.start,name.end,f){return 65;}
+ let g:buf<u8>="sti";if same(source,name.start,name.end,g){return 65;}
+ let h:buf<u8>="hlt";if same(source,name.start,name.end,h){return 1025;}
+ let i:buf<u8>="swapgs";if same(source,name.start,name.end,i){return 33;}
+ let j:buf<u8>="rdmsr";if same(source,name.start,name.end,j){return 17;}
+ let k:buf<u8>="wrmsr";if same(source,name.start,name.end,k){return 17;}
+ let l:buf<u8>="syscall";if same(source,name.start,name.end,l){return 34;}
+ let m:buf<u8>="sysretq";if same(source,name.start,name.end,m){return 163;}
+ let n:buf<u8>="iretq";if same(source,name.start,name.end,n){return 163;}
+ let o:buf<u8>="read_cr";if same(source,name.start,name.end,o){return 33;}
+ let p:buf<u8>="write_cr";if same(source,name.start,name.end,p){return 33;}
+ let q:buf<u8>="sgdt";if same(source,name.start,name.end,q){return 33;}
+ let r:buf<u8>="sidt";if same(source,name.start,name.end,r){return 33;}
+ let s:buf<u8>="lgdt";if same(source,name.start,name.end,s){return 33;}
+ let t:buf<u8>="lidt";if same(source,name.start,name.end,t){return 33;}
+ let u:buf<u8>="ltr";if same(source,name.start,name.end,u){return 33;}
+ let v:buf<u8>="invlpg";if same(source,name.start,name.end,v){return 33;}
+ let w:buf<u8>="in";if same(source,name.start,name.end,w){return 9;}
+ let x:buf<u8>="out";if same(source,name.start,name.end,x){return 9;}
+ if changes_flags(source,name){return 2;}
+ return 0;
+}
+fn missing(required_:u64,available:u64)->u64{let mut result:u64=0;let mut bit:u64=1;let mut index:u64=0;while index<11{if (required_&bit)!=0&&(available&bit)==0{result=result|bit;}bit=bit<<1;index=index+1;}return result;}
+// Check fixed x86_64 intrinsic effects from the conformance oracle. Success
+// writes functions,checked intrinsics,verified,0. Error334 writes instruction
+// position, category1 and missing atom bitset. Unknown ordinary instructions
+// remain the encoder/type checker's responsibility.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64{
+ if tree.ok==false||tree.node_count==0||len(out)<4{return 800;}let summary:buf<u64>=alloc(runtime(),4);
+ let mut functions:u64=0;let mut checked:u64=0;let mut verified:u64=0;let mut code:u64=0;
+ let mut line:u64=0;let mut column:u64=0;let mut absent:u64=0;let mut id:u64=1;
+ while id<=tree.node_count{let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);if node.kind==18{functions=functions+1;}id=id+1;}
+ id=1;while id<=tree.node_count&&code==0{let instruction:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+  if instruction.kind==32{let name_id:u64=child(tree,id,0);if name_id==0{code=800;}else{
+   let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);let need:u64=required(source,name);
+   if need!=0{checked=checked+1;let mut owner:u64=0;let mut fn_id:u64=1;while fn_id<=tree.node_count{
+    let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,fn_id);if fn_.kind==18&&fn_.start<=instruction.start&&instruction.end<=fn_.end{owner=fn_id;}fn_id=fn_id+1;}
+    if owner==0{code=800;}else{let set_id:u64=effect_set_id(tree,owner);if set_id==0{code=800;}else{
+     code=effects.summarize(source,tree,set_id,summary);if code==0{absent=missing(need,summary[0]);
+      if absent!=0{code=334;line=name.line;column=name.column;}else{verified=verified+1;}}}}}
+  }}id=id+1;}
+ if code==0{out[0]=functions;out[1]=checked;out[2]=verified;out[3]=0;}
+ else if code==334{out[0]=line;out[1]=column;out[2]=1;out[3]=absent;}
+ rt_free(runtime(),summary);return code;
+}

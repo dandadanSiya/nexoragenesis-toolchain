@@ -11,9 +11,9 @@
  * token-owned names remain stable until the shared backend finishes. */
 enum {
   MAX_TOKENS = 262144,
-  MAX_NODES = 262144,
+  MAX_NODES = 524288,
   MAX_VARS = 4096,
-  MAX_LOCALS = 65536,
+  MAX_LOCALS = 131072,
   MAX_FUNCS = 1024,
   T_ID = 256,
   T_NUM,

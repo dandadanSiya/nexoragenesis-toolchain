@@ -34,16 +34,21 @@ fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
     return id;
 }
 
-// Number of direct kind19 children of a declaration: its arity. Parameters
-// are attached to the declaration itself, so siblings are scanned from the
-// first child without any imaginary container.
-fn decl_arity(tree:ntasm_ast.Tree,decl_id:u64)->u64 {
+// Number of call-supplied parameters. Direct out parameters do not consume an
+// argument; in and inout do. Parameters are attached to the declaration.
+fn is_out(source:buf<u8>,parameter:ntasm_ast.Node)->bool {
+    if parameter.start+3>len(source) { return false; }
+    return source[parameter.start]==111 && source[parameter.start+1]==117
+           && source[parameter.start+2]==116;
+}
+
+fn decl_arity(source:buf<u8>,tree:ntasm_ast.Tree,decl_id:u64)->u64 {
     let d:ntasm_ast.Node=ntasm_ast.node_at(tree,decl_id);
     let mut id:u64=d.first_child;
     let mut count:u64=0;
     while id!=0 && id<=tree.node_count {
         let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
-        if n.kind==19 { count=count+1; }
+        if n.kind==19 && is_out(source,n)==false { count=count+1; }
         id=n.next_sibling;
     }
     return count;
@@ -124,7 +129,7 @@ export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
                 else {
                     let at:u64=used*2;
                     scratch[at]=id;
-                    scratch[at+1]=decl_arity(tree,id);
+                    scratch[at+1]=decl_arity(source,tree,id);
                     used=used+1;
                 }
             }

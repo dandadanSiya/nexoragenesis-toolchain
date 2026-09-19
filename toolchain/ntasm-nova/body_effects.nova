@@ -1,0 +1,119 @@
+module body_effects;
+
+import ntasm_ast;
+import effects;
+
+fn same_word(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool {
+    if start>end || end>len(source) || (end-start)!=len(text){return false;}
+    let mut i:u64=0;while i<len(text){if source[start+i]!=text[i]{return false;}i=i+1;}return true;
+}
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64{
+    if parent==0||parent>tree.node_count{return 0;}let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;let mut index:u64=0;while id!=0&&index<ordinal{
+        if id>tree.node_count{return 0;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;index=index+1;}if id>tree.node_count{return 0;}return id;
+}
+fn effect_set_id(tree:ntasm_ast.Tree,id:u64)->u64{
+    let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,id);let mut child_id:u64=fn_.first_child;let mut found:u64=0;
+    while child_id!=0{if child_id>tree.node_count{return 0;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+        if n.kind==20{if found!=0{return 0;}found=child_id;}child_id=n.next_sibling;}return found;
+}
+fn space_bit(source:buf<u8>,node:ntasm_ast.Node)->u64{
+    let a:buf<u8>="user";if same_word(source,node.start,node.end,a){return 1;}
+    let b:buf<u8>="kernel";if same_word(source,node.start,node.end,b){return 2;}
+    let c:buf<u8>="physical";if same_word(source,node.start,node.end,c){return 4;}
+    let d:buf<u8>="mmio";if same_word(source,node.start,node.end,d){return 8;}
+    let e:buf<u8>="device";if same_word(source,node.start,node.end,e){return 16;}
+    let f:buf<u8>="firmware";if same_word(source,node.start,node.end,f){return 32;}
+    return 0;
+}
+fn memory_space(source:buf<u8>,tree:ntasm_ast.Tree,memory_id:u64)->u64{
+    if memory_id==0||memory_id>tree.node_count{return 0;}let memory:ntasm_ast.Node=ntasm_ast.node_at(tree,memory_id);
+    if memory.kind!=34||memory.last_child==0||memory.last_child>tree.node_count{return 0;}
+    let type_:ntasm_ast.Node=ntasm_ast.node_at(tree,memory.last_child);
+    if type_.kind!=36||type_.aux!=1||type_.first_child==0||type_.first_child>tree.node_count{return 0;}
+    let space:ntasm_ast.Node=ntasm_ast.node_at(tree,type_.first_child);
+    if space.kind!=90||space.start>space.end||space.end>len(source){return 0;}
+    return space_bit(source,space);
+}
+fn missing(required:u64,available:u64)->u64{if (required&available)==required{return 0;}return required;}
+
+// Check real load/store memory effects against their owning function contract.
+// Success writes functions, memory accesses, verified accesses,0. Error332
+// writes instruction position, category2 reads/3 writes and missing space bit.
+// Error333 reports an unknown pointer space. Error800 is transactional.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64{
+    if tree.ok==false||tree.node_count==0||len(out)<4{return 800;}
+    let summary:buf<u64>=alloc(runtime(),4);
+    let mut functions:u64=0;let mut accesses:u64=0;let mut verified:u64=0;
+    let mut code:u64=0;let mut line:u64=0;let mut column:u64=0;
+    let mut category:u64=0;let mut missing_bit:u64=0;let mut id:u64=1;
+    while id<=tree.node_count{
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==18{functions=functions+1;}id=id+1;
+    }
+    id=1;
+    while id<=tree.node_count&&code==0{
+        let instruction:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if instruction.kind==32{
+            let name_id:u64=child(tree,id,0);
+            if name_id==0{code=800;}
+            else{
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                let load:buf<u8>="load";let store:buf<u8>="store";
+                let mut kind:u64=0;
+                if same_word(source,name.start,name.end,load){kind=2;}
+                else if same_word(source,name.start,name.end,store){kind=3;}
+                if kind!=0{
+                    let mut owner:u64=0;let mut fn_id:u64=1;
+                    while fn_id<=tree.node_count{
+                        let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,fn_id);
+                        if fn_.kind==18&&fn_.start<=instruction.start
+                           &&instruction.end<=fn_.end{owner=fn_id;}
+                        fn_id=fn_id+1;
+                    }
+                    if owner==0{code=800;}
+                    else{
+                        let set_id:u64=effect_set_id(tree,owner);
+                        if set_id==0{code=800;}
+                        else{
+                            code=effects.summarize(source,tree,set_id,summary);
+                            let mut operand_id:u64=instruction.first_child;
+                            let mut found:u64=0;
+                            while operand_id!=0&&code==0{
+                                if operand_id>tree.node_count{code=800;}
+                                else{
+                                    let operand:ntasm_ast.Node=
+                                        ntasm_ast.node_at(tree,operand_id);
+                                    if operand.kind==34{
+                                        found=found+1;accesses=accesses+1;
+                                        let bit:u64=memory_space(source,tree,operand_id);
+                                        if bit==0{code=333;line=operand.line;
+                                            column=operand.column;}
+                                        else{
+                                            let mut available:u64=summary[1];
+                                            if kind==3{available=summary[2];}
+                                            missing_bit=missing(bit,available);
+                                            if missing_bit!=0{code=332;
+                                                line=instruction.line;
+                                                column=instruction.column;
+                                                category=kind;}
+                                            else{verified=verified+1;}
+                                        }
+                                    }
+                                    operand_id=operand.next_sibling;
+                                }
+                            }
+                            if code==0&&found==0{code=800;}
+                        }
+                    }
+                }
+            }
+        }
+        id=id+1;
+    }
+    if code==0{out[0]=functions;out[1]=accesses;out[2]=verified;out[3]=0;}
+    else if code==332{out[0]=line;out[1]=column;out[2]=category;out[3]=missing_bit;}
+    else if code==333{out[0]=line;out[1]=column;out[2]=0;out[3]=0;}
+    rt_free(runtime(),summary);return code;
+}

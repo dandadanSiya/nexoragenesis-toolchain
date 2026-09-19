@@ -116,6 +116,11 @@ fn register_width(source:buf<u8>,start:u64,end:u64)->u64 {
     return 0;
 }
 
+export fn width(source:buf<u8>,start:u64,end:u64)->u64 {
+    if start>end || end>len(source) { return 0; }
+    return register_width(source,start,end);
+}
+
 // Stable physical register family for the explicit x86_64 aliases used by
 // parameter bindings and clobber sets. Zero means that this pass does not know
 // the spelling; callers then retain their byte-wise comparison behaviour.

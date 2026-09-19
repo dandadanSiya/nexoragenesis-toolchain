@@ -1,0 +1,37 @@
+module control_flow;
+import ntasm_ast;
+fn same(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool{if start>end||end>len(source)||(end-start)!=len(text){return false;}let mut i:u64=0;while i<len(text){if source[start+i]!=text[i]{return false;}i=i+1;}return true;}
+fn same_span(source:buf<u8>,a:ntasm_ast.Node,b:ntasm_ast.Node)->bool{if a.start>a.end||b.start>b.end||a.end>len(source)||b.end>len(source)||(a.end-a.start)!=(b.end-b.start){return false;}let mut i:u64=0;while i<(a.end-a.start){if source[a.start+i]!=source[b.start+i]{return false;}i=i+1;}return true;}
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64{if parent==0||parent>tree.node_count{return 0;}let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);let mut id:u64=p.first_child;let mut index:u64=0;while id!=0&&index<ordinal{if id>tree.node_count{return 0;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);id=n.next_sibling;index=index+1;}if id>tree.node_count{return 0;}return id;}
+fn decl_name_id(tree:ntasm_ast.Tree,id:u64)->u64{let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);if n.kind==18{return child(tree,id,0);}if n.kind==9{return child(tree,id,1);}return 0;}
+fn returns_never(source:buf<u8>,tree:ntasm_ast.Tree,id:u64)->bool{let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,id);let mut child_id:u64=declaration.first_child;while child_id!=0{if child_id>tree.node_count{return false;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);if n.kind==36{if n.first_child==0||n.first_child>tree.node_count{return false;}let name:ntasm_ast.Node=ntasm_ast.node_at(tree,n.first_child);let word:buf<u8>="never";return same(source,name.start,name.end,word);}child_id=n.next_sibling;}return false;}
+fn call_is_never(source:buf<u8>,tree:ntasm_ast.Tree,id:u64)->bool{let call:ntasm_ast.Node=ntasm_ast.node_at(tree,id);if call.kind!=28{return false;}let qid:u64=child(tree,id,0);if qid==0{return false;}let q:ntasm_ast.Node=ntasm_ast.node_at(tree,qid);if q.kind!=91||q.last_child==0||q.last_child>tree.node_count{return false;}let called:ntasm_ast.Node=ntasm_ast.node_at(tree,q.last_child);let mut decl_id:u64=1;while decl_id<=tree.node_count{let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,decl_id);if declaration.kind==18||declaration.kind==9{let name_id:u64=decl_name_id(tree,decl_id);if name_id!=0{let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);if same_span(source,name,called){return returns_never(source,tree,decl_id);}}}decl_id=decl_id+1;}return false;}
+fn terminal_instruction(source:buf<u8>,tree:ntasm_ast.Tree,id:u64)->bool{let instruction:ntasm_ast.Node=ntasm_ast.node_at(tree,id);if instruction.kind!=32||instruction.first_child==0||instruction.first_child>tree.node_count{return false;}let name:ntasm_ast.Node=ntasm_ast.node_at(tree,instruction.first_child);let a:buf<u8>="ud2";if same(source,name.start,name.end,a){return true;}let b:buf<u8>="sysretq";if same(source,name.start,name.end,b){return true;}let c:buf<u8>="iretq";return same(source,name.start,name.end,c);}
+fn block_terminal(source:buf<u8>,tree:ntasm_ast.Tree,block_id:u64)->bool{
+ if block_id==0||block_id>tree.node_count{return false;}let block:ntasm_ast.Node=ntasm_ast.node_at(tree,block_id);if block.kind!=25||block.last_child==0||block.last_child>tree.node_count{return false;}
+ let last:ntasm_ast.Node=ntasm_ast.node_at(tree,block.last_child);if last.kind==29{return true;}if terminal_instruction(source,tree,block.last_child){return true;}
+ if call_is_never(source,tree,block.last_child){return true;}
+ if last.kind==30{let mut child_id:u64=last.first_child;let mut first:u64=0;let mut second:u64=0;while child_id!=0{if child_id>tree.node_count{return false;}let child:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);if child.kind==25{if first==0{first=child_id;}else if second==0{second=child_id;}else{return false;}}child_id=child.next_sibling;}if first==0||second==0{return false;}return block_terminal(source,tree,first)&&block_terminal(source,tree,second);}
+ return false;
+}
+fn function_shape(source:buf<u8>,tree:ntasm_ast.Tree,id:u64,out:buf<u64>)->u64{
+ let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,id);let mut child_id:u64=fn_.first_child;let mut return_type:u64=0;let mut body:u64=0;
+ while child_id!=0{if child_id>tree.node_count{return 800;}let child:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);if child.kind==36&&return_type==0{return_type=child_id;}if child.kind==25{body=child_id;}child_id=child.next_sibling;}
+ if return_type==0||body==0{return 800;}let type_:ntasm_ast.Node=ntasm_ast.node_at(tree,return_type);if type_.first_child==0||type_.first_child>tree.node_count{return 800;}let name:ntasm_ast.Node=ntasm_ast.node_at(tree,type_.first_child);let word:buf<u8>="never";out[0]=body;if same(source,name.start,name.end,word){out[1]=1;}else{out[1]=0;}return 0;
+}
+// Validate terminal control flow. 337 rejects return in never;338 fallthrough
+// (reason1 value function,2 never);339 bare return in a value function.
+// Success writes functions,terminal functions,checked returns,0.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64{
+ if tree.ok==false||tree.node_count==0||len(out)<4{return 800;}let shape:buf<u64>=alloc(runtime(),2);
+ let mut functions:u64=0;let mut terminal:u64=0;let mut returns:u64=0;let mut code:u64=0;
+ let mut line:u64=0;let mut column:u64=0;let mut reason:u64=0;let mut id:u64=1;
+ while id<=tree.node_count&&code==0{let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,id);if fn_.kind==18{functions=functions+1;code=function_shape(source,tree,id,shape);if code==0{
+   let never:u64=shape[1];let mut node_id:u64=1;while node_id<=tree.node_count&&code==0{let node:ntasm_ast.Node=ntasm_ast.node_at(tree,node_id);if node.kind==29&&fn_.start<=node.start&&node.end<=fn_.end{returns=returns+1;if never!=0{code=337;line=node.line;column=node.column;}else if node.first_child==0{code=339;line=node.line;column=node.column;}}node_id=node_id+1;}
+   if code==0{if block_terminal(source,tree,shape[0]){terminal=terminal+1;}else{code=338;line=fn_.line;column=fn_.column;if never!=0{reason=2;}else{reason=1;}}}
+  }}id=id+1;}
+ if code==0{out[0]=functions;out[1]=terminal;out[2]=returns;out[3]=0;}
+ else if code==337||code==339{out[0]=line;out[1]=column;out[2]=0;out[3]=0;}
+ else if code==338{out[0]=line;out[1]=column;out[2]=reason;out[3]=0;}
+ rt_free(runtime(),shape);return code;
+}

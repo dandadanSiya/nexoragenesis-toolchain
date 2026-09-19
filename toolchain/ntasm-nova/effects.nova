@@ -107,6 +107,82 @@ fn valid_space(source:buf<u8>,start:u64,end:u64)->bool {
     return same_bytes(source,start,end,firmware);
 }
 
+fn space_bit(source:buf<u8>,start:u64,end:u64)->u64 {
+    let user:buf<u8>="user";if same_bytes(source,start,end,user) { return 1; }
+    let kernel:buf<u8>="kernel";if same_bytes(source,start,end,kernel) { return 2; }
+    let physical:buf<u8>="physical";
+    if same_bytes(source,start,end,physical) { return 4; }
+    let mmio:buf<u8>="mmio";if same_bytes(source,start,end,mmio) { return 8; }
+    let device:buf<u8>="device";if same_bytes(source,start,end,device) { return 16; }
+    let firmware:buf<u8>="firmware";
+    if same_bytes(source,start,end,firmware) { return 32; }
+    return 0;
+}
+
+// Summarize one already validated kind20 set as atom flags, read spaces,
+// write spaces and entry count. Unscoped memory effects cover all six v0
+// spaces. This helper does not own source, tree or out.
+export fn summarize(source:buf<u8>,tree:ntasm_ast.Tree,set_id:u64,
+                    out:buf<u64>)->u64 {
+    if tree.ok==false || set_id==0 || set_id>tree.node_count || len(out)<4 {
+        return 800;
+    }
+    let set:ntasm_ast.Node=ntasm_ast.node_at(tree,set_id);
+    if set.kind!=20 || set.start>set.end || set.end>len(source) { return 800; }
+    let mut flags:u64=0;let mut reads:u64=0;let mut writes:u64=0;
+    let mut entries:u64=0;let mut code:u64=0;
+    let mut child_id:u64=set.first_child;
+    while child_id!=0 && code==0 {
+        if child_id>tree.node_count || qualified_shape(tree,child_id)!=1 {
+            code=800;
+        } else {
+            let effect_node:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+            let effect:ntasm_ast.Node=single_name(tree,child_id);
+            if effect.start>effect.end || effect.end>len(source) { code=800; }
+            else {
+                let atom:u64=atom_kind(source,effect.start,effect.end);
+                let memory:u64=memory_kind(source,effect.start,effect.end);
+                let mut scope:u64=63;
+                let mut has_scope:u64=0;
+                let after_effect:u64=skip_space(source,effect.end,set.end);
+                if after_effect<set.end && source[after_effect]==40 {
+                    has_scope=1;
+                    let scope_id:u64=effect_node.next_sibling;
+                    if qualified_shape(tree,scope_id)!=1 { code=800; }
+                    else {
+                        let space:ntasm_ast.Node=single_name(tree,scope_id);
+                        if space.start>space.end || space.end>len(source) {
+                            code=800;
+                        } else {
+                            scope=space_bit(source,space.start,space.end);
+                            if scope==0 { code=800; }
+                            else {
+                                let scope_node:ntasm_ast.Node=
+                                    ntasm_ast.node_at(tree,scope_id);
+                                child_id=scope_node.next_sibling;
+                            }
+                        }
+                    }
+                } else { child_id=effect_node.next_sibling; }
+                if code==0 {
+                    if atom!=0 && has_scope==0 {
+                        flags=flags|(1<<(atom-1));
+                    } else if memory==1 {
+                        reads=reads|scope;
+                    } else if memory==2 {
+                        writes=writes|scope;
+                    } else { code=800; }
+                    if code==0 { entries=entries+1; }
+                }
+            }
+        }
+    }
+    if code==0 {
+        out[0]=flags;out[1]=reads;out[2]=writes;out[3]=entries;
+    }
+    return code;
+}
+
 // Validate the closed v0 effect vocabulary and exact duplicates per set.
 // Success writes sets, entries, memory entries and scoped memory entries.
 // 321 reports an invalid effect with reason 1 unknown, 2 argument on an atom,

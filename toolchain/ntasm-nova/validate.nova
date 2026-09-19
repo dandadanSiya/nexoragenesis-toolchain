@@ -2,30 +2,59 @@ module validate;
 
 import ntasm_ast;
 import semantics;
+import targets;
+import versions;
+import features;
 import callable_names;
 import symbol_names;
+import types;
+import constant_types;
+import literal_initializers;
+import condition_types;
 import parameters;
 import locals;
 import bindings;
 import register_bindings;
 import register_widths;
+import abi;
+import pointer_spaces;
 import effects;
+import body_effects;
+import body_intrinsics;
+import body_clobbers;
+import control_flow;
+import return_types;
 import contracts;
+import feature_requirements;
 import clobbers;
 import ntasm_refs;
 import calls;
+import call_types;
+import initializer_types;
+import call_effects;
+import call_clobbers;
+import call_contracts;
 
 fn clear(words:buf<u64>)->u64 {
     words[0]=0;words[1]=0;words[2]=0;words[3]=0;return 0;
 }
 
 // Run the semantic pipeline over a parsed NTASM tree, in this order:
-// semantics.index, callable_names.check, symbol_names.check,
+// semantics.index, targets.check, versions.check, features.check,
+// callable_names.check,
+// symbol_names.check, types.check, constant_types.check,
+// literal_initializers.check,
+// condition_types.check,
 // parameters.check, locals.check, bindings.check,
-// register_bindings.check, register_widths.check, effects.check,
-// contracts.check, clobbers.check,
-// ntasm_refs.resolve, calls.check.
-// Returns 0 after writing out[0]=13, out[1]=tree.token_count,
+// register_bindings.check, register_widths.check, clobbers.check, abi.check,
+// pointer_spaces.check, effects.check,
+// body_effects.check, body_intrinsics.check, body_clobbers.check,
+// control_flow.check, return_types.check, contracts.check,
+// feature_requirements.check,
+// ntasm_refs.resolve, calls.check, call_types.check, initializer_types.check,
+// call_effects.check,
+// call_clobbers.check,
+// call_contracts.check. Returns 0 after writing out[0]=33, out[1]=tree.token_count,
 // out[2]=tree.node_count, out[3]=0. Returns the first nonzero stage code
 // and copies its four-word scratch output into out. Returns 800 with no
 // write to out on an invalid tree or an output buffer shorter than four
@@ -40,10 +69,28 @@ export fn validate(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
 
     clear(scratch);code=semantics.index(source,tree,scratch);
     if code==0 {
+        clear(scratch);code=targets.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=versions.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=features.check(source,tree,scratch);
+    }
+    if code==0 {
         clear(scratch);code=callable_names.check(source,tree,scratch);
     }
     if code==0 {
         clear(scratch);code=symbol_names.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=types.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=constant_types.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=literal_initializers.check(source,tree,scratch);
     }
     if code==0 {
         clear(scratch);code=parameters.check(source,tree,scratch);
@@ -61,13 +108,37 @@ export fn validate(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
         clear(scratch);code=register_widths.check(source,tree,scratch);
     }
     if code==0 {
+        clear(scratch);code=clobbers.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=abi.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=pointer_spaces.check(source,tree,scratch);
+    }
+    if code==0 {
         clear(scratch);code=effects.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=body_effects.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=body_intrinsics.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=body_clobbers.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=control_flow.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=return_types.check(source,tree,scratch);
     }
     if code==0 {
         clear(scratch);code=contracts.check(source,tree,scratch);
     }
     if code==0 {
-        clear(scratch);code=clobbers.check(source,tree,scratch);
+        clear(scratch);code=feature_requirements.check(source,tree,scratch);
     }
     if code==0 {
         clear(scratch);code=ntasm_refs.resolve(source,tree,scratch);
@@ -75,9 +146,27 @@ export fn validate(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
     if code==0 {
         clear(scratch);code=calls.check(source,tree,scratch);
     }
+    if code==0 {
+        clear(scratch);code=call_types.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=initializer_types.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=condition_types.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=call_effects.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=call_clobbers.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=call_contracts.check(source,tree,scratch);
+    }
 
     if code==0 {
-        out[0]=13;
+        out[0]=33;
         out[1]=tree.token_count;
         out[2]=tree.node_count;
         out[3]=0;

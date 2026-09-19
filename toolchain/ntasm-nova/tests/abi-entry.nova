@@ -1,0 +1,30 @@
+module abi_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import callable_names;
+import parameters;
+import register_bindings;
+import register_widths;
+import clobbers;
+import abi;
+
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    if len(out)<4 { return 800; }
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false { ntasm_ast.release(tree);return 800; }
+    let scratch:buf<u64>=alloc(runtime(),4);
+    let mut code:u64=semantics.index(source,tree,scratch);
+    if code==0 { code=callable_names.check(source,tree,scratch); }
+    if code==0 { code=parameters.check(source,tree,scratch); }
+    if code==0 { code=register_bindings.check(source,tree,scratch); }
+    if code==0 { code=register_widths.check(source,tree,scratch); }
+    if code==0 { code=clobbers.check(source,tree,scratch); }
+    if code==0 { code=abi.check(source,tree,out); }
+    else if code!=800 {
+        out[0]=scratch[0];out[1]=scratch[1];
+        out[2]=scratch[2];out[3]=scratch[3];
+    }
+    rt_free(runtime(),scratch);ntasm_ast.release(tree);return code;
+}

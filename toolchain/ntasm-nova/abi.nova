@@ -1,0 +1,228 @@
+module abi;
+
+import ntasm_ast;
+import register_widths;
+import clobbers;
+
+// Kinds: default ABI6, import9, function18, parameter19, ABI clause28,
+// dashed name92.
+
+fn same_bytes(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool {
+    if start>end || end>len(source) || (end-start)!=len(text) { return false; }
+    let mut i:u64=0;
+    while i<len(text) {
+        if source[start+i]!=text[i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
+    if parent==0 || parent>tree.node_count { return 0; }
+    let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;index=index+1;
+    }
+    if id>tree.node_count { return 0; }
+    return id;
+}
+
+fn clobber_set_id(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    let mut child_id:u64=declaration.first_child;
+    while child_id!=0 {
+        if child_id>tree.node_count { return 0; }
+        let child_:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+        if child_.kind==21 { return child_id; }
+        child_id=child_.next_sibling;
+    }
+    return 0;
+}
+
+fn is_nx64(source:buf<u8>,node:ntasm_ast.Node)->bool {
+    let name:buf<u8>="nx64-abi-v0";
+    return same_bytes(source,node.start,node.end,name);
+}
+
+// 1 in, 2 out, 3 inout, 0 malformed.
+fn direction(source:buf<u8>,parameter:ntasm_ast.Node)->u64 {
+    if parameter.start>=len(source) { return 0; }
+    let at:u64=parameter.start;
+    if at+5<=len(source) {
+        let word:buf<u8>="inout";
+        if same_bytes(source,at,at+5,word) { return 3; }
+    }
+    if at+3<=len(source) {
+        let word:buf<u8>="out";
+        if same_bytes(source,at,at+3,word) { return 2; }
+    }
+    if at+2<=len(source) {
+        let word:buf<u8>="in";
+        if same_bytes(source,at,at+2,word) { return 1; }
+    }
+    return 0;
+}
+
+fn is_pointer(source:buf<u8>,node:ntasm_ast.Node)->bool {
+    if node.start>node.end || node.end>len(source) || node.end-node.start<3 {
+        return false;
+    }
+    let word:buf<u8>="ptr";
+    return same_bytes(source,node.start,node.start+3,word);
+}
+
+fn is_integer(source:buf<u8>,node:ntasm_ast.Node)->bool {
+    let u8_:buf<u8>="u8";if same_bytes(source,node.start,node.end,u8_) { return true; }
+    let u16_:buf<u8>="u16";if same_bytes(source,node.start,node.end,u16_) { return true; }
+    let u32_:buf<u8>="u32";if same_bytes(source,node.start,node.end,u32_) { return true; }
+    let u64_:buf<u8>="u64";return same_bytes(source,node.start,node.end,u64_);
+}
+
+// Validate nx64-abi-v0 declaration boundaries. Success writes functions,
+// imports, checked parameters,0. 327 rejects unknown/duplicate ABI names
+// (reason1 default,2 explicit,3 duplicate default). 328 rejects parameter
+// count/binding rules (reason1 >14,2 fifth unbound,3 out/inout unbound,
+// 4 unknown explicit GPR,5 reserved output family,6 output also clobber).
+// 329 rejects out type (reason1) or pointer width
+// (reason2). out[3] is the zero-based parameter index, or 0 for declarations.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    if tree.ok==false || tree.node_count==0 || len(out)<4 { return 800; }
+    let clobber_summary:buf<u64>=alloc(runtime(),4);
+    let mut default_count:u64=0;let mut functions:u64=0;let mut imports:u64=0;
+    let mut checked:u64=0;let mut code:u64=0;let mut reason:u64=0;
+    let mut bad_line:u64=0;let mut bad_column:u64=0;let mut bad_index:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count && code==0 {
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==6 {
+            default_count=default_count+1;
+            let dashed_id:u64=child(tree,id,0);
+            if dashed_id==0 { code=800; }
+            else {
+                let dashed:ntasm_ast.Node=ntasm_ast.node_at(tree,dashed_id);
+                if dashed.kind!=92 || dashed.start>dashed.end
+                   || dashed.end>len(source) { code=800; }
+                else if default_count>1 {
+                    code=327;reason=3;bad_line=dashed.line;bad_column=dashed.column;
+                } else if is_nx64(source,dashed)==false {
+                    code=327;reason=1;bad_line=dashed.line;bad_column=dashed.column;
+                }
+            }
+        }
+        id=id+1;
+    }
+
+    id=1;
+    while id<=tree.node_count && code==0 {
+        let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if declaration.kind==18 || declaration.kind==9 {
+            if declaration.kind==18 { functions=functions+1; }
+            else { imports=imports+1; }
+            let mut count:u64=0;let mut child_id:u64=declaration.first_child;
+            let mut explicit_abi:u64=0;
+            while child_id!=0 && code==0 {
+                if child_id>tree.node_count { code=800; }
+                else {
+                    let item:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+                    if item.kind==19 { count=count+1; }
+                    else if item.kind==28 {
+                        let dashed_id:u64=child(tree,child_id,0);
+                        if dashed_id!=0 {
+                            let dashed:ntasm_ast.Node=ntasm_ast.node_at(tree,dashed_id);
+                            if dashed.kind==92 {
+                                explicit_abi=explicit_abi+1;
+                                if is_nx64(source,dashed)==false {
+                                    code=327;reason=2;bad_line=dashed.line;
+                                    bad_column=dashed.column;
+                                }
+                            }
+                        }
+                    }
+                    child_id=item.next_sibling;
+                }
+            }
+            if code==0 && explicit_abi>1 {
+                code=327;reason=2;bad_line=declaration.line;
+                bad_column=declaration.column;
+            } else if code==0 && count>14 {
+                code=328;reason=1;bad_line=declaration.line;
+                bad_column=declaration.column;bad_index=14;
+            }
+            if code==0 {
+                child_id=declaration.first_child;let mut index:u64=0;
+                let mut output_mask:u64=0;
+                while child_id!=0 && code==0 {
+                    let parameter:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+                    if parameter.kind==19 {
+                        let type_id:u64=child(tree,child_id,1);
+                        let reg_id:u64=child(tree,child_id,2);
+                        if type_id==0 { code=800; }
+                        else {
+                            let type_node:ntasm_ast.Node=ntasm_ast.node_at(tree,type_id);
+                            let dir:u64=direction(source,parameter);
+                            if dir==0 || type_node.start>type_node.end
+                               || type_node.end>len(source) { code=800; }
+                            else if (dir==2 || dir==3) && reg_id==0 {
+                                code=328;reason=3;bad_line=parameter.line;
+                                bad_column=parameter.column;bad_index=index;
+                            } else if index>=4 && reg_id==0 {
+                                code=328;reason=2;bad_line=parameter.line;
+                                bad_column=parameter.column;bad_index=index;
+                            } else if (dir==2 || dir==3)
+                                      && is_integer(source,type_node)==false
+                                      && is_pointer(source,type_node)==false {
+                                code=329;reason=1;bad_line=parameter.line;
+                                bad_column=parameter.column;bad_index=index;
+                            } else if reg_id!=0 {
+                                let reg:ntasm_ast.Node=ntasm_ast.node_at(tree,reg_id);
+                                let family:u64=register_widths.family(
+                                    source,reg.start,reg.end);
+                                let width:u64=register_widths.width(
+                                    source,reg.start,reg.end);
+                                if family==0 || width==0 {
+                                    code=328;reason=4;bad_line=reg.line;
+                                    bad_column=reg.column;bad_index=index;
+                                } else if is_pointer(source,type_node) && width!=64 {
+                                    code=329;reason=2;bad_line=reg.line;
+                                    bad_column=reg.column;bad_index=index;
+                                } else if (dir==2 || dir==3)
+                                          && (family==1 || family==5 || family==6) {
+                                    code=328;reason=5;bad_line=reg.line;
+                                    bad_column=reg.column;bad_index=index;
+                                } else if dir==2 || dir==3 {
+                                    output_mask=output_mask|(1<<(family-1));
+                                }
+                            }
+                            if code==0 { checked=checked+1;index=index+1; }
+                        }
+                    }
+                    child_id=parameter.next_sibling;
+                }
+                if code==0 && output_mask!=0 {
+                    let set_id:u64=clobber_set_id(tree,id);
+                    if set_id==0 { code=800; }
+                    else {
+                        code=clobbers.summarize(
+                            source,tree,set_id,clobber_summary);
+                        if code==0 && (clobber_summary[0]&output_mask)!=0 {
+                            code=328;reason=6;bad_line=declaration.line;
+                            bad_column=declaration.column;bad_index=0;
+                        }
+                    }
+                }
+            }
+        }
+        id=id+1;
+    }
+
+    if code==0 { out[0]=functions;out[1]=imports;out[2]=checked;out[3]=0; }
+    else if code==327 || code==328 || code==329 {
+        out[0]=bad_line;out[1]=bad_column;out[2]=reason;out[3]=bad_index;
+    }
+    rt_free(runtime(),clobber_summary);
+    return code;
+}

@@ -94,6 +94,12 @@ int main(void) {
     expect_code(&image, "too_many", too_many, 311);
     const char *absent = "module m\ntarget x86_64-nexora-none\nsection .text {\nfn main()->u64\neffects {}\nclobbers {} {\ncall absent()\nreturn 0\n}\n}\n";
     expect_code(&image, "absent", absent, 310);
+    const char *out_only = "module m\ntarget x86_64-nexora-none\nsection .text {\nfn helper(out x:u64 @rcx)->u64\neffects {}\nclobbers {} {\nreturn 0\n}\nfn main()->u64\neffects {}\nclobbers {} {\ncall helper()\nreturn 0\n}\n}\n";
+    expect_ok(&image, "out_only", out_only, 2, 1);
+    const char *inout_missing = "module m\ntarget x86_64-nexora-none\nsection .text {\nfn helper(inout x:u64 @rcx)->u64\neffects {}\nclobbers {} {\nreturn x\n}\nfn main()->u64\neffects {}\nclobbers {} {\ncall helper()\nreturn 0\n}\n}\n";
+    expect_code(&image, "inout_missing", inout_missing, 311);
+    const char *mixed = "module m\ntarget x86_64-nexora-none\nsection .text {\nfn helper(in a:u64 @rcx,out b:u64 @rdx,inout c:u64 @r8)->u64\neffects {}\nclobbers {} {\nreturn a\n}\nfn main()->u64\neffects {}\nclobbers {} {\ncall helper(1,2)\nreturn 0\n}\n}\n";
+    expect_ok(&image, "mixed directions", mixed, 2, 1);
     expect_untouched(&image, "short", zero_arg, 2);
   }
   if (image.memory) nova_host_unmap(&image);

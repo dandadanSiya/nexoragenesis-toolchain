@@ -1,0 +1,2 @@
+module types_entry;import ntasm_ast;import ntasm_parser;import types;
+export fn main(source:buf<u8>,out:buf<u64>)->u64{if len(out)<4{return 800;}let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);if tree.ok==false{ntasm_ast.release(tree);return 800;}let code:u64=types.check(source,tree,out);ntasm_ast.release(tree);return code;}

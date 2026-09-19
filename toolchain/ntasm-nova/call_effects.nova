@@ -1,0 +1,177 @@
+module call_effects;
+
+import ntasm_ast;
+import effects;
+
+// Declarations: import9/function18. Calls: statement28/expression35 aux1.
+
+fn same_name(source:buf<u8>,a_start:u64,a_end:u64,
+             b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
+    if parent==0 || parent>tree.node_count { return 0; }
+    let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;index=index+1;
+    }
+    if id>tree.node_count { return 0; }
+    return id;
+}
+
+fn decl_name_id(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    if n.kind==18 { return child(tree,id,0); }
+    if n.kind==9 { return child(tree,id,1); }
+    return 0;
+}
+
+fn decl_effects_id(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    let mut child_id:u64=declaration.first_child;
+    let mut found:u64=0;
+    while child_id!=0 {
+        if child_id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+        if n.kind==20 {
+            if found!=0 { return 0; }
+            found=child_id;
+        }
+        child_id=n.next_sibling;
+    }
+    return found;
+}
+
+fn is_call(n:ntasm_ast.Node)->bool {
+    if n.kind==28 { return true; }
+    return n.kind==35 && n.aux==1;
+}
+
+fn call_name_id(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let qid:u64=child(tree,id,0);
+    if qid==0 { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,qid);
+    if q.kind!=91 || q.last_child==0 || q.last_child>tree.node_count { return 0; }
+    return q.last_child;
+}
+
+fn missing_bits(required:u64,available:u64)->u64 {
+    let mut missing:u64=0;let mut bit:u64=1;let mut index:u64=0;
+    while index<63 {
+        if (required&bit)!=0 && (available&bit)==0 { missing=missing|bit; }
+        bit=bit<<1;index=index+1;
+    }
+    return missing;
+}
+
+// Verify effect composition at every resolved call. A caller must declare a
+// superset of the callee atom flags, read spaces and write spaces. Success
+// writes declarations, calls, verified calls, 0. Error325 writes call position,
+// category1 flags/2 reads/3 writes and the missing bitset. Error800 is
+// transactional for invalid trees/shapes. Source/tree/out remain caller-owned.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    let entry_words:u64=6;
+    if tree.ok==false || tree.node_count==0 || len(out)<4 { return 800; }
+    let declarations:buf<u64>=alloc(runtime(),tree.node_count*entry_words);
+    let summary:buf<u64>=alloc(runtime(),4);
+    let mut used:u64=0;let mut calls:u64=0;let mut verified:u64=0;
+    let mut code:u64=0;let mut err_line:u64=0;let mut err_column:u64=0;
+    let mut err_category:u64=0;let mut err_missing:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count && code==0 {
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==18 || n.kind==9 {
+            let name_id:u64=decl_name_id(tree,id);
+            let set_id:u64=decl_effects_id(tree,id);
+            if name_id==0 || set_id==0 { code=800; }
+            else {
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                if name.start>name.end || name.end>len(source) { code=800; }
+                else {
+                    code=effects.summarize(source,tree,set_id,summary);
+                    if code==0 {
+                        let at:u64=used*entry_words;
+                        declarations[at]=id;declarations[at+1]=name.start;
+                        declarations[at+2]=name.end;declarations[at+3]=summary[0];
+                        declarations[at+4]=summary[1];declarations[at+5]=summary[2];
+                        used=used+1;
+                    }
+                }
+            }
+        }
+        id=id+1;
+    }
+
+    id=1;
+    while id<=tree.node_count && code==0 {
+        let call:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if is_call(call) {
+            calls=calls+1;
+            let name_id:u64=call_name_id(tree,id);
+            if name_id==0 || call.start>call.end || call.end>len(source) {
+                code=800;
+            } else {
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                if name.start>name.end || name.end>len(source) { code=800; }
+                else {
+                    let mut caller_at:u64=used*entry_words;
+                    let mut callee_at:u64=used*entry_words;
+                    let mut j:u64=0;
+                    while j<used {
+                        let at:u64=j*entry_words;
+                        let declaration:ntasm_ast.Node=
+                            ntasm_ast.node_at(tree,declarations[at]);
+                        if declaration.kind==18 && declaration.start<=call.start
+                           && call.end<=declaration.end { caller_at=at; }
+                        if same_name(source,declarations[at+1],declarations[at+2],
+                                     name.start,name.end) { callee_at=at; }
+                        j=j+1;
+                    }
+                    if caller_at==used*entry_words || callee_at==used*entry_words {
+                        code=800;
+                    } else {
+                        err_missing=missing_bits(declarations[callee_at+3],
+                                                 declarations[caller_at+3]);
+                        if err_missing!=0 { err_category=1; }
+                        else {
+                            err_missing=missing_bits(declarations[callee_at+4],
+                                                     declarations[caller_at+4]);
+                            if err_missing!=0 { err_category=2; }
+                            else {
+                                err_missing=missing_bits(declarations[callee_at+5],
+                                                         declarations[caller_at+5]);
+                                if err_missing!=0 { err_category=3; }
+                            }
+                        }
+                        if err_missing!=0 {
+                            code=325;err_line=name.line;err_column=name.column;
+                        } else { verified=verified+1; }
+                    }
+                }
+            }
+        }
+        id=id+1;
+    }
+
+    if code==0 {
+        out[0]=used;out[1]=calls;out[2]=verified;out[3]=0;
+    } else if code==325 {
+        out[0]=err_line;out[1]=err_column;
+        out[2]=err_category;out[3]=err_missing;
+    }
+    rt_free(runtime(),summary);rt_free(runtime(),declarations);return code;
+}

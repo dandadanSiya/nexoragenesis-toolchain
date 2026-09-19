@@ -1,0 +1,85 @@
+module body_clobbers;
+import ntasm_ast;import clobbers;import register_widths;
+fn same(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool{if start>end||end>len(source)||(end-start)!=len(text){return false;}let mut i:u64=0;while i<len(text){if source[start+i]!=text[i]{return false;}i=i+1;}return true;}
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64{if parent==0||parent>tree.node_count{return 0;}let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);let mut id:u64=p.first_child;let mut index:u64=0;while id!=0&&index<ordinal{if id>tree.node_count{return 0;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);id=n.next_sibling;index=index+1;}if id>tree.node_count{return 0;}return id;}
+fn set_id(tree:ntasm_ast.Tree,id:u64)->u64{let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,id);let mut child_id:u64=fn_.first_child;let mut found:u64=0;while child_id!=0{if child_id>tree.node_count{return 0;}let n:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);if n.kind==21{if found!=0{return 0;}found=child_id;}child_id=n.next_sibling;}return found;}
+fn simple_name_id(tree:ntasm_ast.Tree,expr_id:u64)->u64{if expr_id==0||expr_id>tree.node_count{return 0;}let expr:ntasm_ast.Node=ntasm_ast.node_at(tree,expr_id);if expr.kind!=35||expr.aux!=0||expr.first_child==0||expr.first_child!=expr.last_child||expr.first_child>tree.node_count{return 0;}let q:ntasm_ast.Node=ntasm_ast.node_at(tree,expr.first_child);if q.kind!=91||q.first_child==0||q.first_child!=q.last_child||q.first_child>tree.node_count{return 0;}return q.first_child;}
+fn fixed_mask(source:buf<u8>,name:ntasm_ast.Node)->u64{let a:buf<u8>="rdtsc";if same(source,name.start,name.end,a){return 5;}let b:buf<u8>="cpuid";if same(source,name.start,name.end,b){return 15;}let c:buf<u8>="rdmsr";if same(source,name.start,name.end,c){return 5;}let d:buf<u8>="syscall";if same(source,name.start,name.end,d){return 2050;}let e:buf<u8>="iretq";if same(source,name.start,name.end,e){return 16;}return 0;}
+fn writes_first(source:buf<u8>,name:ntasm_ast.Node)->bool{let a:buf<u8>="mov";if same(source,name.start,name.end,a){return true;}let b:buf<u8>="load";if same(source,name.start,name.end,b){return true;}let c:buf<u8>="movzx";if same(source,name.start,name.end,c){return true;}let d:buf<u8>="movsx";if same(source,name.start,name.end,d){return true;}let e:buf<u8>="movsxd";if same(source,name.start,name.end,e){return true;}let f:buf<u8>="lea";if same(source,name.start,name.end,f){return true;}let g:buf<u8>="add";if same(source,name.start,name.end,g){return true;}let h:buf<u8>="adc";if same(source,name.start,name.end,h){return true;}let i:buf<u8>="sub";if same(source,name.start,name.end,i){return true;}let j:buf<u8>="sbb";if same(source,name.start,name.end,j){return true;}let k:buf<u8>="and";if same(source,name.start,name.end,k){return true;}let l:buf<u8>="or";if same(source,name.start,name.end,l){return true;}let m:buf<u8>="xor";if same(source,name.start,name.end,m){return true;}let n:buf<u8>="inc";if same(source,name.start,name.end,n){return true;}let o:buf<u8>="dec";if same(source,name.start,name.end,o){return true;}let p:buf<u8>="neg";if same(source,name.start,name.end,p){return true;}let q:buf<u8>="not";if same(source,name.start,name.end,q){return true;}let r:buf<u8>="shl";if same(source,name.start,name.end,r){return true;}let s:buf<u8>="shr";if same(source,name.start,name.end,s){return true;}let t:buf<u8>="sar";if same(source,name.start,name.end,t){return true;}let u:buf<u8>="rol";if same(source,name.start,name.end,u){return true;}let v:buf<u8>="ror";if same(source,name.start,name.end,v){return true;}let w:buf<u8>="imul";if same(source,name.start,name.end,w){return true;}let x:buf<u8>="bswap";if same(source,name.start,name.end,x){return true;}let y:buf<u8>="bts";if same(source,name.start,name.end,y){return true;}let z:buf<u8>="btr";if same(source,name.start,name.end,z){return true;}let aa:buf<u8>="btc";if same(source,name.start,name.end,aa){return true;}let ab:buf<u8>="bsf";if same(source,name.start,name.end,ab){return true;}let ac:buf<u8>="bsr";if same(source,name.start,name.end,ac){return true;}let ad:buf<u8>="xchg";if same(source,name.start,name.end,ad){return true;}let ae:buf<u8>="read_cr";if same(source,name.start,name.end,ae){return true;}let af:buf<u8>="in";return same(source,name.start,name.end,af);}
+fn is_xchg(source:buf<u8>,name:ntasm_ast.Node)->bool{let word:buf<u8>="xchg";return same(source,name.start,name.end,word);}
+// Every load destination and fixed intrinsic write footprint must be declared
+// by the owning function. Success writes functions,writes checked,verified,0.
+// Error335 reports missing family bit;336 reports unknown/non-register dest.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64{
+    if tree.ok==false||tree.node_count==0||len(out)<4{return 800;}
+    let summary:buf<u64>=alloc(runtime(),4);
+    let mut functions:u64=0;let mut writes:u64=0;let mut verified:u64=0;
+    let mut code:u64=0;let mut line:u64=0;let mut column:u64=0;
+    let mut bit:u64=0;let mut id:u64=1;
+    while id<=tree.node_count{
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==18{functions=functions+1;}id=id+1;
+    }
+    id=1;
+    while id<=tree.node_count&&code==0{
+        let instruction:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if instruction.kind==32{
+            let name_id:u64=child(tree,id,0);
+            if name_id==0{code=800;}
+            else{
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                line=0;column=0;let mut required:u64=fixed_mask(source,name);
+                if writes_first(source,name){
+                    let destination_id:u64=child(tree,id,1);
+                    if destination_id==0{code=800;}
+                    else{let destination:ntasm_ast.Node=ntasm_ast.node_at(tree,destination_id);
+                     if destination.kind!=34{let register_id:u64=simple_name_id(tree,destination_id);
+                      if register_id==0{code=336;line=name.line;column=name.column;}
+                      else{
+                        let register:ntasm_ast.Node=ntasm_ast.node_at(tree,register_id);
+                        let family:u64=register_widths.family(
+                            source,register.start,register.end);
+                        if family==0{code=336;line=register.line;
+                            column=register.column;}
+                        else{
+                            required=1<<(family-1);line=register.line;
+                            column=register.column;
+                        }
+                      }
+                     }
+                    }
+                    if code==0&&is_xchg(source,name){let second_id:u64=child(tree,id,2);if second_id==0{code=800;}else{
+                     let second:ntasm_ast.Node=ntasm_ast.node_at(tree,second_id);if second.kind!=34{let second_name_id:u64=simple_name_id(tree,second_id);if second_name_id==0{code=336;line=name.line;column=name.column;}else{let second_name:ntasm_ast.Node=ntasm_ast.node_at(tree,second_name_id);let second_family:u64=register_widths.family(source,second_name.start,second_name.end);if second_family==0{code=336;line=second_name.line;column=second_name.column;}else{required=required|(1<<(second_family-1));}}}}}
+                }
+                if code==0&&required!=0{
+                    writes=writes+1;bit=required;
+                    let mut owner:u64=0;let mut fn_id:u64=1;
+                    while fn_id<=tree.node_count{
+                        let fn_:ntasm_ast.Node=ntasm_ast.node_at(tree,fn_id);
+                        if fn_.kind==18&&fn_.start<=instruction.start
+                           &&instruction.end<=fn_.end{owner=fn_id;}
+                        fn_id=fn_id+1;
+                    }
+                    if owner==0{code=800;}
+                    else{
+                        let clobber_id:u64=set_id(tree,owner);
+                        if clobber_id==0{code=800;}
+                        else{code=clobbers.summarize(source,tree,clobber_id,summary);
+                            if code==0{
+                                let missing:u64=required&(required^summary[0]);
+                                if missing!=0{code=335;bit=missing;
+                                    if line==0{line=name.line;column=name.column;}}
+                                else{verified=verified+1;}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        id=id+1;
+    }
+    if code==0{out[0]=functions;out[1]=writes;out[2]=verified;out[3]=0;}
+    else if code==335{out[0]=line;out[1]=column;out[2]=1;out[3]=bit;}
+    else if code==336{out[0]=line;out[1]=column;out[2]=0;out[3]=0;}
+    rt_free(runtime(),summary);return code;
+}

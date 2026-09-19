@@ -1,0 +1,320 @@
+module call_contracts;
+
+import ntasm_ast;
+import features;
+
+fn same_span(source:buf<u8>,a_start:u64,a_end:u64,
+             b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+fn same_word(source:buf<u8>,start:u64,end:u64,text:buf<u8>)->bool {
+    if start>end || end>len(source) || (end-start)!=len(text) { return false; }
+    let mut i:u64=0;while i<len(text) {
+        if source[start+i]!=text[i] { return false; }i=i+1;
+    }return true;
+}
+
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
+    if parent==0 || parent>tree.node_count { return 0; }
+    let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;index=index+1;
+    }
+    if id>tree.node_count { return 0; }return id;
+}
+
+fn decl_name_id(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    if n.kind==18 { return child(tree,id,0); }
+    if n.kind==9 { return child(tree,id,1); }
+    return 0;
+}
+
+fn requires_body_id(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    let mut child_id:u64=declaration.first_child;
+    while child_id!=0 {
+        if child_id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+        if n.kind==22 {
+            if n.first_child==0 || n.first_child!=n.last_child
+               || n.first_child>tree.node_count { return 0; }
+            let body:ntasm_ast.Node=ntasm_ast.node_at(tree,n.first_child);
+            if body.kind!=22 { return 0; }
+            return n.first_child;
+        }
+        child_id=n.next_sibling;
+    }
+    return 0;
+}
+
+fn predicate_name_id(tree:ntasm_ast.Tree,predicate_id:u64)->u64 {
+    let predicate:ntasm_ast.Node=ntasm_ast.node_at(tree,predicate_id);
+    if predicate.kind!=33 || predicate.first_child==0
+       || predicate.first_child>tree.node_count { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,predicate.first_child);
+    if q.kind!=91 || q.first_child==0 || q.first_child!=q.last_child
+       || q.first_child>tree.node_count { return 0; }
+    return q.first_child;
+}
+
+fn predicate_arg_id(tree:ntasm_ast.Tree,predicate_id:u64,ordinal:u64)->u64 {
+    let predicate:ntasm_ast.Node=ntasm_ast.node_at(tree,predicate_id);
+    if predicate.first_child==0 || predicate.first_child>tree.node_count { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,predicate.first_child);
+    let mut id:u64=q.next_sibling;let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;index=index+1;
+    }
+    if id>tree.node_count { return 0; }return id;
+}
+
+fn simple_name_id(tree:ntasm_ast.Tree,expression_id:u64)->u64 {
+    if expression_id==0 || expression_id>tree.node_count { return 0; }
+    let expression:ntasm_ast.Node=ntasm_ast.node_at(tree,expression_id);
+    if expression.kind!=35 || expression.aux!=0 || expression.first_child==0
+       || expression.first_child!=expression.last_child
+       || expression.first_child>tree.node_count { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,expression.first_child);
+    if q.kind!=91 || q.first_child==0 || q.first_child!=q.last_child
+       || q.first_child>tree.node_count { return 0; }
+    return q.first_child;
+}
+
+fn predicate_family(source:buf<u8>,name:ntasm_ast.Node)->u64 {
+    let f:buf<u8>="feature";if same_word(source,name.start,name.end,f){return 1;}
+    let n:buf<u8>="non_null";if same_word(source,name.start,name.end,n){return 2;}
+    let c:buf<u8>="canonical";if same_word(source,name.start,name.end,c){return 3;}
+    let s:buf<u8>="stack_aligned";
+    if same_word(source,name.start,name.end,s){return 4;}
+    return 5;
+}
+
+fn parameter_name_id(tree:ntasm_ast.Tree,decl_id:u64,ordinal:u64)->u64 {
+    let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,decl_id);
+    let mut id:u64=declaration.first_child;let mut index:u64=0;
+    while id!=0 {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==19 {
+            if index==ordinal { return child(tree,id,0); }
+            index=index+1;
+        }
+        id=n.next_sibling;
+    }
+    return 0;
+}
+
+fn parameter_index(source:buf<u8>,tree:ntasm_ast.Tree,decl_id:u64,
+                   name:ntasm_ast.Node)->u64 {
+    let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,decl_id);
+    let mut id:u64=declaration.first_child;let mut index:u64=0;
+    while id!=0 {
+        if id>tree.node_count { return 18446744073709551615; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==19 {
+            let name_id:u64=child(tree,id,0);
+            if name_id==0 { return 18446744073709551615; }
+            let candidate:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+            if same_span(source,candidate.start,candidate.end,name.start,name.end) {
+                return index;
+            }
+            index=index+1;
+        }
+        id=n.next_sibling;
+    }
+    return 18446744073709551615;
+}
+
+fn is_call(n:ntasm_ast.Node)->bool {
+    if n.kind==28 { return true; }return n.kind==35 && n.aux==1;
+}
+
+fn call_name_id(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let qid:u64=child(tree,id,0);if qid==0 { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,qid);
+    if q.kind!=91 || q.last_child==0 || q.last_child>tree.node_count { return 0; }
+    return q.last_child;
+}
+
+fn call_arg_id(tree:ntasm_ast.Tree,id:u64,ordinal:u64)->u64 {
+    let qid:u64=child(tree,id,0);if qid==0 { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,qid);
+    let mut arg:u64=q.next_sibling;let mut index:u64=0;
+    while arg!=0 && index<ordinal {
+        if arg>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,arg);
+        arg=n.next_sibling;index=index+1;
+    }
+    if arg>tree.node_count { return 0; }return arg;
+}
+
+fn exact_fact(source:buf<u8>,tree:ntasm_ast.Tree,requires_id:u64,
+              wanted_name:ntasm_ast.Node,wanted_arg:ntasm_ast.Node)->bool {
+    if requires_id==0 { return false; }
+    let set:ntasm_ast.Node=ntasm_ast.node_at(tree,requires_id);
+    let mut pred_id:u64=set.first_child;
+    while pred_id!=0 && pred_id<=tree.node_count {
+        let name_id:u64=predicate_name_id(tree,pred_id);
+        let arg_id:u64=predicate_arg_id(tree,pred_id,0);
+        if name_id!=0 && arg_id!=0 {
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+            let arg:ntasm_ast.Node=ntasm_ast.node_at(tree,arg_id);
+            if same_span(source,name.start,name.end,wanted_name.start,wanted_name.end)
+               && same_span(source,arg.start,arg.end,wanted_arg.start,wanted_arg.end) {
+                return true;
+            }
+        }
+        let pred:ntasm_ast.Node=ntasm_ast.node_at(tree,pred_id);
+        pred_id=pred.next_sibling;
+    }
+    return false;
+}
+
+// Prove the four predicate families implemented by the bootstrap oracle at
+// each call. Success writes declarations,calls,proved predicates,0. Error326
+// writes call position, family1 feature/2 non_null/3 canonical/4 stack aligned/
+// 5 recognized but unsupported, and the callee predicate ordinal. 800 is
+// transactional on invalid AST shape.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    if tree.ok==false || tree.node_count==0 || len(out)<4 { return 800; }
+    let feature_summary:buf<u64>=alloc(runtime(),4);
+    let mut feature_code:u64=features.check(source,tree,feature_summary);
+    if feature_code!=0 { rt_free(runtime(),feature_summary);return 800; }
+    let feature_mask:u64=feature_summary[2];
+    let mut declarations:u64=0;let mut calls:u64=0;let mut proved:u64=0;
+    let mut code:u64=0;let mut err_line:u64=0;let mut err_column:u64=0;
+    let mut err_family:u64=0;let mut err_index:u64=0;
+    let mut id:u64=1;while id<=tree.node_count {
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==18 || n.kind==9 { declarations=declarations+1; }
+        id=id+1;
+    }
+    id=1;
+    while id<=tree.node_count && code==0 {
+        let call:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if is_call(call) {
+            calls=calls+1;let name_id:u64=call_name_id(tree,id);
+            if name_id==0 { code=800; }
+            else {
+                let called:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                let mut caller_id:u64=0;let mut callee_id:u64=0;let mut d:u64=1;
+                while d<=tree.node_count {
+                    let decl:ntasm_ast.Node=ntasm_ast.node_at(tree,d);
+                    if decl.kind==18 || decl.kind==9 {
+                        let dn_id:u64=decl_name_id(tree,d);
+                        if dn_id!=0 {
+                            let dn:ntasm_ast.Node=ntasm_ast.node_at(tree,dn_id);
+                            if same_span(source,dn.start,dn.end,called.start,called.end) {
+                                callee_id=d;
+                            }
+                        }
+                        if decl.kind==18 && decl.start<=call.start
+                           && call.end<=decl.end { caller_id=d; }
+                    }
+                    d=d+1;
+                }
+                if caller_id==0 || callee_id==0 { code=800; }
+                else {
+                    let caller_req:u64=requires_body_id(tree,caller_id);
+                    let callee_req:u64=requires_body_id(tree,callee_id);
+                    if callee_req!=0 {
+                        let set:ntasm_ast.Node=ntasm_ast.node_at(tree,callee_req);
+                        let mut pred_id:u64=set.first_child;let mut ordinal:u64=0;
+                        while pred_id!=0 && code==0 {
+                            let pname_id:u64=predicate_name_id(tree,pred_id);
+                            let parg_id:u64=predicate_arg_id(tree,pred_id,0);
+                            if pname_id==0 { code=800; }
+                            else {
+                                let pname:ntasm_ast.Node=ntasm_ast.node_at(tree,pname_id);
+                                let family:u64=predicate_family(source,pname);
+                                let mut ok:bool=false;
+                                if family==5 {
+                                    code=326;err_line=called.line;
+                                    err_column=called.column;err_family=family;
+                                    err_index=ordinal;
+                                } else if parg_id==0 { code=800; }
+                                else if family==1 {
+                                    let parg:ntasm_ast.Node=
+                                        ntasm_ast.node_at(tree,parg_id);
+                                    let feature_name_id:u64=
+                                        simple_name_id(tree,parg_id);
+                                    if feature_name_id!=0 {
+                                        let feature_name:ntasm_ast.Node=
+                                            ntasm_ast.node_at(tree,feature_name_id);
+                                        let bit:u64=features.lookup(source,
+                                            feature_name.start,feature_name.end);
+                                        if bit!=0 && (feature_mask&bit)!=0 { ok=true; }
+                                    }
+                                } else if family==4 {
+                                    let parg:ntasm_ast.Node=
+                                        ntasm_ast.node_at(tree,parg_id);
+                                    ok=exact_fact(source,tree,caller_req,pname,parg);
+                                    if ok==false && parg.kind==94 && parg.aux>0
+                                       && parg.aux<=16 && (16%parg.aux)==0 {
+                                        ok=true;
+                                    }
+                                } else if family==2 || family==3 {
+                                    let subject_id:u64=simple_name_id(tree,parg_id);
+                                    if subject_id!=0 {
+                                        let subject:ntasm_ast.Node=
+                                            ntasm_ast.node_at(tree,subject_id);
+                                        let param_index:u64=parameter_index(
+                                            source,tree,callee_id,subject);
+                                        if param_index!=18446744073709551615 {
+                                            let argument_id:u64=
+                                                call_arg_id(tree,id,param_index);
+                                            let caller_name_id:u64=
+                                                simple_name_id(tree,argument_id);
+                                            if caller_name_id!=0 {
+                                                let caller_name:ntasm_ast.Node=
+                                                    ntasm_ast.node_at(tree,caller_name_id);
+                                                if parameter_index(source,tree,caller_id,
+                                                     caller_name)!=18446744073709551615 {
+                                                    let arg:ntasm_ast.Node=
+                                                        ntasm_ast.node_at(tree,argument_id);
+                                                    ok=exact_fact(source,tree,caller_req,
+                                                                  pname,arg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if code==0 && ok==false {
+                                    code=326;err_line=called.line;
+                                    err_column=called.column;err_family=family;
+                                    err_index=ordinal;
+                                } else { proved=proved+1; }
+                            }
+                            let predicate:ntasm_ast.Node=
+                                ntasm_ast.node_at(tree,pred_id);
+                            pred_id=predicate.next_sibling;ordinal=ordinal+1;
+                        }
+                    }
+                }
+            }
+        }
+        id=id+1;
+    }
+    if code==0 { out[0]=declarations;out[1]=calls;out[2]=proved;out[3]=0; }
+    else if code==326 {
+        out[0]=err_line;out[1]=err_column;out[2]=err_family;out[3]=err_index;
+    }
+    rt_free(runtime(),feature_summary);
+    return code;
+}

@@ -1,0 +1,38 @@
+module nexora.os.stage0
+target x86_64-nexora-uefi
+
+section .text {
+    export fn main() -> u64
+    effects {privileged,io_port}
+    clobbers {rax,rdx} {
+        mov dx,233
+        mov al,72
+        out dx,al
+        mov al,101
+        out dx,al
+        mov al,108
+        out dx,al
+        mov al,108
+        out dx,al
+        mov al,111
+        out dx,al
+        mov al,32
+        out dx,al
+        mov al,87
+        out dx,al
+        mov al,111
+        out dx,al
+        mov al,114
+        out dx,al
+        mov al,108
+        out dx,al
+        mov al,100
+        out dx,al
+        mov al,10
+        out dx,al
+        mov dx,244
+        mov eax,16
+        out dx,eax
+        return 0
+    }
+}

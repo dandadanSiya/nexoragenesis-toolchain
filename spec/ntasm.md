@@ -247,6 +247,12 @@ paramètre/local visible ou un call local/importé de type retour exact. Toute
 autre expression reste refusée jusqu’à ce que son inférence soit portée; aucune
 conversion numérique, pointeur ou booléenne implicite n’est appliquée.
 
+Il prouve aussi une expression entière binaire d’un seul niveau pour les
+opérateurs arithmétiques et bit à bit v0 lorsque chaque opérande est un nom, un
+call ou un littéral borné du type déclaré exact. Les expressions imbriquées et
+les conversions restent refusées; ce contrôle de type n’effectue pas de repli
+vers l’évaluation hôte.
+
 Un `const` scalaire du profil initial exige un littéral compatible et borné.
 Les expressions de constante plus générales restent refusées jusqu’au portage
 de leur évaluation compile-time; elles ne sont pas rabattues silencieusement

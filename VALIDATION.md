@@ -27,9 +27,9 @@ Rejoué le **19 septembre 2026** dans cette copie sous WSL/Linux x86_64, GCC ave
 | Noms et arités des prédicats de contrats | 36 contrôles, 0 échec, 11 cas |
 | Initialisations littérales | 39 contrôles, 0 échec, 12 cas |
 | Conditions booléennes | 39 contrôles, 0 échec, 12 cas |
-| Initialisations par noms et appels | 27 contrôles, 0 échec, 8 cas |
+| Initialisations par noms, appels et une opération entière | 33 contrôles, 0 échec, 10 cas |
 | Constantes scalaires | 33 contrôles, 0 échec, 10 cas |
-| Pipeline sémantique NTASM en Nova (33 passes) | 213 contrôles, 0 échec, 70 cas |
+| Pipeline sémantique NTASM en Nova (33 passes) | 219 contrôles, 0 échec, 72 cas |
 | Deux objets NXO vers PE, comparaison binaire avec C | 35 contrôles, 0 échec, 5 cas |
 | Nova v2, dont champs buffer et `slice` | 59 contrôles, 0 échec |
 

@@ -35,7 +35,7 @@ La liste exhaustive des sources sélectionnées figure dans [PUBLICATION.json](P
 - Validation sémantique commune en Nova : [validate.nova](toolchain/ntasm-nova/validate.nova), comprenant 33 passes et les alias physiques x86_64.
 - Effets et clobbers déclarés, propagation aux appels, contrôles des accès mémoire et d'intrinsèques ; preuve aux appels d'un sous-ensemble des contrats, décrit dans la [spécification](spec/ntasm.md).
 - Contrôle de flot terminal, ABI nx64, types des arguments et retours, espaces de pointeurs, cibles, versions et fonctionnalités CPU.
-- Types des initialisations, constantes et conditions `if`. Les expressions non prises en charge sont refusées lorsque leur type doit être prouvé ; l'inférence arithmétique générale reste ouverte.
+- Types des initialisations, constantes et conditions `if`. Les initialisations entières acceptent un niveau d'opération arithmétique ou binaire avec opérandes de type exact ; les expressions imbriquées non prises en charge restent refusées.
 - Inspection des symboles et relocations NXO, fusion de deux objets et chaîne [NXO vers PE](toolchain/ntasm-nova/nxo_link_pe.nova).
 - Correction du bootstrap Nova pour passer un champ buffer aux fonctions et à `slice`.
 - Capacité du bootstrap Nova portée à 524 288 nœuds et 131 072 variables locales après reproduction de limites sur le pipeline composé ; la suite Nova v2 reste verte.
@@ -43,6 +43,10 @@ La liste exhaustive des sources sélectionnées figure dans [PUBLICATION.json](P
 Ces composants ne constituent pas encore NTASM v0 complet. Restent notamment les effets et contrats complets, l'ABI, les macros/comptime, la couverture d'encodage, les stubs système et la reconstruction autonome.
 
 ## Prérequis
+
+### Premier programme de démarrage
+
+[Stage 0 en NTASM](os/boot/stage0.ntasm) écrit `Hello World` dans debugcon sous QEMU/OVMF, puis termine la VM de test. La preuve d'exécution a été obtenue dans l'espace de travail original, avec une image UEFI de 3 072 octets ; les sources publiées ont été vérifiées à l'identique. Ce programme ne fournit pas encore d'affichage dans la console UEFI ni de noyau. Voir [sa portée et ses limites](os/boot/README.md). Le périmètre PolyForm des compilateurs n'est pas étendu au répertoire `os/` par cet ajout.
 
 Compilateur C pour le bootstrap ; les autres étapes dépendent des outils et versions de la chaîne originale.
 

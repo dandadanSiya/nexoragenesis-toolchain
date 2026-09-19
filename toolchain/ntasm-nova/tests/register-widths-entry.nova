@@ -1,0 +1,46 @@
+module register_widths_entry;
+
+import ntasm_parser;
+import ntasm_ast;
+import semantics;
+import callable_names;
+import parameters;
+import register_bindings;
+import register_widths;
+
+// Full register-width verification of one source buffer. The source is
+// parsed, the semantic index is built, and the earlier checks run against
+// a shared scratch buffer before the width check writes into the caller's
+// output buffer. Any failing stage stops the sequence; the returned code
+// is the first failing check's code. The tree and the scratch buffer are
+// always released; the caller keeps ownership of the source and out.
+fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false {
+        ntasm_ast.release(tree);
+        return 800;
+    }
+    let scratch:buf<u64>=alloc(runtime(),4);
+    let mut code:u64=0;
+
+    code=semantics.index(source,tree,scratch);
+    if code==0 {
+        code=callable_names.check(source,tree,scratch);
+    }
+    if code==0 {
+        code=parameters.check(source,tree,scratch);
+    }
+    if code==0 {
+        code=register_bindings.check(source,tree,scratch);
+    }
+    if code==0 {
+        code=register_widths.check(source,tree,out);
+    } else if len(out)>=2 {
+        out[0]=scratch[0];
+        out[1]=scratch[1];
+    }
+
+    rt_free(runtime(),scratch);
+    ntasm_ast.release(tree);
+    return code;
+}

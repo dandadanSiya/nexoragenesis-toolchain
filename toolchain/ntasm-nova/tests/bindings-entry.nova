@@ -1,0 +1,37 @@
+module bindings_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import callable_names;
+import parameters;
+import locals;
+import bindings;
+
+// Entry point: parse the source, then run the pipeline in order —
+// semantics.index, callable_names.check, parameters.check,
+// locals.check, bindings.check — each writing its result into a
+// three-word scratch buffer. On the first failure the code is
+// propagated along with the reported position; on success out is left
+// untouched by this wrapper. The scratch buffer and the tree are
+// always released; neither source nor out is owned.
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false { ntasm_ast.release(tree);return 800; }
+
+    let scratch:buf<u64>=alloc(runtime(),3);
+    let mut code:u64=semantics.index(source,tree,scratch);
+    if code==0 { code=callable_names.check(source,tree,scratch); }
+    if code==0 { code=parameters.check(source,tree,scratch); }
+    if code==0 { code=locals.check(source,tree,scratch); }
+    if code!=0 && len(out)>=2 {
+        out[0]=scratch[0];
+        out[1]=scratch[1];
+    } else if code==0 {
+        code=bindings.check(source,tree,out);
+    }
+
+    rt_free(runtime(),scratch);
+    ntasm_ast.release(tree);
+    return code;
+}

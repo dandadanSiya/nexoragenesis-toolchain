@@ -1,0 +1,24 @@
+module calls_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import ntasm_refs;
+import calls;
+
+// Entry point: parse the source, run the semantic index, resolve call
+// references, then validate call arities. Error codes and positions are
+// propagated to out by the failing stage; the tree is always released.
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    if len(out)<4 { return 800; }
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,0);
+    let mut code:u64=semantics.index(source,tree,out);
+    if code==0 {
+        code=ntasm_refs.resolve(source,tree,out);
+    }
+    if code==0 {
+        code=calls.check(source,tree,out);
+    }
+    ntasm_ast.release(tree);
+    return code;
+}

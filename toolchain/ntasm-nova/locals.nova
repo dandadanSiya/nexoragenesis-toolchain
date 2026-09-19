@@ -1,0 +1,114 @@
+module locals;
+
+import ntasm_ast;
+
+// Node kinds: block 25 (scope), let statement 27 (name is first child).
+
+// Byte-wise name comparison over the real source text with bounds.
+fn same_name(source:buf<u8>,a_start:u64,a_end:u64,b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+// Check local let names within each block scope. Every block (kind 25)
+// defines a scope; only its direct children are walked, and let
+// statements (kind 27) carry their name as first child. Names must be
+// pairwise distinct byte strings within one block. The same name in two
+// different blocks, including nested ones, is accepted.
+// Returns 0 on success, writing out[0]=blocks, out[1]=locals,
+// out[2]=non-empty scopes. Returns 315 on the second occurrence of the
+// same name inside one block, writing the line and column of the second
+// name to out[0..1]. Returns 800 with no write to out on an invalid
+// tree, an invalid span or child chain, or an output buffer shorter
+// than three words. The scratch buffer is always freed; neither source
+// nor tree is released.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    let n_block:u64=25;
+    let n_let:u64=27;
+    let entry_words:u64=2;
+    if tree.ok==false { return 800; }
+    if tree.node_count==0 { return 800; }
+    if len(out)<3 { return 800; }
+
+    let scratch:buf<u64>=alloc(runtime(),tree.node_count*entry_words);
+    let mut used:u64=0;
+    let mut blocks:u64=0;
+    let mut locals:u64=0;
+    let mut non_empty:u64=0;
+    let mut code:u64=0;
+    let mut dup_line:u64=0;
+    let mut dup_column:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if node.kind==n_block {
+            blocks=blocks+1;
+            // Reset the per-block name table.
+            used=0;
+            let mut has_local:bool=false;
+            // Walk direct children, keep only let statements (kind 27).
+            let mut child_id:u64=node.first_child;
+            while child_id!=0 && code==0 {
+                if child_id>tree.node_count { code=800; }
+                else {
+                    let cn:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+                    if cn.kind==n_let {
+                        let nid:u64=cn.first_child;
+                        if nid==0 || nid>tree.node_count { code=800; }
+                        else {
+                            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,nid);
+                            if name.start>name.end || name.end>len(source) {
+                                code=800;
+                            } else {
+                                // Duplicate scan: current block only.
+                                let mut j:u64=0;
+                                while j<used {
+                                    let at:u64=j*entry_words;
+                                    if same_name(source,scratch[at],scratch[at+1],
+                                                 name.start,name.end) {
+                                        code=315;
+                                        dup_line=name.line;
+                                        dup_column=name.column;
+                                    }
+                                    j=j+1;
+                                }
+                                if code==0 {
+                                    let at:u64=used*entry_words;
+                                    scratch[at]=name.start;
+                                    scratch[at+1]=name.end;
+                                    used=used+1;
+                                    locals=locals+1;
+                                    has_local=true;
+                                }
+                            }
+                        }
+                    }
+                    if code==0 { child_id=cn.next_sibling; }
+                }
+            }
+            if has_local { non_empty=non_empty+1; }
+            if code!=0 { id=tree.node_count+1; }
+        }
+        if code==0 { id=id+1; }
+    }
+
+    if code==0 {
+        out[0]=blocks;
+        out[1]=locals;
+        out[2]=non_empty;
+    } else if code==315 && len(out)>=2 {
+        out[0]=dup_line;
+        out[1]=dup_column;
+    }
+    rt_free(runtime(),scratch);
+    return code;
+}

@@ -1,0 +1,144 @@
+module clobbers;
+
+import ntasm_ast;
+import register_widths;
+
+// Node kinds: clobbers set 21, qualified name 91.
+
+// Byte-wise comparison over the real source text with bounds.
+fn same_bytes(source:buf<u8>,a_start:u64,a_end:u64,b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+// Direct child of parent at the given ordinal, or 0 when the chain or
+// the tree is invalid.
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
+    if parent==0 || parent>tree.node_count { return 0; }
+    let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;
+    let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;
+        index=index+1;
+    }
+    if id>tree.node_count { return 0; }
+    return id;
+}
+
+// Clobbers sets. Every clobbers set is a node of kind 21; its direct
+// children are qualified names (kind 91) whose last_child carries the
+// bounded register name. Within one set, the second identical bounded byte
+// name or known alias of one physical register is rejected with code 320,
+// writing the line and column of
+// the second occurrence to out[0..1]. The seen-name table is reset
+// between sets; the same name in different sets is accepted. Known x86_64
+// aliases of one physical register are duplicates too.
+// Returns 0 on success, writing out[0]=sets,out[1]=entries,
+// out[2]=nonempty sets. Returns 320 on a duplicate within one set.
+// Returns 800 with no write to out on an invalid tree, an invalid
+// span or child chain or shape, or an output buffer shorter than
+// three words. The scratch buffer is always freed; neither source nor
+// tree is released.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    let n_clobbers:u64=21;
+    let n_qualified:u64=91;
+    let entry_words:u64=2;
+    if tree.ok==false { return 800; }
+    if tree.node_count==0 { return 800; }
+    if len(out)<3 { return 800; }
+
+    let scratch:buf<u64>=alloc(runtime(),tree.node_count*entry_words);
+    let mut used:u64=0;
+    let mut sets:u64=0;
+    let mut entries:u64=0;
+    let mut nonempty:u64=0;
+    let mut code:u64=0;
+    let mut dup_line:u64=0;
+    let mut dup_column:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if node.kind==n_clobbers {
+            sets=sets+1;
+            // Reset the per-set name table.
+            used=0;
+            // Walk direct children; each must be a qualified name (91)
+            // whose last_child holds the bounded register name.
+            let mut child_id:u64=node.first_child;
+            while child_id!=0 && code==0 {
+                if child_id>tree.node_count { code=800; }
+                else {
+                    let cn:ntasm_ast.Node=ntasm_ast.node_at(tree,child_id);
+                    if cn.kind!=n_qualified {
+                        code=800;
+                    } else {
+                        let name_id:u64=cn.last_child;
+                        if name_id==0 || name_id>tree.node_count {
+                            code=800;
+                        } else {
+                            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                            if name.start>name.end || name.end>len(source) {
+                                code=800;
+                            } else {
+                                // Duplicate scan: current set only.
+                                let mut j:u64=0;
+                                while j<used && code==0 {
+                                    let at:u64=j*entry_words;
+                                    let previous_family:u64=register_widths.family(
+                                        source,scratch[at],scratch[at+1]);
+                                    let current_family:u64=register_widths.family(
+                                        source,name.start,name.end);
+                                    if (current_family!=0
+                                        && current_family==previous_family)
+                                       || (current_family==0
+                                           && previous_family==0
+                                           && same_bytes(source,scratch[at],
+                                               scratch[at+1],name.start,name.end)) {
+                                        code=320;
+                                        dup_line=name.line;
+                                        dup_column=name.column;
+                                    }
+                                    j=j+1;
+                                }
+                                if code==0 {
+                                    let at:u64=used*entry_words;
+                                    scratch[at]=name.start;
+                                    scratch[at+1]=name.end;
+                                    used=used+1;
+                                    entries=entries+1;
+                                    if used==1 { nonempty=nonempty+1; }
+                                }
+                            }
+                        }
+                    }
+                    if code==0 { child_id=cn.next_sibling; }
+                }
+            }
+            if code!=0 { id=tree.node_count+1; }
+        }
+        if code==0 { id=id+1; }
+    }
+
+    if code==0 {
+        out[0]=sets;
+        out[1]=entries;
+        out[2]=nonempty;
+    } else if code==320 && len(out)>=2 {
+        out[0]=dup_line;
+        out[1]=dup_column;
+    }
+    rt_free(runtime(),scratch);
+    return code;
+}

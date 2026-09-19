@@ -1,0 +1,22 @@
+module ntasm_nxo_link_pe;
+import ntasm_nxo_merge;
+import ntasm_nxo;
+import ntasm_nxo_pe;
+
+fn failed(code:u64)->ntasm_nxo_pe.ConvertResult {
+    let empty:buf<u8>=alloc(runtime(),0);
+    return ntasm_nxo_pe.ConvertResult{code:code,bytes:empty};
+}
+
+export fn link_pe(left:buf<u8>,right:buf<u8>)->ntasm_nxo_pe.ConvertResult {
+    let merged:ntasm_nxo.WriteResult=ntasm_nxo_merge.merge(left,right);
+    let merged_bytes:buf<u8>=merged.bytes;
+    if merged.code!=0 { rt_free(runtime(),merged_bytes);return failed(merged.code); }
+    let read_result:ntasm_nxo.ReadResult=ntasm_nxo.read(merged_bytes);
+    if read_result.code!=0 { rt_free(runtime(),merged_bytes);return failed(read_result.code); }
+    let object:ntasm_nxo.Object=read_result.object;
+    let converted:ntasm_nxo_pe.ConvertResult=ntasm_nxo_pe.convert(object);
+    ntasm_nxo.release(object);
+    rt_free(runtime(),merged_bytes);
+    return converted;
+}

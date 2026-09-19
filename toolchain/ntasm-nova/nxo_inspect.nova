@@ -30,3 +30,39 @@ export fn inspect(input:buf<u8>,out:buf<u64>)->u64 {
     out[6]=relocation_count;
     return 0;
 }
+
+export fn inspect_symbol(input:buf<u8>,index:u64,out:buf<u64>)->u64 {
+    if len(out)<8 { return 809; }
+    let read_result:ntasm_nxo.ReadResult=ntasm_nxo.read(input);
+    if read_result.code!=0 { return read_result.code; }
+    let object:ntasm_nxo.Object=read_result.object;
+    let symbols:buf<u64>=object.symbols;
+    let count:u64=len(symbols)/8;
+    if index>=count { ntasm_nxo.release(object);return 810; }
+    let at:u64=index*8;
+    let w0:u64=symbols[at];let w1:u64=symbols[at+1];
+    let w2:u64=symbols[at+2];let w3:u64=symbols[at+3];
+    let w4:u64=symbols[at+4];let w5:u64=symbols[at+5];
+    let w6:u64=symbols[at+6];let w7:u64=symbols[at+7];
+    ntasm_nxo.release(object);
+    out[0]=w0;out[1]=w1;out[2]=w2;out[3]=w3;
+    out[4]=w4;out[5]=w5;out[6]=w6;out[7]=w7;
+    return 0;
+}
+
+export fn inspect_relocation(input:buf<u8>,index:u64,out:buf<u64>)->u64 {
+    if len(out)<5 { return 809; }
+    let read_result:ntasm_nxo.ReadResult=ntasm_nxo.read(input);
+    if read_result.code!=0 { return read_result.code; }
+    let object:ntasm_nxo.Object=read_result.object;
+    let relocations:buf<u64>=object.relocations;
+    let count:u64=len(relocations)/5;
+    if index>=count { ntasm_nxo.release(object);return 811; }
+    let at:u64=index*5;
+    let w0:u64=relocations[at];let w1:u64=relocations[at+1];
+    let w2:u64=relocations[at+2];let w3:u64=relocations[at+3];
+    let w4:u64=relocations[at+4];
+    ntasm_nxo.release(object);
+    out[0]=w0;out[1]=w1;out[2]=w2;out[3]=w3;out[4]=w4;
+    return 0;
+}

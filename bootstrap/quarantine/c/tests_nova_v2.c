@@ -123,6 +123,24 @@ int main(void) {
   expect(
       &c,
       "struct Holder{bytes:buf<u8>}"
+      "fn main()->u64{let b:buf<u8>=alloc(runtime(),4);"
+      "let holder:Holder=Holder{bytes:b};"
+      "let view:buf<u8>=slice(holder.bytes,1,2);"
+      "view[0]=42;let val:u64=view[0];"
+      "rt_free(runtime(),view);rt_free(runtime(),holder);"
+      "rt_free(runtime(),b);return val;}",
+      NULL, 0, 42, 0);
+  expect(
+      &c,
+      "struct Holder{bytes:buf<u8>}"
+      "fn main()->u64{let b:buf<u8>=alloc(runtime(),4);"
+      "let holder:Holder=Holder{bytes:b};"
+      "let view:buf<u8>=slice(holder.bytes,1,2);"
+      "rt_free(runtime(),b);return view[0];}",
+      NULL, 0, 0, NV2_LIFETIME);
+  expect(
+      &c,
+      "struct Holder{bytes:buf<u8>}"
       "fn duplicate(source:buf<u8>)->u64{return len(source);}"
       "fn main()->u64{let b:buf<u8>=alloc(runtime(),2);"
       "let holder:Holder=Holder{bytes:b};rt_free(runtime(),b);"

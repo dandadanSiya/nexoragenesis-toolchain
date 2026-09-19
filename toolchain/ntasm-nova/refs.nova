@@ -1,0 +1,115 @@
+module ntasm_refs;
+
+import ntasm_ast;
+
+fn same_name(source:buf<u8>,a_start:u64,a_end:u64,b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
+    let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;
+    let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;
+        index=index+1;
+    }
+    return id;
+}
+
+fn callable_name(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    if n.kind==18 { return child(tree,id,0); }
+    if n.kind==9 { return child(tree,id,1); }
+    return 0;
+}
+
+fn call_name(tree:ntasm_ast.Tree,id:u64)->u64 {
+    let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+    if n.kind!=28 && (n.kind!=35 || n.aux!=1) { return 0; }
+    let qid:u64=child(tree,id,0);
+    if qid==0 || qid>tree.node_count { return 0; }
+    let q:ntasm_ast.Node=ntasm_ast.node_at(tree,qid);
+    if q.kind!=91 || q.last_child==0 || q.last_child>tree.node_count { return 0; }
+    return q.last_child;
+}
+
+// Resolves call statements and expression calls against local functions and import aliases.
+// Success writes callable/call/resolved counts to out[0..2]. Error 310 writes
+// line/column of the first missing reference to out[0..1]. Error 800 leaves out
+// untouched. The source, tree and output remain owned by the caller.
+export fn resolve(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    if tree.ok==false || tree.node_count==0 || len(out)<3 { return 800; }
+    let scratch:buf<u64>=alloc(runtime(),tree.node_count*2);
+    let mut callable_count:u64=0;
+    let mut id:u64=1;
+    let mut code:u64=0;
+    let mut error_line:u64=0;
+    let mut error_column:u64=0;
+    while id<=tree.node_count {
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==18 || n.kind==9 {
+            let name_id:u64=callable_name(tree,id);
+            if name_id==0 || name_id>tree.node_count {
+                code=800;
+            } else {
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                if name.start>name.end || name.end>len(source) { code=800; }
+                else {
+                    scratch[callable_count*2]=name.start;
+                    scratch[callable_count*2+1]=name.end;
+                    callable_count=callable_count+1;
+                }
+            }
+        }
+        if code!=0 { id=tree.node_count+1; } else { id=id+1; }
+    }
+    let mut calls:u64=0;
+    let mut resolved:u64=0;
+    id=1;
+    while id<=tree.node_count && code==0 {
+        let name_id:u64=call_name(tree,id);
+        if name_id!=0 {
+            calls=calls+1;
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+            if name.start>name.end || name.end>len(source) { code=800; }
+            else {
+                let mut found:bool=false;
+                let mut j:u64=0;
+                while j<callable_count {
+                    if same_name(source,scratch[j*2],scratch[j*2+1],
+                                 name.start,name.end) { found=true; }
+                    j=j+1;
+                }
+                if found==true { resolved=resolved+1; }
+                else {
+                    code=310;
+                    error_line=name.line;
+                    error_column=name.column;
+                }
+            }
+        }
+        id=id+1;
+    }
+    if code==0 {
+        out[0]=callable_count;
+        out[1]=calls;
+        out[2]=resolved;
+    } else if code==310 {
+        out[0]=error_line;
+        out[1]=error_column;
+    }
+    rt_free(runtime(),scratch);
+    return code;
+}

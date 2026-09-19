@@ -1,0 +1,21 @@
+module ntasm_nxo_merge_entry;
+import ntasm_nxo;
+import ntasm_nxo_merge;
+import ntasm_pe;
+// out layout: bytes 0..8 = merged size (u64 little endian), bytes 8.. = image.
+// Error 822: out is too short to hold 8+size bytes; nothing is written and
+// the WriteResult bytes are freed, so the call is transactional.
+export fn main(left:buf<u8>,right:buf<u8>,out:buf<u8>)->u64 {
+    let result:ntasm_nxo.WriteResult=ntasm_nxo_merge.merge(left,right);
+    if result.code!=0 { return result.code; }
+    let bytes:buf<u8>=result.bytes;
+    let size:u64=len(bytes);
+    if len(out)<size+8 {
+        rt_free(runtime(),bytes);
+        return 822;
+    }
+    ntasm_pe.copy(out,8,bytes);
+    rt_free(runtime(),bytes);
+    ntasm_pe.put64(out,0,size);
+    return 0;
+}

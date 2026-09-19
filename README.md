@@ -6,7 +6,7 @@ Chaîne NTASM/Nova pour produire des programmes exécutables.
 
 ## État de ce dépôt
 
-**Extrait de sources, non reconstructible tel quel.** Cette copie de publication date du **13 septembre 2026**. Elle ne contient pas l’historique Git des originaux.
+**Snapshot de recherche, pas encore une toolchain complète livrable.** Cette copie de publication est mise à jour le **19 septembre 2026**, avec les modules validés lors de la campagne du 13 septembre. Elle ne contient pas l’historique Git des originaux.
 
 Les deux catégories de preuve sont séparées : les anciens résultats concernent l’espace de travail original ; seuls les tests explicitement marqués « rejoué » ci-dessous concernent cette copie.
 
@@ -29,13 +29,22 @@ Lire l’exemple return42, puis suivre l’analyse et la liaison dans le bootstr
 
 La liste exhaustive des sources sélectionnées figure dans [PUBLICATION.json](PUBLICATION.json). Elle permet de vérifier ce qui est réellement distribué et les adaptations propres à cette copie.
 
+## Modules désormais inclus
+
+- Analyse des déclarations, références, appels et arité ; contrôle des noms, paramètres, variables et registres dans `toolchain/ntasm-nova/`.
+- Validation sémantique commune en Nova : [validate.nova](toolchain/ntasm-nova/validate.nova), comprenant onze passes et les alias physiques x86_64.
+- Inspection des symboles et relocations NXO, fusion de deux objets et chaîne [NXO vers PE](toolchain/ntasm-nova/nxo_link_pe.nova).
+- Correction du bootstrap Nova pour passer un champ buffer aux fonctions et à `slice`.
+
+Ces composants ne constituent pas encore NTASM v0 complet. Restent notamment les effets et contrats complets, l'ABI, les macros/comptime, la couverture d'encodage, les stubs système et la reconstruction autonome.
+
 ## Prérequis
 
 Compilateur C pour le bootstrap ; les autres étapes dépendent des outils et versions de la chaîne originale.
 
 ## Commandes et vérification
 
-Aucune commande de construction complète n’est promue pour ce snapshot. Les scripts présents sont du code à lire avant exécution ; ils peuvent référencer des ressources volontairement omises. Les points d’entrée ci-dessus permettent une inspection sans démarrer de VM, charger de modèle ou toucher un disque.
+Les contrôles ciblés sont décrits dans [VALIDATION.md](VALIDATION.md), avec les commandes GCC utilisables depuis la racine de cette copie. Ils construisent des exécutables de test hôte ; aucune VM ni intervention sur un disque réel n'est nécessaire. Une construction complète de l'OS et le point fixe final restent hors de cette preuve.
 
 Les références relatives des sources JavaScript/HTML et les dépendances locales des manifestes Cargo ont fait l’objet de contrôles statiques ciblés, ainsi que la syntaxe Python et les manifestes JSON reconnus. Ce contrôle ne remplace ni un build intégral ni un parcours utilisateur.
 
@@ -47,4 +56,4 @@ Conversations, notes de travail privées, identifiants, clés, modèles, profils
 
 Les IA ont participé aux explications, à l’écriture et aux vérifications. Les langages, bibliothèques, moteurs et outils utilisés restent attribués à leurs auteurs. Une adaptation ou un prototype inspiré d’un univers tiers n’en revendique pas la création.
 
-Aucune nouvelle licence n’est accordée. Les licences des dépendances externes s’appliquent à celles-ci. L’absence de licence de projet explicite n’accorde pas un droit général de réutilisation.
+Les compilateurs couverts sont proposés sous [PolyForm Small Business 1.0.0](LICENSE), texte officiel inchangé. Le [périmètre de la licence](LICENSING.md) distingue les compilateurs des autres composants et précise la possibilité d'un accord commercial séparé. Les licences tierces restent applicables. Aucun taux automatique de redevance n'est ajouté à PolyForm.

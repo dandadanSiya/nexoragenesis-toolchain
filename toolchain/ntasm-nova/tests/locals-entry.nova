@@ -1,0 +1,48 @@
+module locals_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import callable_names;
+import parameters;
+import locals;
+
+// Entry point: parse the source, run the semantic index, callable-name
+// and parameter checks into a three-word scratch buffer, then run the
+// locals check whose results land in out. Codes and positions from the
+// intermediate checks are propagated to out; the scratch buffer and the
+// tree are always released. No ownership of source or out is taken.
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    if len(out)<3 { return 800; }
+
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false {
+        ntasm_ast.release(tree);
+        return 800;
+    }
+
+    let scratch3:buf<u64>=alloc(runtime(),3);
+    let mut code:u64=0;
+
+    code=semantics.index(source,tree,scratch3);
+    if code==0 {
+        code=callable_names.check(source,tree,scratch3);
+    }
+    if code==0 {
+        code=parameters.check(source,tree,scratch3);
+    }
+
+    if code!=0 {
+        // Propagate the code and position of the failing check.
+        if len(out)>=2 {
+            out[0]=scratch3[0];
+            out[1]=scratch3[1];
+        }
+    } else {
+        code=locals.check(source,tree,out);
+    }
+
+    rt_free(runtime(),scratch3);
+    ntasm_ast.release(tree);
+    return code;
+}

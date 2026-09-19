@@ -1,0 +1,118 @@
+module callable_names;
+
+import ntasm_ast;
+
+// Node kinds: import 9, function declaration 18.
+
+// Byte-wise name comparison over the real source text with bounds.
+fn same_name(source:buf<u8>,a_start:u64,a_end:u64,b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+// Direct child of parent at the given ordinal, or 0 when the chain or the
+// tree is invalid.
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
+    let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;
+    let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;
+        index=index+1;
+    }
+    if id>tree.node_count { return 0; }
+    return id;
+}
+
+// Name node id of a global callable: first child for a function
+// declaration, second child (the alias, after the qualified path) for
+// an import. Returns 0 when the tree does not carry a usable name.
+fn name_id(tree:ntasm_ast.Tree,kind:u64,decl_id:u64)->u64 {
+    if kind==18 { return child(tree,decl_id,0); }
+    if kind==9 { return child(tree,decl_id,1); }
+    return 0;
+}
+
+// Check the global callable namespace of an NTASM tree: function names
+// (kind 18, first child) and import aliases (kind 9, second child) must
+// be pairwise distinct byte strings.
+// Returns 0 on success, writing out[0]=functions, out[1]=imports,
+// out[2]=unique names. Returns 313 on a second global occurrence of the
+// same name (two identical aliases, or an alias equal to a function
+// name), writing the line and column of the second name to out[0..1].
+// Returns 800 with no write to out on an invalid tree, an invalid span
+// or child chain, or an output buffer shorter than three words. The
+// scratch buffer is always freed; neither source nor tree is released.
+export fn check(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    let n_import:u64=9;
+    let n_function:u64=18;
+    let entry_words:u64=2;
+    if tree.ok==false { return 800; }
+    if tree.node_count==0 { return 800; }
+    if len(out)<3 { return 800; }
+
+    let scratch:buf<u64>=alloc(runtime(),tree.node_count*entry_words);
+    let mut used:u64=0;
+    let mut imports:u64=0;
+    let mut functions:u64=0;
+    let mut code:u64=0;
+    let mut dup_line:u64=0;
+    let mut dup_column:u64=0;
+
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if node.kind==n_import || node.kind==n_function {
+            let nid:u64=name_id(tree,node.kind,id);
+            if nid==0 { code=800; }
+            else {
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,nid);
+                if name.start>name.end || name.end>len(source) { code=800; }
+                else {
+                    // Duplicate scan: global namespace, identical bytes.
+                    let mut j:u64=0;
+                    while j<used {
+                        let at:u64=j*entry_words;
+                        if same_name(source,scratch[at],scratch[at+1],
+                                     name.start,name.end) {
+                            code=313;
+                            dup_line=name.line;
+                            dup_column=name.column;
+                        }
+                        j=j+1;
+                    }
+                    if code==0 {
+                        let at:u64=used*entry_words;
+                        scratch[at]=name.start;
+                        scratch[at+1]=name.end;
+                        used=used+1;
+                        if node.kind==n_function { functions=functions+1; }
+                        else { imports=imports+1; }
+                    }
+                }
+            }
+        }
+        if code!=0 { id=tree.node_count+1; } else { id=id+1; }
+    }
+
+    if code==0 {
+        out[0]=functions;
+        out[1]=imports;
+        out[2]=functions+imports;
+    } else if code==313 && len(out)>=2 {
+        out[0]=dup_line;
+        out[1]=dup_column;
+    }
+    rt_free(runtime(),scratch);
+    return code;
+}

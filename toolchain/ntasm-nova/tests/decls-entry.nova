@@ -1,0 +1,52 @@
+module decls_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import decls;
+
+// Entry point: parse the source, reject duplicate declaration names via
+// semantics.index into a three-word scratch buffer, then collect the
+// declarations. Propagates error codes; for 300 writes the duplicate
+// position to out[0..1] when out can hold it. Frees the scratch buffer
+// and the tree on every path.
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    let scratch_words:u64=3;
+    let code_index:u64=0;
+    let code_dup:u64=300;
+    let code_invalid:u64=800;
+    let code_capacity:u64=812;
+
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false {
+        let code:u64=code_invalid;
+        ntasm_ast.release(tree);
+        return code;
+    }
+
+    let scratch:buf<u64>=alloc(runtime(),scratch_words);
+    let mut code:u64=semantics.index(source,tree,scratch);
+    if code==code_dup {
+        if len(out)>=2 {
+            out[0]=scratch[0];
+            out[1]=scratch[1];
+        }
+        rt_free(runtime(),scratch);
+        ntasm_ast.release(tree);
+        return code;
+    }
+    if code!=code_index {
+        rt_free(runtime(),scratch);
+        ntasm_ast.release(tree);
+        return code;
+    }
+
+    code=decls.collect(source,tree,out);
+    if code==code_capacity {
+        // No write happened in collect; the duplicate scan already passed,
+        // so the entry buffer stays untouched for the error code alone.
+    }
+    rt_free(runtime(),scratch);
+    ntasm_ast.release(tree);
+    return code;
+}

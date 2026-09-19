@@ -1028,7 +1028,7 @@ static NtFId atom(Compiler *c) {
       NtFId b = parse_expression(c, 0);
       if (!is_buffer(c, EX(c, b).type))
         fail_at(c, 400, t->span, "slice expects a buffer");
-      if (EX(c, b).kind != NTF_X_NAME)
+      if (EX(c, b).kind != NTF_X_NAME && (int)EX(c, b).kind != X_FIELD)
         fail_at(c, 400, t->span, "slice source must name a buffer");
       need(c, ',', "slice requires buffer,start,length");
       NtFId start = parse_expression(c, 0);
@@ -1854,15 +1854,32 @@ static void lower_buffer_local(Compiler *c, const NtFStmt *s, Sequence *q) {
   } else if ((int)x.kind == X_SLICE) {
     NtFId start = temporary(c, lower_expr(c, x.right, q), q);
     length = temporary(c, lower_expr(c, x.first_arg, q), q);
-    NtFId parent_length = name_expr(c, c->vm[x.resolved - 1].length, span);
+    unsigned width = buffer_width(c, x.type);
+    NtFId base, parent_length;
+    if (c->safe_v2) {
+      base = temporary(c, lower_expr(c, x.left, q), q);
+      parent_length = call_v2(c, NV2_LENGTH, base, 0, 0, q, span);
+      if (width > 1) {
+        guard(c, q,
+              binary(c, NTF_OP_NE,
+                     binary(c, NTF_OP_MOD, parent_length,
+                            literal(c, width, TY_U64, span), TY_U64, span),
+                     literal(c, 0, TY_U64, span), TY_BOOL, span),
+              NV2_ARGUMENT, span);
+        parent_length = binary(c, NTF_OP_DIV, parent_length,
+                               literal(c, width, TY_U64, span), TY_U64, span);
+      }
+    } else {
+      base = name_expr(c, x.resolved, span);
+      parent_length = name_expr(c, c->vm[x.resolved - 1].length, span);
+    }
+    parent_length = temporary(c, parent_length, q);
     guard(c, q, binary(c, NTF_OP_GT, start, parent_length, TY_BOOL, span),
           NOVA_BOUNDS_ERROR, span);
     NtFId available = binary(c, NTF_OP_SUB, parent_length, start, TY_U64, span);
     guard(c, q, binary(c, NTF_OP_GT, length, available, TY_BOOL, span),
           NOVA_BOUNDS_ERROR, span);
-    NtFId base = name_expr(c, x.resolved, span);
     if (c->safe_v2) {
-      unsigned width = buffer_width(c, x.type);
       NtFId byte_start = start, byte_length = length;
       if (width > 1) {
         byte_start = binary(c, NTF_OP_MUL, start,

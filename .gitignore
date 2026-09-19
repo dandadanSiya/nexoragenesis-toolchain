@@ -1,0 +1,9 @@
+/build/
+/out/
+/verifieur/
+/.omp/
+/.env
+/.env.*
+*.exe
+*.o
+*.obj

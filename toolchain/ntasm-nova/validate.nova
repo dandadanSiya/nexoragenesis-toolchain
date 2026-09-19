@@ -1,0 +1,83 @@
+module validate;
+
+import ntasm_ast;
+import semantics;
+import callable_names;
+import symbol_names;
+import parameters;
+import locals;
+import bindings;
+import register_bindings;
+import register_widths;
+import clobbers;
+import ntasm_refs;
+import calls;
+
+fn clear(words:buf<u64>)->u64 {
+    words[0]=0;words[1]=0;words[2]=0;words[3]=0;return 0;
+}
+
+// Run the semantic pipeline over a parsed NTASM tree, in this order:
+// semantics.index, callable_names.check, symbol_names.check,
+// parameters.check, locals.check, bindings.check,
+// register_bindings.check, register_widths.check, clobbers.check,
+// ntasm_refs.resolve, calls.check.
+// Returns 0 after writing out[0]=11, out[1]=tree.token_count,
+// out[2]=tree.node_count, out[3]=0. Returns the first nonzero stage code
+// and copies its four-word scratch output into out. Returns 800 with no
+// write to out on an invalid tree or an output buffer shorter than four
+// words. The scratch buffer is always freed; neither source, tree nor
+// out is owned or released by this module.
+export fn validate(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    if tree.ok==false { return 800; }
+    if len(out)<4 { return 800; }
+
+    let scratch:buf<u64>=alloc(runtime(),4);
+    let mut code:u64=0;
+
+    clear(scratch);code=semantics.index(source,tree,scratch);
+    if code==0 {
+        clear(scratch);code=callable_names.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=symbol_names.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=parameters.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=locals.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=bindings.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=register_bindings.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=register_widths.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=clobbers.check(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=ntasm_refs.resolve(source,tree,scratch);
+    }
+    if code==0 {
+        clear(scratch);code=calls.check(source,tree,scratch);
+    }
+
+    if code==0 {
+        out[0]=11;
+        out[1]=tree.token_count;
+        out[2]=tree.node_count;
+        out[3]=0;
+    } else {
+        out[0]=scratch[0];
+        out[1]=scratch[1];
+        out[2]=scratch[2];
+        out[3]=scratch[3];
+    }
+    rt_free(runtime(),scratch);
+    return code;
+}

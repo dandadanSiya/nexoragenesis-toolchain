@@ -1,0 +1,39 @@
+module clobbers_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import callable_names;
+import clobbers;
+
+// Entry point: parse the source, run the index and callable-names
+// passes in the scratch buffer, then run the clobbers pass into out.
+// Prior codes and their positions propagate; the scratch buffer and
+// the tree are always freed; neither the source nor the tree buffers
+// are owned by this module.
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    if len(out)<3 { return 800; }
+
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    let code:u64=run(source,tree,out);
+    ntasm_ast.release(tree);
+    return code;
+}
+
+fn run(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    if tree.ok==false { return 800; }
+    let scratch3:buf<u64>=alloc(runtime(),3);
+    let mut code:u64=semantics.index(source,tree,scratch3);
+    if code==0 {
+        code=callable_names.check(source,tree,scratch3);
+    }
+    if code==0 {
+        code=clobbers.check(source,tree,out);
+    } else if code!=800 && len(out)>=2 {
+        // Propagate the position reported by the failing prior pass.
+        out[0]=scratch3[0];
+        out[1]=scratch3[1];
+    }
+    rt_free(runtime(),scratch3);
+    return code;
+}

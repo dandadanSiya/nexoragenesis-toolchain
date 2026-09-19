@@ -1,0 +1,54 @@
+module symbol_names_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import callable_names;
+import symbol_names;
+
+// Entry point for the symbol-names verifier stage. Parses the source,
+// runs the earlier stages inside a scratch buffer, then checks the
+// global link namespace into out.
+// Earlier codes and positions are propagated: semantics.index may write
+// 300 (per-section duplicate) and callable_names.check 313 (global
+// callable duplicate); on either, the returned code and the line and
+// column stored in the scratch are forwarded to out and later stages do
+// not run. An invalid tree yields 800 with no write. The scratch buffer
+// and the tree are always freed; the source buffer is not owned.
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    if len(out)<4 { return 800; }
+
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false {
+        ntasm_ast.release(tree);
+        return 800;
+    }
+
+    // Largest intermediate contract: symbol_names counts need four
+    // words; semantics.index needs three; callable_names.check three.
+    let scratch:buf<u64>=alloc(runtime(),4);
+    let mut code:u64=semantics.index(source,tree,scratch);
+    if code==0 {
+        code=callable_names.check(source,tree,scratch);
+    }
+    if code!=0 {
+        // Propagate the earlier stage's code and duplicate position.
+        // Codes 300 and 313 write positions; 800 leaves the scratch
+        // unwritten and writes nothing to out.
+        if code!=800 && len(out)>=2 {
+            out[0]=scratch[0];
+            out[1]=scratch[1];
+        }
+        rt_free(runtime(),scratch);
+        ntasm_ast.release(tree);
+        return code;
+    }
+
+    let final:u64=symbol_names.check(source,tree,out);
+    if final==319 && len(out)>=2 {
+        // Positions were already written into out[0..1] by the check.
+    }
+    rt_free(runtime(),scratch);
+    ntasm_ast.release(tree);
+    return final;
+}

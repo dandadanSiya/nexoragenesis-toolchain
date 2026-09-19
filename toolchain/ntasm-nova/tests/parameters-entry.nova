@@ -1,0 +1,34 @@
+module parameters_entry;
+
+import ntasm_ast;
+import ntasm_parser;
+import semantics;
+import callable_names;
+import parameters;
+
+// Entry point: parse the source, run the semantic index, the global
+// callable-name check, then the parameter-name check. Codes and
+// positions are propagated; the scratch buffers and the tree are always
+// released; neither source nor out is owned or released.
+// Returns 0 on success. Returns the failing stage's code (313 or 314
+// with line/column in out[0..1], or 800) otherwise.
+export fn main(source:buf<u8>,out:buf<u64>)->u64 {
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false {
+        ntasm_ast.release(tree);
+        return 800;
+    }
+    let mut code:u64=semantics.index(source,tree,out);
+    if code!=0 {
+        ntasm_ast.release(tree);
+        return code;
+    }
+    code=callable_names.check(source,tree,out);
+    if code!=0 {
+        ntasm_ast.release(tree);
+        return code;
+    }
+    code=parameters.check(source,tree,out);
+    ntasm_ast.release(tree);
+    return code;
+}

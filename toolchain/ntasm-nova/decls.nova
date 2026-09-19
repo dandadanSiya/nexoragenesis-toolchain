@@ -1,0 +1,129 @@
+module decls;
+
+import ntasm_ast;
+
+// Node kinds: import 9, section 17, function declaration 18, parameter 19,
+// data declaration 24.
+
+// Byte-wise name comparison over the real source text with bounds.
+fn same_name(source:buf<u8>,a_start:u64,a_end:u64,b_start:u64,b_end:u64)->bool {
+    if a_start>a_end || b_start>b_end || a_end>len(source) || b_end>len(source) {
+        return false;
+    }
+    if (a_end-a_start)!=(b_end-b_start) { return false; }
+    let mut i:u64=0;
+    while i<(a_end-a_start) {
+        if source[a_start+i]!=source[b_start+i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+// Direct child of parent at the given ordinal, or 0 when the chain or the
+// tree is invalid.
+fn child(tree:ntasm_ast.Tree,parent:u64,ordinal:u64)->u64 {
+    let p:ntasm_ast.Node=ntasm_ast.node_at(tree,parent);
+    let mut id:u64=p.first_child;
+    let mut index:u64=0;
+    while id!=0 && index<ordinal {
+        if id>tree.node_count { return 0; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        id=n.next_sibling;
+        index=index+1;
+    }
+    if id>tree.node_count { return 0; }
+    return id;
+}
+
+// Number of direct kind19 children of a declaration. Returns the count, or
+// a sentinel u64 max when the sibling chain leaves the tree.
+fn decl_arity(tree:ntasm_ast.Tree,decl_id:u64)->u64 {
+    let none:u64=18446744073709551615;
+    let d:ntasm_ast.Node=ntasm_ast.node_at(tree,decl_id);
+    let mut id:u64=d.first_child;
+    let mut count:u64=0;
+    while id!=0 {
+        if id>tree.node_count { return none; }
+        let n:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if n.kind==19 { count=count+1; }
+        id=n.next_sibling;
+    }
+    return count;
+}
+
+// Name node id of a declaration: first child for a function or data
+// declaration, second child (the alias, after the qualified path) for an
+// import. Returns 0 when the tree does not carry a usable name.
+fn decl_name_id(tree:ntasm_ast.Tree,kind:u64,decl_id:u64)->u64 {
+    if kind==18 || kind==24 { return child(tree,decl_id,0); }
+    if kind==9 { return child(tree,decl_id,1); }
+    return 0;
+}
+
+// Collect the direct declarations of an NTASM tree in AST order.
+// out[0] receives the number of entries, then six words per entry:
+// kind, sectionNodeId, nameStart, nameEnd, arity, aux. A full first
+// pass validates the tree and counts entries before any write.
+// Returns 0 on success, 800 on an invalid tree, span or child chain,
+// and 812 when out is shorter than 1+count*6, in both error cases
+// with no write to out. Neither source nor tree is released.
+export fn collect(source:buf<u8>,tree:ntasm_ast.Tree,out:buf<u64>)->u64 {
+    let n_section:u64=17;
+    let n_import:u64=9;
+    let n_function:u64=18;
+    let n_data:u64=24;
+    let none:u64=18446744073709551615;
+    let entry_words:u64=6;
+    if tree.ok==false { return 800; }
+    if tree.node_count==0 { return 800; }
+
+    // First pass: validate names, spans and sibling chains; count entries.
+    let mut count:u64=0;
+    let mut code:u64=0;
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if node.kind==n_import || node.kind==n_function || node.kind==n_data {
+            let name_id:u64=decl_name_id(tree,node.kind,id);
+            if name_id==0 { code=800; }
+            else {
+                let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                if name.start>name.end || name.end>len(source) { code=800; }
+            }
+            if code==0 {
+                let arity:u64=decl_arity(tree,id);
+                if arity==none { code=800; }
+                else { count=count+1; }
+            }
+        }
+        if code!=0 { id=tree.node_count+1; } else { id=id+1; }
+    }
+
+    let needed:u64=1+count*entry_words;
+    if code!=0 { return 800; }
+    if len(out)<needed { return 812; }
+
+    // Second pass: write entries in AST order.
+    out[0]=count;
+    let mut at:u64=1;
+    let mut current_section:u64=0;
+    id=1;
+    while id<=tree.node_count {
+        let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if node.kind==n_section {
+            current_section=id;
+        } else if node.kind==n_import || node.kind==n_function || node.kind==n_data {
+            let name_id:u64=decl_name_id(tree,node.kind,id);
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+            out[at]=node.kind;
+            out[at+1]=current_section;
+            out[at+2]=name.start;
+            out[at+3]=name.end;
+            out[at+4]=decl_arity(tree,id);
+            out[at+5]=node.aux;
+            at=at+entry_words;
+        }
+        id=id+1;
+    }
+    return 0;
+}

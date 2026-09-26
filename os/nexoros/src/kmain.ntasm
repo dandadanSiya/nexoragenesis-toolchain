@@ -1,0 +1,217 @@
+// Nexora OS entry and first-stage boot log. Interrupts, memory and the
+// scheduler are added by later stages included above this file.
+
+section .text {
+    // Prints "[ OK ] " then the message at strings offset r12, and blits.
+    fn ok(in str_offset:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        store [r15+SV_K]:ptr<kernel,u64>,r12
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_OK
+        call con_str(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_K]:ptr<kernel,u64>
+        call con_str(r12)
+        mov r12,10
+        call con_char(r12)
+        call con_blit()
+        return 0
+    }
+
+    export fn main(in image:u64 @rcx, in system_table:ptr<firmware,u64> @rdx) -> u64
+    FX
+    CLOB {
+        mov r12,rcx
+        mov r13,rdx
+        call boot_early(r12,r13)
+        call con_clear()
+        // banner
+        mov r12,C_ACCENT
+        call con_color(r12)
+        mov r12,STR_BANNER
+        call con_str(r12)
+        mov r12,10
+        call con_char(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        call con_blit()
+
+        mov r12,STR_GDT
+        call ok(r12)
+        mov r12,STR_IDT
+        call ok(r12)
+        mov r12,STR_PIC
+        call ok(r12)
+        mov r12,STR_PIT
+        call ok(r12)
+        mov r12,STR_KBD
+        call ok(r12)
+        mov r12,STR_PAGING
+        call ok(r12)
+
+        // TSC line
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_OK
+        call con_str(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_TSC
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_TSC_MS]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,STR_KHZ
+        call con_str(r12)
+        mov r12,10
+        call con_char(r12)
+
+        // Framebuffer line
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_OK
+        call con_str(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_FB
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_FB_W]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,STR_X
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_FB_H]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,10
+        call con_char(r12)
+        call con_blit()
+
+        call boot_exit()
+
+        mov r12,10
+        call con_char(r12)
+        mov r12,C_ACCENT
+        call con_color(r12)
+        mov r12,STR_FW
+        call con_str(r12)
+        mov r12,10
+        call con_char(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        call con_blit()
+
+        // Interrupt-driven core.
+        call gdt_setup()
+        call idt_setup()
+        call pic_setup()
+        call pit_setup()
+        sti
+
+        mov r12,10
+        call con_char(r12)
+        mov r12,C_CYAN
+        call con_color(r12)
+        mov r12,STR_READY
+        call con_color(r12)
+        mov r12,STR_READY
+        call con_str(r12)
+        mov r12,10
+        call con_char(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_GT
+        call con_str(r12)
+        call con_blit()
+    idle:
+        call key_pop()
+        cmp rax,0
+        je no_key
+        mov r12,rax
+        call con_char(r12)
+        call status_bar()
+        call con_blit()
+    no_key:
+        call status_bar()
+        // blit at most ~30 times a second
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_TICKS]:ptr<kernel,u64>
+        load rbx,[r15+S_SWITCHES]:ptr<kernel,u64>
+        sub rax,rbx
+        cmp rax,33
+        jb wait
+        load rax,[r15+S_TICKS]:ptr<kernel,u64>
+        store [r15+S_SWITCHES]:ptr<kernel,u64>,rax
+        call con_blit()
+    wait:
+        hlt
+        jmp idle
+    }
+
+    // Row 0 status bar: name on the left, uptime and IRQ count on the right.
+    fn status_bar() -> u64
+    FX
+    CLOB {
+        // save the input cursor, draw the bar, then restore it
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_CON_X]:ptr<kernel,u64>
+        store [r15+SV_G]:ptr<kernel,u64>,rax
+        load rax,[r15+S_CON_Y]:ptr<kernel,u64>
+        store [r15+SV_G+8]:ptr<kernel,u64>,rax
+        load rax,[r15+S_CON_COLOR]:ptr<kernel,u64>
+        store [r15+SV_G+16]:ptr<kernel,u64>,rax
+        mov r12,0
+        mov r13,0
+        call con_at(r12,r13)
+        mov r12,C_ACCENT
+        call con_color(r12)
+        mov r12,STR_STATUS
+        call con_str(r12)
+        // uptime seconds at column 50
+        mov r12,50
+        mov r13,0
+        call con_at(r12,r13)
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_UP
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r8,[r15+S_TICKS]:ptr<kernel,u64>
+        mov r9,1000
+        call udiv(r8,r9)
+        mov r12,rax
+        call con_dec(r12)
+        mov r12,STR_S
+        call con_str(r12)
+        // keyboard IRQ count
+        mov r12,STR_IRQ
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_IRQ_KBD]:ptr<kernel,u64>
+        call con_dec(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_G]:ptr<kernel,u64>
+        load r13,[r15+SV_G+8]:ptr<kernel,u64>
+        call con_at(r12,r13)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_G+16]:ptr<kernel,u64>
+        call con_color(r12)
+        return 0
+    }
+}

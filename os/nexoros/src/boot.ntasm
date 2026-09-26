@@ -1,0 +1,328 @@
+// Nexora OS boot: choose a GOP mode, take memory from UEFI, calibrate the
+// TSC, then ExitBootServices. After that the kernel owns the machine.
+
+%define BS_ALLOCATE_PAGES 40
+%define BS_GET_MEMORY_MAP 56
+%define BS_EXIT_BOOT_SERVICES 232
+%define BS_STALL 248
+%define BS_SET_WATCHDOG 256
+%define BS_LOCATE_PROTOCOL 320
+
+section .rdata {
+    data gop_guid:array<u8,16> = "\xde\xa9\x42\x90\xdc\x23\x38\x4a\x96\xfb\x7a\xde\xd0\x80\x51\x6a"
+    data msg_serial_boot:array<u8,25> = "\r\nNexora OS: demarrage\r\n\x00"
+    data msg_no_mem:array<u8,21> = "Nexora: pas de RAM\r\n\x00"
+}
+
+section .text {
+    // COM1 log, used before and after ExitBootServices for diagnostics.
+    export fn serial(in text:ptr<user,u8> @r12) -> u64
+    FX
+    CLOB {
+        adopt rsi,[r12]:ptr<user,u8>
+    next:
+        movzx ebx,[rsi]:ptr<user,u8>
+        cmp rbx,0
+        je done
+        adopt rsi,[rsi+1]:ptr<user,u8>
+        mov rcx,80000
+    wait:
+        mov dx,0x3fd
+        in al,dx
+        test al,0x20
+        jne ready
+        dec rcx
+        jne wait
+    ready:
+        mov dx,0x3f8
+        mov al,bl
+        out dx,al
+        jmp next
+    done:
+        return 0
+    }
+
+    // Picks 640x480 (32bpp) when offered and records the geometry.
+    fn setup_video() -> u64
+    FX
+    CLOB {
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rdi,[rsi+24]:ptr<firmware,u64>
+        adopt rdi,[rdi]:ptr<firmware,u32>
+        load r12d,[rdi]:ptr<firmware,u32>
+        mov r13,0
+        mov r14,0xffffffffffffffff
+    query:
+        cmp r13,r12
+        jae chosen
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rax,[rsi]:ptr<firmware,u64>
+        mov rcx,rsi
+        mov rdx,r13
+        lea r8,[g_info_size]:ptr<user,u64>
+        lea r9,[g_info]:ptr<user,u64>
+        call_efi rax
+        cmp rax,0
+        jne skip
+        load rbx,[g_info]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u32>
+        load eax,[rbx+12]:ptr<firmware,u32>
+        cmp rax,1
+        ja skip
+        load eax,[rbx+4]:ptr<firmware,u32>
+        cmp rax,640
+        jne skip
+        load eax,[rbx+8]:ptr<firmware,u32>
+        cmp rax,480
+        jne skip
+        mov r14,r13
+    skip:
+        inc r13
+        jmp query
+    chosen:
+        mov rax,0xffffffffffffffff
+        cmp r14,rax
+        je keep
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rax,[rsi+8]:ptr<firmware,u64>
+        mov rcx,rsi
+        mov rdx,r14
+        call_efi rax
+    keep:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rdi,[rsi+24]:ptr<firmware,u64>
+        adopt rdi,[rdi]:ptr<firmware,u64>
+        load rax,[rdi+24]:ptr<firmware,u64>
+        store [r15+S_FB]:ptr<kernel,u64>,rax
+        load rbx,[rdi+8]:ptr<firmware,u64>
+        adopt rbx,[rbx]:ptr<firmware,u32>
+        load eax,[rbx+4]:ptr<firmware,u32>
+        store [r15+S_FB_W]:ptr<kernel,u64>,rax
+        mov r8,rax
+        load eax,[rbx+8]:ptr<firmware,u32>
+        store [r15+S_FB_H]:ptr<kernel,u64>,rax
+        mov r9,rax
+        load eax,[rbx+12]:ptr<firmware,u32>
+        store [r15+S_FB_FORMAT]:ptr<kernel,u64>,rax
+        load eax,[rbx+32]:ptr<firmware,u32>
+        shl rax,2
+        store [r15+S_FB_STRIDE]:ptr<kernel,u64>,rax
+        // centre the 640x480 content
+        mov rax,640
+        cmp r8,rax
+        jbe wide_ok
+        sub r8,640
+        shr r8,1
+        jmp store_ox
+    wide_ok:
+        mov r8,0
+    store_ox:
+        store [r15+S_ORIGIN_X]:ptr<kernel,u64>,r8
+        mov rax,480
+        cmp r9,rax
+        jbe tall_ok
+        sub r9,480
+        shr r9,1
+        jmp store_oy
+    tall_ok:
+        mov r9,0
+    store_oy:
+        store [r15+S_ORIGIN_Y]:ptr<kernel,u64>,r9
+        return 0
+    }
+
+    // Fills the whole framebuffer with the background pixel.
+    export fn fb_wipe() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rdi,[r15+S_FB]:ptr<kernel,u64>
+        adopt rdi,[rdi]:ptr<device,u32>
+        adopt rbx,[r15+OFF_LUT]:ptr<kernel,u32>
+        load ecx,[rbx]:ptr<kernel,u32>
+        load rax,[r15+S_FB_H]:ptr<kernel,u64>
+        load rdx,[r15+S_FB_STRIDE]:ptr<kernel,u64>
+        imul rax,rdx
+        shr rax,2
+        mov rdx,0
+    px:
+        store [rdi+rdx*4]:ptr<device,u32>,ecx
+        inc rdx
+        cmp rdx,rax
+        jb px
+        return 0
+    }
+
+    // Allocates the block, records firmware pointers, sets up video and the
+    // pixel LUT. Called with rcx = image handle, rdx = system table.
+    export fn boot_early(in image:u64 @r12, in system:ptr<firmware,u64> @r13) -> u64
+    FX
+    CLOB {
+        // Read the boot services pointer before any call clobbers r13.
+        load rax,[r13+96]:ptr<firmware,u64>
+        store [g_bs]:ptr<user,u64>,rax
+        store [g_image]:ptr<user,u64>,r12
+        lea rsi,[msg_serial_boot]:ptr<user,array<u8,25>>
+        adopt rsi,[rsi]:ptr<user,u8>
+        call serial(rsi)
+        load rax,[g_bs]:ptr<user,u64>
+        // SetWatchdogTimer(0,0,0,NULL)
+        adopt rbx,[rax]:ptr<firmware,u64>
+        load rax,[rbx+BS_SET_WATCHDOG]:ptr<firmware,u64>
+        mov rcx,0
+        mov rdx,0
+        mov r8,0
+        mov r9,0
+        call_efi rax
+        // AllocatePages(AnyPages, LoaderData, BLOCK_PAGES, &g_base)
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_ALLOCATE_PAGES]:ptr<firmware,u64>
+        mov rcx,0
+        mov rdx,2
+        mov r8,BLOCK_PAGES
+        lea r9,[g_base]:ptr<user,u64>
+        call_efi rax
+        cmp rax,0
+        je have_block
+        lea rsi,[msg_no_mem]:ptr<user,array<u8,21>>
+        adopt rsi,[rsi]:ptr<user,u8>
+        call serial(rsi)
+    hang:
+        hlt
+        jmp hang
+    have_block:
+        // zero the state page
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov rcx,0
+        mov rdx,0
+    zero:
+        store [r15+rcx*8]:ptr<kernel,u64>,rdx
+        inc rcx
+        cmp rcx,2048
+        jb zero
+        load rax,[g_base]:ptr<user,u64>
+        store [r15+S_BASE]:ptr<kernel,u64>,rax
+        load rax,[g_image]:ptr<user,u64>
+        store [r15+S_IMAGE]:ptr<kernel,u64>,rax
+        load rax,[g_bs]:ptr<user,u64>
+        store [r15+S_BS]:ptr<kernel,u64>,rax
+        // GOP
+        load rax,[rbx+BS_LOCATE_PROTOCOL]:ptr<firmware,u64>
+        lea rcx,[gop_guid]:ptr<user,array<u8,16>>
+        mov rdx,0
+        lea r8,[g_gop]:ptr<user,u64>
+        call_efi rax
+        call setup_video()
+        call con_palette()
+        call fb_wipe()
+        // TSC per millisecond via Stall(50ms)
+        rdtsc
+        shl rdx,32
+        or rax,rdx
+        mov r14,rax
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_STALL]:ptr<firmware,u64>
+        mov rcx,50000
+        call_efi rax
+        rdtsc
+        shl rdx,32
+        or rax,rdx
+        sub rax,r14
+        mov r8,rax
+        mov r9,50
+        call udiv(r8,r9)
+        cmp rax,0
+        jne tsc_ok
+        mov rax,1
+    tsc_ok:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        store [r15+S_TSC_MS]:ptr<kernel,u64>,rax
+        return 0
+    }
+
+    // GetMemoryMap + ExitBootServices; returns with the firmware gone.
+    export fn boot_exit() -> u64
+    FX
+    CLOB {
+        mov r13,8
+    attempt:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov rax,MMAP_BYTES
+        store [r15+S_MMAP_SIZE]:ptr<kernel,u64>,rax
+        mov r14,r15
+        add r14,OFF_MMAP
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_GET_MEMORY_MAP]:ptr<firmware,u64>
+        mov rcx,r15
+        add rcx,S_MMAP_SIZE
+        mov rdx,r14
+        lea r8,[g_map_key]:ptr<user,u64>
+        mov r9,r15
+        add r9,S_MMAP_DESC
+        lea r10,[g_desc_ver]:ptr<user,u64>
+        call_efi rax,r10
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_EXIT_BOOT_SERVICES]:ptr<firmware,u64>
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rcx,[r15+S_IMAGE]:ptr<kernel,u64>
+        load rdx,[g_map_key]:ptr<user,u64>
+        call_efi rax
+        cmp rax,0
+        je exited
+        dec r13
+        jne attempt
+    fail:
+        hlt
+        jmp fail
+    exited:
+        cli
+        return 0
+    }
+}
+
+
+section .text {
+    // Software division (NTASM refuses div without a nonzero proof).
+    export fn udiv(in a:u64 @r8, in b:u64 @r9) -> u64
+    FX
+    CLOB {
+        mov rax,0
+        cmp r9,0
+        je zero
+        mov r10,0
+        mov rcx,64
+    step:
+        shl r10,1
+        mov r11,r8
+        shr r11,63
+        or r10,r11
+        shl r8,1
+        shl rax,1
+        cmp r10,r9
+        jb keep
+        sub r10,r9
+        or rax,1
+    keep:
+        dec rcx
+        jne step
+        return rax
+    zero:
+        mov rax,0xffffffffffffffff
+        return rax
+    }
+}

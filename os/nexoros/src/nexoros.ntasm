@@ -1,0 +1,30 @@
+// Nexora OS — a small preemptive operating system whose kernel is written
+// in NTASM and whose programs are written in Nova. QEMU/OVMF laboratory only.
+module nexora.os
+target x86_64-nexora-uefi
+features { tsc }
+
+%include "../build/assets.ntasm"
+%include "layout.inc"
+%include "macros.inc"
+
+section .data {
+    // The one block obtained from UEFI; everything else is an offset into it.
+    data g_base:u64 = 0
+    // g_spill (a writable scratch area for values that must survive calls,
+    // one disjoint slice per routine) is generated in build/assets.ntasm.
+    data g_gop:u64 = 0
+    data g_bs:u64 = 0
+    data g_info:u64 = 0
+    data g_info_size:u64 = 0
+    data g_map_key:u64 = 0
+    data g_desc_ver:u64 = 0
+    data g_image:u64 = 0
+    data g_frame:u64 = 0
+}
+
+%include "console.ntasm"
+%include "panic.ntasm"
+%include "core.ntasm"
+%include "boot.ntasm"
+%include "kmain.ntasm"

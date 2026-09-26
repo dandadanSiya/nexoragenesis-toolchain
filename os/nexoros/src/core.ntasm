@@ -1,0 +1,303 @@
+// Nexora OS interrupt core: GDT, IDT (from the generated dispatch stubs),
+// the 8259 PIC, the PIT timer and the keyboard, plus the interrupt handler.
+
+interrupt_table isr_stubs {
+    handler on_interrupt
+    vectors 0 47
+}
+
+section .text {
+    // Builds a flat long-mode GDT with data at 0x30 and code at 0x38, the
+    // selectors the firmware already uses, so segment registers stay valid.
+    export fn gdt_setup() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov rcx,0
+    zero:
+        mov rax,0
+        store [r15+rcx*8+OFF_GDT]:ptr<kernel,u64>,rax
+        inc rcx
+        cmp rcx,8
+        jb zero
+        // index 6 (0x30): data  0x00CF92000000FFFF
+        mov rax,0x00cf92000000ffff
+        store [r15+OFF_GDT+48]:ptr<kernel,u64>,rax
+        // index 7 (0x38): 64-bit code  0x00AF9A000000FFFF
+        mov rax,0x00af9a000000ffff
+        store [r15+OFF_GDT+56]:ptr<kernel,u64>,rax
+        // pseudo-descriptor: limit then base
+        adopt r14,[r15+OFF_GDTR]:ptr<kernel,u16>
+        mov ax,63
+        store [r14]:ptr<kernel,u16>,ax
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_GDT
+        store [r14+2]:ptr<kernel,u16>,ax
+        shr rax,16
+        store [r14+4]:ptr<kernel,u16>,ax
+        shr rax,16
+        store [r14+6]:ptr<kernel,u16>,ax
+        shr rax,16
+        store [r14+8]:ptr<kernel,u16>,ax
+        adopt r13,[r15+OFF_GDTR]:ptr<kernel,array<u8,10>>
+        lgdt [r13]:ptr<kernel,array<u8,10>>
+        return 0
+    }
+
+    // Fills the IDT with the 48 generated dispatch stubs (interrupt gates,
+    // selector 0x38) and loads it.
+    export fn idt_setup() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        fn_address r12,isr_stubs
+        mov rcx,0
+    gate:
+        mov rax,rcx
+        shl rax,4
+        add rax,r12                  // stub address
+        mov rdx,rax
+        and rdx,0xffff               // offset[15:0]
+        mov rsi,0x38
+        shl rsi,16
+        or rdx,rsi                   // selector 0x38
+        mov rsi,0x8e00
+        shl rsi,32
+        or rdx,rsi                   // type: present interrupt gate
+        mov rsi,rax
+        shr rsi,16
+        and rsi,0xffff
+        shl rsi,48
+        or rdx,rsi                   // offset[31:16]
+        mov rdi,rcx
+        shl rdi,4
+        store [r15+rdi+OFF_IDT]:ptr<kernel,u64>,rdx
+        mov rsi,rax
+        shr rsi,32                   // offset[63:32]
+        store [r15+rdi+OFF_IDT+8]:ptr<kernel,u64>,rsi
+        inc rcx
+        cmp rcx,48
+        jb gate
+        // pseudo-descriptor
+        adopt r14,[r15+OFF_IDTR]:ptr<kernel,u16>
+        mov ax,767                   // 48*16 - 1
+        store [r14]:ptr<kernel,u16>,ax
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_IDT
+        store [r14+2]:ptr<kernel,u16>,ax
+        shr rax,16
+        store [r14+4]:ptr<kernel,u16>,ax
+        shr rax,16
+        store [r14+6]:ptr<kernel,u16>,ax
+        shr rax,16
+        store [r14+8]:ptr<kernel,u16>,ax
+        adopt r13,[r15+OFF_IDTR]:ptr<kernel,array<u8,10>>
+        lidt [r13]:ptr<kernel,array<u8,10>>
+        return 0
+    }
+
+    // Remaps the 8259 pair to vectors 0x20-0x2F and unmasks IRQ0 and IRQ1.
+    export fn pic_setup() -> u64
+    FX
+    CLOB {
+        mov dx,PIC1_CMD
+        mov al,0x11
+        out dx,al
+        mov dx,PIC2_CMD
+        mov al,0x11
+        out dx,al
+        mov dx,PIC1_DATA
+        mov al,0x20
+        out dx,al
+        mov dx,PIC2_DATA
+        mov al,0x28
+        out dx,al
+        mov dx,PIC1_DATA
+        mov al,4
+        out dx,al
+        mov dx,PIC2_DATA
+        mov al,2
+        out dx,al
+        mov dx,PIC1_DATA
+        mov al,1
+        out dx,al
+        mov dx,PIC2_DATA
+        mov al,1
+        out dx,al
+        // mask everything except IRQ0 (timer) and IRQ1 (keyboard)
+        mov dx,PIC1_DATA
+        mov al,0xfc
+        out dx,al
+        mov dx,PIC2_DATA
+        mov al,0xff
+        out dx,al
+        return 0
+    }
+
+    // PIT channel 0, rate generator, ~1000 Hz.
+    export fn pit_setup() -> u64
+    FX
+    CLOB {
+        mov dx,PIT_CMD
+        mov al,0x36
+        out dx,al
+        mov dx,PIT_CH0
+        mov al,169                   // 1193 & 0xff
+        out dx,al
+        mov al,4                     // 1193 >> 8
+        out dx,al
+        return 0
+    }
+
+    // Sends End-Of-Interrupt for an IRQ vector in r12 (0x20..0x2f).
+    fn pic_eoi(in vector:u64 @r12) -> u64
+    FX
+    CLOB {
+        cmp r12,0x28
+        jb master
+        mov dx,PIC2_CMD
+        mov al,0x20
+        out dx,al
+    master:
+        mov dx,PIC1_CMD
+        mov al,0x20
+        out dx,al
+        return 0
+    }
+
+    // Reads one byte from the keyboard controller and updates the key state
+    // and the typed-character ring.
+    fn keyboard_irq() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15]:ptr<kernel,u8>
+        mov dx,0x60
+        in al,dx
+        movzx ebx,al
+        load rax,[r15+S_IRQ_KBD]:ptr<kernel,u64>
+        inc rax
+        store [r15+S_IRQ_KBD]:ptr<kernel,u64>,rax
+        cmp rbx,0xe0
+        jne not_prefix
+        mov rax,1
+        store [r15+S_KEY_E0]:ptr<kernel,u64>,rax
+        return 0
+    not_prefix:
+        mov rax,0
+        store [r15+S_KEY_E0]:ptr<kernel,u64>,rax
+        // shift make/break (0x2a, 0x36)
+        mov rcx,rbx
+        and rcx,0x7f
+        cmp rcx,0x2a
+        je shift
+        cmp rcx,0x36
+        je shift
+        jmp not_shift
+    shift:
+        mov rax,0
+        test rbx,0x80
+        jne shift_set
+        mov rax,1
+    shift_set:
+        store [r15+S_KEY_SHIFT]:ptr<kernel,u64>,rax
+        return 0
+    not_shift:
+        test rbx,0x80
+        je make
+        // break: clear held
+        and rbx,0x7f
+        mov al,0
+        store [r14+rbx+KEY_HELD]:ptr<kernel,u8>,al
+        return 0
+    make:
+        mov al,1
+        store [r14+rbx+KEY_HELD]:ptr<kernel,u8>,al
+        // decode via the active layout + shift
+        load rax,[r15+S_LAYOUT]:ptr<kernel,u64>
+        shl rax,8                    // 0 or 256
+        load rcx,[r15+S_KEY_SHIFT]:ptr<kernel,u64>
+        shl rcx,7                    // 0 or 128
+        add rax,rcx
+        add rax,rbx
+        lea rsi,[keymaps]:ptr<user,array<u8,KEYMAPS_LEN>>
+        movzx r12d,[rsi+rax]:ptr<user,u8>
+        cmp r12,0
+        je done
+        // push into the ring if it has room
+        load rax,[r15+S_KEY_HEAD]:ptr<kernel,u64>
+        mov rcx,rax
+        inc rcx
+        and rcx,255
+        load rdx,[r15+S_KEY_TAIL]:ptr<kernel,u64>
+        cmp rcx,rdx
+        je done
+        store [r14+rax+KEY_RING]:ptr<kernel,u8>,r12b
+        store [r15+S_KEY_HEAD]:ptr<kernel,u64>,rcx
+    done:
+        return 0
+    }
+
+    // Pops a typed character, or returns 0 if none. Interrupt-safe because
+    // the ring has a single producer (the IRQ) and single consumer.
+    export fn key_pop() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15]:ptr<kernel,u8>
+        load rax,[r15+S_KEY_TAIL]:ptr<kernel,u64>
+        load rcx,[r15+S_KEY_HEAD]:ptr<kernel,u64>
+        cmp rax,rcx
+        je empty
+        movzx edx,[r14+rax+KEY_RING]:ptr<kernel,u8>
+        inc rax
+        and rax,255
+        store [r15+S_KEY_TAIL]:ptr<kernel,u64>,rax
+        return rdx
+    empty:
+        mov rax,0
+        return rax
+    }
+
+    // The one interrupt handler: exceptions panic, IRQ0 keeps time, IRQ1
+    // reads the keyboard, and the same frame is resumed.
+    export fn on_interrupt(in frame:u64 @rcx) -> u64
+    FX
+    CLOB {
+        store [g_frame]:ptr<user,u64>,rcx
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt rbx,[rcx]:ptr<kernel,u64>
+        load r12,[rbx+F_VECTOR]:ptr<kernel,u64>
+        cmp r12,32
+        jb exception
+        cmp r12,32
+        je timer
+        cmp r12,33
+        je keyboard
+        jmp eoi
+    timer:
+        load rax,[r15+S_TICKS]:ptr<kernel,u64>
+        inc rax
+        store [r15+S_TICKS]:ptr<kernel,u64>,rax
+        jmp eoi
+    keyboard:
+        call keyboard_irq()
+    eoi:
+        // reload the vector from the frame (the call clobbered r12)
+        load rcx,[g_frame]:ptr<user,u64>
+        adopt rcx,[rcx]:ptr<kernel,u64>
+        load r12,[rcx+F_VECTOR]:ptr<kernel,u64>
+        call pic_eoi(r12)
+        load rax,[g_frame]:ptr<user,u64>
+        return rax
+    exception:
+        call panic()
+        load rax,[g_frame]:ptr<user,u64>
+        return rax
+    }
+}

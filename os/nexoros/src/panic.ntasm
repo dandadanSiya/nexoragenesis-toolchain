@@ -1,0 +1,82 @@
+// Nexora OS panic: draws a red screen with the faulting frame and halts.
+// Reached from the interrupt handler on any CPU exception (vector < 32).
+
+section .text {
+    export fn panic() -> u64
+    FX
+    CLOB {
+        cli
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov rax,1
+        store [r15+S_PANIC]:ptr<kernel,u64>,rax
+        call con_clear()
+        // paint the whole grid in the panic colour
+        load r14,[g_base]:ptr<user,u64>
+        adopt r14,[r14]:ptr<kernel,u8>
+        mov rcx,0
+    paint:
+        mov al,C_BAD
+        store [r14+rcx+CON_COLORS]:ptr<kernel,u8>,al
+        inc rcx
+        cmp rcx,CON_CELLS
+        jb paint
+        mov r12,2
+        mov r13,3
+        call con_at(r12,r13)
+        mov r12,C_WARN
+        call con_color(r12)
+        load rcx,[g_frame]:ptr<user,u64>
+        adopt rcx,[rcx]:ptr<kernel,u64>
+        load r12,[rcx+F_VECTOR]:ptr<kernel,u64>
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        store [r15+SV_F]:ptr<kernel,u64>,r12
+        mov r12,STR_PANIC
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_F]:ptr<kernel,u64>
+        call con_dec(r12)
+        // rip
+        mov r12,4
+        mov r13,5
+        call con_at(r12,r13)
+        mov r12,STR_RIP
+        call con_str(r12)
+        load rcx,[g_frame]:ptr<user,u64>
+        adopt rcx,[rcx]:ptr<kernel,u64>
+        load r12,[rcx+F_RIP]:ptr<kernel,u64>
+        call con_hex(r12)
+        // error code
+        mov r12,4
+        mov r13,6
+        call con_at(r12,r13)
+        mov r12,STR_ERR
+        call con_str(r12)
+        load rcx,[g_frame]:ptr<user,u64>
+        adopt rcx,[rcx]:ptr<kernel,u64>
+        load r12,[rcx+F_ERROR]:ptr<kernel,u64>
+        call con_hex(r12)
+        // cr2 (page-fault address)
+        mov r12,4
+        mov r13,7
+        call con_at(r12,r13)
+        mov r12,STR_CR2
+        call con_str(r12)
+        read_cr r12,cr2
+        call con_hex(r12)
+        // halt banner
+        mov r12,2
+        mov r13,9
+        call con_at(r12,r13)
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_HALT
+        call con_str(r12)
+        call con_blit()
+    stop:
+        hlt
+        jmp stop
+    }
+}

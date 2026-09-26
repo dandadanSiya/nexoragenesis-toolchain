@@ -7,4 +7,6 @@ features { tsc }
 %include "../build/assets.ntasm"
 %include "layout.inc"
 %include "kernel.ntasm"
+%include "gfx.ntasm"
+%include "race.ntasm"
 %include "game.ntasm"

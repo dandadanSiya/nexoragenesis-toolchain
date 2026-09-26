@@ -190,8 +190,8 @@ def track_map():
         for x in range(W):
             checker = ((x >> 4) ^ (y >> 4)) & 1
             value = GRASS + checker
-            if x < 6 or y < 6 or x >= W - 6 or y >= W - 6:
-                value = WATER + ((x + y) >> 2 & 1)
+            if False:
+                pass
             else:
                 d, along, side = nearest(x + 0.5, y + 0.5)
                 if d < HALF:
@@ -349,7 +349,7 @@ def row_tables():
     """Per floor row: distance and lateral step, both 16.16 fixed point."""
     dist, step = [], []
     for y in range(200):
-        if y <= HORIZON:
+        if y < HORIZON:
             dist.append(0)
             step.append(0)
             continue
@@ -418,8 +418,37 @@ def literal(data):
     return '"' + "".join(parts) + '"'
 
 
+def string_offsets():
+    offset = 0
+    for key, value in STRINGS:
+        yield key, offset
+        offset += len(value) + 1
+
+
 def text(s):
     return s.encode("ascii") + b"\x00"
+
+
+STRINGS = [
+    ("TITLE", "NEXORA KART"),
+    ("SUBTITLE", "OS ET JEU ECRITS EN NTASM"),
+    ("PRESS", "APPUIE SUR ENTREE"),
+    ("HELP1", "FLECHES OU ZQSD: PILOTER"),
+    ("HELP2", "ESPACE: FREINER  ECHAP: QUITTER"),
+    ("LAP", "TOUR "),
+    ("OF3", "/3"),
+    ("GO", "GO!"),
+    ("FINISH", "ARRIVEE!"),
+    ("PLACE", "PLACE: "),
+    ("TIME", "TEMPS: "),
+    ("MENU", "ENTREE: MENU"),
+    ("LAST", "DERNIER TOUR!"),
+    ("ER", "ER"),
+    ("E", "E"),
+    ("BEST", "RECORD: "),
+    ("COLON", ":"),
+    ("DOT", "."),
+]
 
 
 def main():
@@ -454,6 +483,8 @@ def main():
         "recip": struct.pack("<1024i", *recip_table()),
         "waypoints": struct.pack(f"<{N_WAY * 2}i", *[int(v * 65536) for p in WAYPOINTS for v in p]),
         "grid": struct.pack("<8i", *[int(v * 65536) for p in grid for v in p]),
+        "strings": b"".join(text(v) for _, v in STRINGS),
+        "kart_colors": bytes([UI["red"], UI["green"], UI["blue"], UI["yellow"]]),
         "msg_boot": text("\r\nNEXORA OS (NTASM): boot"),
         "msg_owned": text("\r\nNEXORA: firmware exited, the machine is ours\r\n"),
         "msg_fail": text("\r\nNEXORA: boot failure "),
@@ -462,6 +493,7 @@ def main():
              f"%define START_ANGLE {start_angle}",
              f"%define N_WAY {N_WAY}",
              f"%define HORIZON {HORIZON}",
+             *[f"%define STR_{k} {o}" for k, o in string_offsets()],
              "section .rdata {"]
     for name, data in tables.items():
         lines.insert(1, f"%define {name.upper()}_LEN {len(data)}")

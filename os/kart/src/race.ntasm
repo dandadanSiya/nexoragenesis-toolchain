@@ -1,0 +1,788 @@
+// Nexora Kart race logic: driving model, computer drivers, laps, ranking,
+// camera and kart projection. Positions are 16.16 world units (one unit is
+// one texel of the 512x512 track), angles are 12-bit (4096 = full turn).
+
+section .text {
+    // Places the four karts on the starting grid; the player (kart 0)
+    // starts from the back.
+    export fn race_reset() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        lea rsi,[grid]:ptr<user,array<u8,GRID_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        mov r12,0
+    kart:
+        imul rbx,r12,KART_SIZE
+        mov rcx,3
+        sub rcx,r12
+        shl rcx,1
+        load eax,[rsi+rcx*4]:ptr<user,i32>
+        movsxd rax,eax
+        store [r15+rbx+KARTS+KX]:ptr<user,u64>,rax
+        load eax,[rsi+rcx*4+4]:ptr<user,i32>
+        movsxd rax,eax
+        store [r15+rbx+KARTS+KY]:ptr<user,u64>,rax
+        mov rax,START_ANGLE
+        store [r15+rbx+KARTS+KA]:ptr<user,u64>,rax
+        mov rax,0
+        store [r15+rbx+KARTS+KV]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KWP]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KLAP]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KDONE]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KTIME]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KBOOST]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KPROG]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KDEPTH]:ptr<user,u64>,rax
+        mov rax,1
+        store [r15+rbx+KARTS+KSTEER]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KSKIN]:ptr<user,u64>,r12
+        mov rax,MAXV
+        cmp r12,0
+        je base_speed
+        mov rcx,3
+        sub rcx,r12
+        imul rcx,rcx,3000
+        sub rax,rcx
+    base_speed:
+        store [r15+rbx+KARTS+KBASE]:ptr<user,u64>,rax
+        store [r15+rbx+KARTS+KMAX]:ptr<user,u64>,rax
+        mov rax,4
+        store [r15+rbx+KARTS+KPLACE]:ptr<user,u64>,rax
+        inc r12
+        cmp r12,4
+        jb kart
+        mov rax,0
+        store [r15+G_RACE_TICKS]:ptr<user,u64>,rax
+        store [r15+G_GO]:ptr<user,u64>,rax
+        store [r15+G_BANNER]:ptr<user,u64>,rax
+        store [r15+G_COUNT]:ptr<user,u64>,rax
+        mov rax,4
+        store [r15+G_PLACE]:ptr<user,u64>,rax
+        load rax,[r15+KARTS+KA]:ptr<user,u64>
+        store [r15+G_CAM_A]:ptr<user,u64>,rax
+        return 0
+    }
+
+    // One 1/60 s step for kart r12. Input bits: 1 left, 2 right, 4 gas,
+    // 8 brake. Grass and sand lower the top speed, boost pads raise it.
+    export fn kart_step(in index:u64 @r12, in input:u64 @r13) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        imul rbx,r12,KART_SIZE
+        load r8,[r15+rbx+KARTS+KV]:ptr<user,u64>
+        load r9,[r15+rbx+KARTS+KMAX]:ptr<user,u64>
+        load rax,[r15+rbx+KARTS+KBOOST]:ptr<user,u64>
+        cmp rax,0
+        je no_boost
+        dec rax
+        store [r15+rbx+KARTS+KBOOST]:ptr<user,u64>,rax
+        mov rcx,r9
+        shr rcx,2
+        add r9,rcx
+    no_boost:
+        load rax,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        sar rax,16
+        load rcx,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        sar rcx,16
+        shl rcx,9
+        add rcx,rax
+        lea rsi,[track]:ptr<user,array<u8,TRACK_LEN>>
+        movzx eax,[rsi+rcx]:ptr<user,u8>
+        lea rsi,[material]:ptr<user,array<u8,MATERIAL_LEN>>
+        movzx eax,[rsi+rax]:ptr<user,u8>
+        cmp rax,1
+        jne not_grass
+        shr r9,1
+        jmp surfaced
+    not_grass:
+        cmp rax,2
+        jne not_sand
+        imul r9,r9,3
+        shr r9,3
+        jmp surfaced
+    not_sand:
+        cmp rax,3
+        jne surfaced
+        mov rcx,r9
+        shr rcx,1
+        add rcx,r9
+        mov rax,45
+        store [r15+rbx+KARTS+KBOOST]:ptr<user,u64>,rax
+        cmp r8,rcx
+        jge surfaced
+        mov r8,rcx
+    surfaced:
+        test r13,4
+        je no_gas
+        cmp r8,r9
+        jge throttled
+        add r8,ACCEL
+        jmp throttled
+    no_gas:
+        test r13,8
+        je coast
+        sub r8,BRAKE
+        mov rcx,r9
+        shr rcx,2
+        neg rcx
+        cmp r8,rcx
+        jge throttled
+        mov r8,rcx
+        jmp throttled
+    coast:
+        cmp r8,0
+        je throttled
+        jl coast_back
+        sub r8,FRICT
+        cmp r8,0
+        jge throttled
+        mov r8,0
+        jmp throttled
+    coast_back:
+        add r8,FRICT
+        cmp r8,0
+        jle throttled
+        mov r8,0
+    throttled:
+        cmp r8,r9
+        jle speed_ok
+        mov rcx,r8
+        sub rcx,r9
+        sar rcx,4
+        add rcx,64
+        sub r8,rcx
+    speed_ok:
+        store [r15+rbx+KARTS+KV]:ptr<user,u64>,r8
+        load r10,[r15+rbx+KARTS+KA]:ptr<user,u64>
+        mov r11,1
+        mov rax,r8
+        cmp rax,0
+        jge magnitude
+        neg rax
+    magnitude:
+        cmp rax,6000
+        jl steered
+        test r13,1
+        je not_left
+        sub r10,TURN
+        mov r11,0
+    not_left:
+        test r13,2
+        je steered
+        add r10,TURN
+        mov r11,2
+    steered:
+        and r10,4095
+        store [r15+rbx+KARTS+KA]:ptr<user,u64>,r10
+        store [r15+rbx+KARTS+KSTEER]:ptr<user,u64>,r11
+        lea rsi,[sine]:ptr<user,array<u8,SINE_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        load eax,[rsi+r10*4]:ptr<user,i32>
+        movsxd rdx,eax
+        add r10,1024
+        and r10,4095
+        load eax,[rsi+r10*4]:ptr<user,i32>
+        movsxd rax,eax
+        imul rax,r8
+        sar rax,16
+        load rcx,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        add rcx,rax
+        cmp rcx,WORLD_MIN
+        jge x_low
+        mov rcx,WORLD_MIN
+    x_low:
+        cmp rcx,WORLD_MAX
+        jle x_high
+        mov rcx,WORLD_MAX
+    x_high:
+        store [r15+rbx+KARTS+KX]:ptr<user,u64>,rcx
+        imul rdx,r8
+        sar rdx,16
+        load rcx,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        add rcx,rdx
+        cmp rcx,WORLD_MIN
+        jge y_low
+        mov rcx,WORLD_MIN
+    y_low:
+        cmp rcx,WORLD_MAX
+        jle y_high
+        mov rcx,WORLD_MAX
+    y_high:
+        store [r15+rbx+KARTS+KY]:ptr<user,u64>,rcx
+        return 0
+    }
+
+    // Computer driver: aims between the next two waypoints, steers by the
+    // sign of the cross product and lifts off in sharp corners.
+    export fn ai_input(in index:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        imul rbx,r12,KART_SIZE
+        lea rsi,[waypoints]:ptr<user,array<u8,WAYPOINTS_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        load rcx,[r15+rbx+KARTS+KWP]:ptr<user,u64>
+        mov rdx,rcx
+        inc rdx
+        and rdx,63
+        shl rcx,1
+        shl rdx,1
+        load eax,[rsi+rcx*4]:ptr<user,i32>
+        movsxd r8,eax
+        load eax,[rsi+rcx*4+4]:ptr<user,i32>
+        movsxd r9,eax
+        load eax,[rsi+rdx*4]:ptr<user,i32>
+        movsxd r10,eax
+        load eax,[rsi+rdx*4+4]:ptr<user,i32>
+        movsxd r11,eax
+        add r8,r10
+        sar r8,1
+        add r9,r11
+        sar r9,1
+        load rax,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        sub r8,rax
+        sar r8,8
+        load rax,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        sub r9,rax
+        sar r9,8
+        load rcx,[r15+rbx+KARTS+KA]:ptr<user,u64>
+        lea rsi,[sine]:ptr<user,array<u8,SINE_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        and rcx,4095
+        load eax,[rsi+rcx*4]:ptr<user,i32>
+        movsxd r11,eax
+        add rcx,1024
+        and rcx,4095
+        load eax,[rsi+rcx*4]:ptr<user,i32>
+        movsxd r10,eax
+        mov rax,r10
+        imul rax,r9
+        mov rdx,r11
+        imul rdx,r8
+        sub rax,rdx
+        sar rax,16
+        mov rcx,r10
+        imul rcx,r8
+        mov rdx,r11
+        imul rdx,r9
+        add rcx,rdx
+        sar rcx,16
+        mov r13,4
+        cmp rcx,0
+        jge ahead
+        mov r13,0
+        cmp rax,0
+        jl behind_left
+        or r13,2
+        return r13
+    behind_left:
+        or r13,1
+        return r13
+    ahead:
+        mov rdx,rcx
+        sar rdx,3
+        cmp rax,rdx
+        jle not_right
+        or r13,2
+        jmp sharp
+    not_right:
+        neg rdx
+        cmp rax,rdx
+        jge decided
+        or r13,1
+    sharp:
+        mov rdx,rax
+        cmp rdx,0
+        jge sharp_abs
+        neg rdx
+    sharp_abs:
+        mov r8,rcx
+        sar r8,1
+        cmp rdx,r8
+        jle decided
+        load r9,[r15+rbx+KARTS+KV]:ptr<user,u64>
+        load r10,[r15+rbx+KARTS+KMAX]:ptr<user,u64>
+        mov r11,r10
+        shr r11,2
+        sub r10,r11
+        cmp r9,r10
+        jle decided
+        and r13,3
+    decided:
+        return r13
+    }
+
+    // Waypoint r13 counts as passed once the kart crosses the line through
+    // it that is perpendicular to the track. Crossing waypoint 0 (the
+    // finish line) completes a lap. The ranking key combines laps,
+    // waypoints and the distance left to the next one.
+    export fn kart_progress(in index:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        imul rbx,r12,KART_SIZE
+        lea rsi,[waypoints]:ptr<user,array<u8,WAYPOINTS_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        load r13,[r15+rbx+KARTS+KWP]:ptr<user,u64>
+        mov rcx,r13
+        shl rcx,1
+        mov rdx,r13
+        inc rdx
+        and rdx,63
+        shl rdx,1
+        load eax,[rsi+rcx*4]:ptr<user,i32>
+        movsxd r8,eax
+        load eax,[rsi+rcx*4+4]:ptr<user,i32>
+        movsxd r9,eax
+        load eax,[rsi+rdx*4]:ptr<user,i32>
+        movsxd r10,eax
+        sub r10,r8
+        sar r10,8
+        load eax,[rsi+rdx*4+4]:ptr<user,i32>
+        movsxd r11,eax
+        sub r11,r9
+        sar r11,8
+        load rax,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        sub rax,r8
+        sar rax,8
+        load rcx,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        sub rcx,r9
+        sar rcx,8
+        mov rdx,rax
+        cmp rdx,0
+        jge dist_x
+        neg rdx
+    dist_x:
+        mov r14,rcx
+        cmp r14,0
+        jge dist_y
+        neg r14
+    dist_y:
+        add rdx,r14
+        imul rax,r10
+        imul rcx,r11
+        add rax,rcx
+        cmp rax,0
+        jl ranking
+        cmp rdx,PASS_RADIUS
+        jge ranking
+        cmp r13,0
+        jne advance
+        load rax,[r15+rbx+KARTS+KLAP]:ptr<user,u64>
+        inc rax
+        store [r15+rbx+KARTS+KLAP]:ptr<user,u64>,rax
+        cmp rax,LAPS_DONE
+        jne lap_banner
+        load rcx,[r15+rbx+KARTS+KDONE]:ptr<user,u64>
+        cmp rcx,0
+        jne advance
+        mov rcx,1
+        store [r15+rbx+KARTS+KDONE]:ptr<user,u64>,rcx
+        load rcx,[r15+G_RACE_TICKS]:ptr<user,u64>
+        store [r15+rbx+KARTS+KTIME]:ptr<user,u64>,rcx
+        jmp advance
+    lap_banner:
+        cmp r12,0
+        jne advance
+        cmp rax,2
+        jb advance
+        mov rcx,120
+        store [r15+G_BANNER]:ptr<user,u64>,rcx
+    advance:
+        inc r13
+        and r13,63
+        store [r15+rbx+KARTS+KWP]:ptr<user,u64>,r13
+        mov rdx,FAR_DIST
+    ranking:
+        shr rdx,8
+        cmp rdx,4095
+        jbe near_enough
+        mov rdx,4095
+    near_enough:
+        load rax,[r15+rbx+KARTS+KLAP]:ptr<user,u64>
+        shl rax,6
+        mov rcx,r13
+        cmp rcx,0
+        jne mid_lap
+        mov rcx,64
+    mid_lap:
+        add rax,rcx
+        shl rax,12
+        add rax,4095
+        sub rax,rdx
+        store [r15+rbx+KARTS+KPROG]:ptr<user,u64>,rax
+        return 0
+    }
+
+    // Places, and the rubber band that keeps the computer drivers close.
+    export fn update_ranks() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov r12,0
+    outer:
+        imul rbx,r12,KART_SIZE
+        load r8,[r15+rbx+KARTS+KPROG]:ptr<user,u64>
+        mov r9,1
+        mov r13,0
+    inner:
+        cmp r13,r12
+        je inner_next
+        imul rcx,r13,KART_SIZE
+        load rax,[r15+rcx+KARTS+KPROG]:ptr<user,u64>
+        cmp rax,r8
+        jle inner_next
+        inc r9
+    inner_next:
+        inc r13
+        cmp r13,4
+        jb inner
+        store [r15+rbx+KARTS+KPLACE]:ptr<user,u64>,r9
+        inc r12
+        cmp r12,4
+        jb outer
+        load rax,[r15+KARTS+KPLACE]:ptr<user,u64>
+        store [r15+G_PLACE]:ptr<user,u64>,rax
+        load r8,[r15+KARTS+KPROG]:ptr<user,u64>
+        mov r12,1
+    band:
+        imul rbx,r12,KART_SIZE
+        load r9,[r15+rbx+KARTS+KBASE]:ptr<user,u64>
+        load rax,[r15+rbx+KARTS+KPROG]:ptr<user,u64>
+        mov rcx,r8
+        add rcx,BAND
+        cmp rax,rcx
+        jle not_ahead
+        mov rdx,r9
+        shr rdx,3
+        sub r9,rdx
+        jmp banded
+    not_ahead:
+        mov rcx,r8
+        sub rcx,BAND
+        cmp rax,rcx
+        jge banded
+        mov rdx,r9
+        shr rdx,4
+        add r9,rdx
+    banded:
+        store [r15+rbx+KARTS+KMAX]:ptr<user,u64>,r9
+        inc r12
+        cmp r12,4
+        jb band
+        return 0
+    }
+
+    // Karts closer than 9 units push each other apart and lose speed.
+    export fn collide() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov r12,0
+    first:
+        mov r13,r12
+        inc r13
+    second:
+        cmp r13,4
+        jae first_next
+        imul rbx,r12,KART_SIZE
+        imul rcx,r13,KART_SIZE
+        load r8,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        load rax,[r15+rcx+KARTS+KX]:ptr<user,u64>
+        sub r8,rax
+        load r9,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        load rax,[r15+rcx+KARTS+KY]:ptr<user,u64>
+        sub r9,rax
+        mov r10,r8
+        sar r10,8
+        mov r11,r9
+        sar r11,8
+        imul r10,r10
+        imul r11,r11
+        add r10,r11
+        cmp r10,COLLIDE_R2
+        jae second_next
+        sar r8,3
+        sar r9,3
+        load rax,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        add rax,r8
+        store [r15+rbx+KARTS+KX]:ptr<user,u64>,rax
+        load rax,[r15+rcx+KARTS+KX]:ptr<user,u64>
+        sub rax,r8
+        store [r15+rcx+KARTS+KX]:ptr<user,u64>,rax
+        load rax,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        add rax,r9
+        store [r15+rbx+KARTS+KY]:ptr<user,u64>,rax
+        load rax,[r15+rcx+KARTS+KY]:ptr<user,u64>
+        sub rax,r9
+        store [r15+rcx+KARTS+KY]:ptr<user,u64>,rax
+        load rax,[r15+rbx+KARTS+KV]:ptr<user,u64>
+        mov rdx,rax
+        sar rdx,3
+        sub rax,rdx
+        store [r15+rbx+KARTS+KV]:ptr<user,u64>,rax
+        load rax,[r15+rcx+KARTS+KV]:ptr<user,u64>
+        mov rdx,rax
+        sar rdx,3
+        sub rax,rdx
+        store [r15+rcx+KARTS+KV]:ptr<user,u64>,rax
+    second_next:
+        inc r13
+        jmp second
+    first_next:
+        inc r12
+        cmp r12,3
+        jb first
+        return 0
+    }
+
+    // Chase camera: turns smoothly towards the player's heading and sits
+    // CAM_BACK units behind the kart.
+    export fn camera_follow() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r8,[r15+KARTS+KA]:ptr<user,u64>
+        load r9,[r15+G_CAM_A]:ptr<user,u64>
+        mov rax,r8
+        sub rax,r9
+        add rax,2048
+        and rax,4095
+        sub rax,2048
+        sar rax,2
+        add r9,rax
+        and r9,4095
+        store [r15+G_CAM_A]:ptr<user,u64>,r9
+        lea rsi,[sine]:ptr<user,array<u8,SINE_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        load eax,[rsi+r9*4]:ptr<user,i32>
+        movsxd rdx,eax
+        add r9,1024
+        and r9,4095
+        load eax,[rsi+r9*4]:ptr<user,i32>
+        movsxd rax,eax
+        imul rax,rax,CAM_BACK
+        imul rdx,rdx,CAM_BACK
+        load rcx,[r15+KARTS+KX]:ptr<user,u64>
+        sub rcx,rax
+        store [r15+G_CAM_X]:ptr<user,u64>,rcx
+        load rcx,[r15+KARTS+KY]:ptr<user,u64>
+        sub rcx,rdx
+        store [r15+G_CAM_Y]:ptr<user,u64>,rcx
+        return 0
+    }
+
+    // Title screen camera circling the circuit.
+    export fn camera_orbit() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r9,[r15+G_TICKS]:ptr<user,u64>
+        imul r9,r9,3
+        and r9,4095
+        store [r15+G_CAM_A]:ptr<user,u64>,r9
+        lea rsi,[sine]:ptr<user,array<u8,SINE_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        load eax,[rsi+r9*4]:ptr<user,i32>
+        movsxd rdx,eax
+        add r9,1024
+        and r9,4095
+        load eax,[rsi+r9*4]:ptr<user,i32>
+        movsxd rax,eax
+        imul rax,rax,190
+        imul rdx,rdx,190
+        mov rcx,WORLD_MID
+        sub rcx,rax
+        store [r15+G_CAM_X]:ptr<user,u64>,rcx
+        mov rcx,WORLD_MID
+        sub rcx,rdx
+        store [r15+G_CAM_Y]:ptr<user,u64>,rcx
+        return 0
+    }
+
+    // Projects the karts with the camera basis of the last draw_floor and
+    // draws them from the farthest to the nearest.
+    export fn draw_karts() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r10,[r15+G_FX]:ptr<user,u64>
+        load r11,[r15+G_FY]:ptr<user,u64>
+        mov r12,0
+    project:
+        imul rbx,r12,KART_SIZE
+        mov rax,0
+        store [r15+rbx+KARTS+KDEPTH]:ptr<user,u64>,rax
+        load r8,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        load rcx,[r15+G_CAM_X]:ptr<user,u64>
+        sub r8,rcx
+        load r9,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        load rcx,[r15+G_CAM_Y]:ptr<user,u64>
+        sub r9,rcx
+        mov rax,r8
+        imul rax,r10
+        mov rcx,r9
+        imul rcx,r11
+        add rax,rcx
+        sar rax,16
+        cmp rax,NEAR_Z
+        jl project_next
+        mov r13,rax
+        shr r13,16
+        cmp r13,1000
+        jae project_next
+        store [r15+rbx+KARTS+KDEPTH]:ptr<user,u64>,rax
+        mov rcx,rax
+        imul rcx,rcx,STEP_MUL
+        shr rcx,16
+        store [r15+rbx+KARTS+KSTEP]:ptr<user,u64>,rcx
+        mov rax,r9
+        imul rax,r10
+        mov rcx,r8
+        imul rcx,r11
+        sub rax,rcx
+        sar rax,16
+        lea rsi,[recip]:ptr<user,array<u8,RECIP_LEN>>
+        adopt rsi,[rsi]:ptr<user,i32>
+        load ecx,[rsi+r13*4]:ptr<user,i32>
+        movsxd rcx,ecx
+        imul rax,rcx
+        sar rax,32
+        add rax,160
+        store [r15+rbx+KARTS+KSX]:ptr<user,u64>,rax
+        imul rax,rcx,18
+        sar rax,16
+        add rax,HORIZON
+        store [r15+rbx+KARTS+KSY]:ptr<user,u64>,rax
+        imul rax,rcx,12
+        sar rax,16
+        store [r15+rbx+KARTS+KSIZE]:ptr<user,u64>,rax
+        cmp rax,2
+        jb hidden
+        cmp rax,160
+        jbe project_next
+    hidden:
+        mov rax,0
+        store [r15+rbx+KARTS+KDEPTH]:ptr<user,u64>,rax
+    project_next:
+        inc r12
+        cmp r12,4
+        jb project
+        mov r14,0
+        store [r15+G_DRAWN]:ptr<user,u64>,r14
+    pick:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r14,[r15+G_DRAWN]:ptr<user,u64>
+        mov r12,0
+        mov r13,4
+        mov r8,0
+    scan:
+        mov rax,1
+        mov rcx,r12
+        shl rax,cl
+        test r14,rax
+        jne scan_next
+        imul rbx,r12,KART_SIZE
+        load rax,[r15+rbx+KARTS+KDEPTH]:ptr<user,u64>
+        cmp rax,r8
+        jle scan_next
+        mov r8,rax
+        mov r13,r12
+    scan_next:
+        inc r12
+        cmp r12,4
+        jb scan
+        cmp r13,4
+        je drawn_all
+        mov rax,1
+        mov rcx,r13
+        shl rax,cl
+        or r14,rax
+        store [r15+G_DRAWN]:ptr<user,u64>,r14
+        imul rbx,r13,KART_SIZE
+        load r12,[r15+rbx+KARTS+KSKIN]:ptr<user,u64>
+        imul r12,r12,3
+        load rax,[r15+rbx+KARTS+KSTEER]:ptr<user,u64>
+        add r12,rax
+        load rsi,[r15+rbx+KARTS+KSTEP]:ptr<user,u64>
+        load r13,[r15+rbx+KARTS+KSX]:ptr<user,u64>
+        load r14,[r15+rbx+KARTS+KSY]:ptr<user,u64>
+        load rbx,[r15+rbx+KARTS+KSIZE]:ptr<user,u64>
+        call draw_sprite(r12,r13,r14,rbx,rsi)
+        jmp pick
+    drawn_all:
+        return 0
+    }
+
+    // Circuit overview with one dot per kart.
+    export fn draw_minimap() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+BACK]:ptr<user,u8>
+        lea rsi,[minimap]:ptr<user,array<u8,MINIMAP_LEN>>
+        mov r8,0
+    map_row:
+        mov r9,0
+    map_col:
+        mov rax,r8
+        shl rax,6
+        add rax,r9
+        movzx ecx,[rsi+rax]:ptr<user,u8>
+        cmp rcx,0
+        je map_skip
+        mov rax,r8
+        add rax,MINI_Y
+        imul rax,rax,BACK_W
+        add rax,r9
+        add rax,MINI_X
+        store [rdi+rax]:ptr<user,u8>,cl
+    map_skip:
+        inc r9
+        cmp r9,64
+        jb map_col
+        inc r8
+        cmp r8,64
+        jb map_row
+        mov r10,3
+        store [r15+SV_MM]:ptr<user,u64>,r10
+    dot:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r10,[r15+SV_MM]:ptr<user,u64>
+        imul rbx,r10,KART_SIZE
+        load r13,[r15+rbx+KARTS+KX]:ptr<user,u64>
+        sar r13,19
+        add r13,MINI_X
+        dec r13
+        load r14,[r15+rbx+KARTS+KY]:ptr<user,u64>
+        sar r14,19
+        add r14,MINI_Y
+        dec r14
+        lea rsi,[kart_colors]:ptr<user,array<u8,KART_COLORS_LEN>>
+        movzx esi,[rsi+r10]:ptr<user,u8>
+        mov rbx,3
+        mov rcx,3
+        call fill_rect(r13,r14,rcx,rbx,rsi)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r10,[r15+SV_MM]:ptr<user,u64>
+        dec r10
+        store [r15+SV_MM]:ptr<user,u64>,r10
+        jns dot
+        return 0
+    }
+}

@@ -10,7 +10,6 @@ usage: qemu_capture.py OUT_DIR STEP...
 The serial log is written to OUT_DIR/serial.log.
 """
 import json
-import os
 import shutil
 import socket
 import subprocess
@@ -80,6 +79,19 @@ def main():
         "-qmp", f"unix:{sock},server,nowait"])
     try:
         qmp = Qmp(sock)
+        run(qmp, out, work)
+    except (BrokenPipeError, ConnectionResetError, json.JSONDecodeError):
+        print("qemu exited")
+    finally:
+        try:
+            qemu.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            qemu.kill()
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def run(qmp, out, work):
+    if True:
         for step in sys.argv[2:]:
             action, _, value = step.partition(":")
             if action == "wait":
@@ -99,12 +111,6 @@ def main():
                 png(ppm, out / f"{value}.png")
                 print("shot", out / f"{value}.png")
         qmp.command("quit")
-    finally:
-        try:
-            qemu.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            qemu.kill()
-        shutil.rmtree(work, ignore_errors=True)
 
 
 if __name__ == "__main__":

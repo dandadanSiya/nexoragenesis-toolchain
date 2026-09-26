@@ -476,6 +476,26 @@ section .text {
         mov r12,0
         call tone(r12)
     tone_idle:
+        mov rax,DEBUG
+        cmp rax,0
+        je report_done
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_TICKS]:ptr<user,u64>
+        mov rcx,rax
+        and rcx,255
+        cmp rcx,0
+        jne report_done
+        // frames drawn during the last 256 ticks, then the player's key
+        load r12,[r15+G_FRAMES]:ptr<user,u64>
+        mov rax,0
+        store [r15+G_FRAMES]:ptr<user,u64>,rax
+        call serial_hex(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+KARTS+KPROG]:ptr<user,u64>
+        call serial_hex(r12)
+    report_done:
         load r15,[g_state]:ptr<user,u64>
         adopt r15,[r15]:ptr<user,u64>
         load rax,[r15+G_SCENE]:ptr<user,u64>
@@ -532,8 +552,15 @@ section .text {
         load rax,[r15+G_RACE_TICKS]:ptr<user,u64>
         inc rax
         store [r15+G_RACE_TICKS]:ptr<user,u64>,rax
+        mov r12,AUTOPILOT
+        cmp r12,0
+        je manual
+        mov r12,0
+        jmp autopilot
+    manual:
         call player_control()
         mov r12,1
+    autopilot:
         call drive_ai(r12)
         call race_common()
         load r15,[g_state]:ptr<user,u64>
@@ -659,6 +686,11 @@ section .text {
         mov rax,0
         store [r15+G_ACC]:ptr<user,u64>,rax
     stepped:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_FRAMES]:ptr<user,u64>
+        inc rax
+        store [r15+G_FRAMES]:ptr<user,u64>,rax
         call render()
         call present()
         load r15,[g_state]:ptr<user,u64>

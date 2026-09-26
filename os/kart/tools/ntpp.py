@@ -20,7 +20,7 @@ from pathlib import Path
 NAME = re.compile(r"\b[A-Z][A-Z0-9_]*\b")
 
 
-def expand(path, defines, out, depth=0):
+def expand(path, defines, out, depth=0, fixed=()):
     if depth > 8:
         raise SystemExit(f"{path}: include depth exceeded")
     for number, line in enumerate(Path(path).read_text().splitlines(), 1):
@@ -32,6 +32,8 @@ def expand(path, defines, out, depth=0):
             expression = NAME.sub(lambda m: str(defines[m.group(0)])
                                   if m.group(0) in defines else m.group(0),
                                   parts[2].split("//")[0])
+            if parts[1] in fixed:
+                continue
             try:
                 defines[parts[1]] = int(eval(expression, {"__builtins__": {}}))
             except Exception as error:  # noqa: BLE001 - report and stop
@@ -45,17 +47,21 @@ def expand(path, defines, out, depth=0):
             continue
         if stripped.startswith("%include"):
             target = stripped.split(None, 1)[1].strip().strip('"')
-            expand(Path(path).parent / target, defines, out, depth + 1)
+            expand(Path(path).parent / target, defines, out, depth + 1, fixed)
             continue
         out.append(NAME.sub(lambda m: str(defines[m.group(0)])
                             if m.group(0) in defines else m.group(0), line))
 
 
 def main():
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: ntpp.py INPUT.ntasm OUTPUT.ntasm")
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: ntpp.py INPUT.ntasm OUTPUT.ntasm [NAME=VALUE...]")
+    defines = {}
+    for item in sys.argv[3:]:
+        name, _, value = item.partition("=")
+        defines[name] = int(value, 0)
     out = []
-    expand(sys.argv[1], {}, out)
+    expand(sys.argv[1], defines, out, 0, frozenset(defines))
     Path(sys.argv[2]).write_text("\n".join(out) + "\n")
 
 

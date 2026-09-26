@@ -151,3 +151,8 @@
 %define SV_DA 2112
 %define SV_RC 2120
 %define SV_MM 2128
+
+// Build switches (overridden by build.sh)
+%define AUTOPILOT 0
+%define DEBUG 0
+%define G_FRAMES 424

@@ -46,7 +46,6 @@ LINE = 20          # white paint
 CURB_R, CURB_W = 21, 22
 FIN_W, FIN_B = 23, 24
 BOOST_A, BOOST_B = 25, 26
-GRID = 27
 ramp(ROAD, 4, (92, 92, 104), (112, 112, 124))
 setpal(LINE, (232, 232, 232))
 setpal(CURB_R, (214, 36, 36))
@@ -55,7 +54,6 @@ setpal(FIN_W, (250, 250, 250))
 setpal(FIN_B, (20, 20, 20))
 setpal(BOOST_A, (255, 200, 0))
 setpal(BOOST_B, (255, 110, 0))
-setpal(GRID, (200, 200, 210))
 GRASS = 32         # 32 light, 33 dark, 34/35 rough
 setpal(32, (88, 184, 64))
 setpal(33, (70, 160, 52))
@@ -184,37 +182,29 @@ def nearest(x, y):
 
 def track_map():
     grid = bytearray(W * W)
-    # coarse acceleration: only evaluate full distance near the centre line
     boost_marks = [TOTAL * f for f in (0.16, 0.47, 0.80)]
     for y in range(W):
         for x in range(W):
             checker = ((x >> 4) ^ (y >> 4)) & 1
             value = GRASS + checker
-            if False:
-                pass
-            else:
-                d, along, side = nearest(x + 0.5, y + 0.5)
-                if d < HALF:
-                    shade = ((x * 7 + y * 13) ^ (x * y)) & 3
-                    value = ROAD + (1 if shade == 0 else 0)
-                    if abs(d - 1.0) < 0.9 and int(along) % 16 < 8:
-                        value = LINE
-                    # finish line: checkered band across the track at 0
-                    rel = (along + 6) % TOTAL
-                    if rel < 8:
-                        value = FIN_W if ((int(rel) >> 1) + (int(d * side + 64) >> 1)) & 1 else FIN_B
-                    for mark in boost_marks:
-                        r = (along - mark) % TOTAL
-                        if r < 10 and d < 9 and side < 0:
-                            value = BOOST_A if int(r) % 4 < 2 else BOOST_B
-                    # starting grid slots behind the line
-                    back = (6 - along) % TOTAL
-                    if 10 < back < 60 and abs(d - 8) < 5 and int(back) % 16 < 2:
-                        value = GRID
-                elif d < HALF + 4:
-                    value = CURB_R if int(along / 6) % 2 else CURB_W
-                elif d < HALF + 10:
-                    value = GRASS + 2 + checker
+            d, along, side = nearest(x + 0.5, y + 0.5)
+            if d < HALF:
+                shade = ((x * 7 + y * 13) ^ (x * y)) & 3
+                value = ROAD + (1 if shade == 0 else 0)
+                if d < 0.7 and int(along) % 24 < 10:
+                    value = LINE
+                # finish line: checkered band across the track at 0
+                rel = (along + 6) % TOTAL
+                if rel < 8:
+                    value = FIN_W if ((int(rel) >> 1) + (int(d * side + 64) >> 1)) & 1 else FIN_B
+                for mark in boost_marks:
+                    r = (along - mark) % TOTAL
+                    if r < 10 and d < 9 and side < 0:
+                        value = BOOST_A if int(r) % 4 < 2 else BOOST_B
+            elif d < HALF + 4:
+                value = CURB_R if int(along / 6) % 2 else CURB_W
+            elif d < HALF + 10:
+                value = GRASS + 2 + checker
             grid[y * W + x] = value
     # sand traps on the outside of the sharpest corners
     for k in range(N_WAY):

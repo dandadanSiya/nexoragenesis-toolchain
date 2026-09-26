@@ -908,6 +908,16 @@ static int machine_operand(Generator *g, NtFId id, const char *mnemonic,
               "machine operand must be register, typed memory or constant");
 }
 static int emit_machine_instruction(Generator *g, const NtFStmt *s) {
+  if (!strcmp(s->name, "fn_address")) {
+    /* lea r64,[rip+rel32] patched to the function start */
+    unsigned reg = (unsigned)EX(g->program, s->expression).reg.family;
+    NtFId target =
+        (NtFId)EX(g->program, EX(g->program, s->expression).next).value;
+    uint8_t bytes[7] = {(uint8_t)(reg >= 8 ? 0x4c : 0x48), 0x8d,
+                        (uint8_t)(0x05 | ((reg & 7) << 3)), 0, 0, 0, 0};
+    return raw(g, bytes, sizeof bytes) &&
+           add_patch(g, g->image->size - 4, target, s->span);
+  }
   if (!strcmp(s->name, "call_efi")) {
     /* UEFI call: arguments five onwards go above the 32-byte shadow area
      * reserved at the bottom of every frame (see statement_requirements). */
@@ -1158,10 +1168,71 @@ static int emit_raw_interrupt_stub(Generator *g, NtFId id, size_t start) {
                     NT_CODE_SECTION_TEXT, start, g->image->size - start,
                     f->exported ? 1u : 0u, id, 0, f->span);
 }
+/* interrupt_table: 16-byte entry stubs, then the common dispatcher. The
+ * handler receives in rcx the frame, lowest address first: r15..r8, rdi,
+ * rsi, rbp, rbx, rdx, rcx, rax, vector, error, rip, cs, rflags, rsp, ss
+ * (176 bytes, 16-byte aligned) and returns the frame to resume. */
+static int emit_dispatch_table(Generator *g, NtFId id) {
+  const NtFFunction *f = &FN(g->program, id);
+  unsigned first = f->stub_vector & 255, last = (f->stub_vector >> 8) & 255;
+  if (!f->resolved || f->resolved > g->program->function_count ||
+      first > last || last > 127)
+    return fail(g, NTCG_E_UNSUPPORTED, f->span, "invalid interrupt table");
+  size_t start = g->image->size;
+  size_t common = start + (size_t)(last - first + 1) * 16u;
+  for (unsigned v = first; v <= last; v++) {
+    int error = v == 8 || v == 10 || v == 11 || v == 12 || v == 13 ||
+                v == 14 || v == 17 || v == 21 || v == 29 || v == 30;
+    uint8_t stub[16];
+    size_t n = 0;
+    if (!error) {
+      stub[n++] = 0x6a; /* push 0 */
+      stub[n++] = 0;
+    }
+    stub[n++] = 0x6a; /* push vector */
+    stub[n++] = (uint8_t)v;
+    stub[n++] = 0xe9; /* jmp common */
+    uint32_t rel = (uint32_t)(int32_t)(common - (g->image->size + n + 4));
+    for (unsigned b = 0; b < 4; b++)
+      stub[n++] = (uint8_t)(rel >> (8 * b));
+    while (n < 16)
+      stub[n++] = 0xcc;
+    if (!raw(g, stub, sizeof stub))
+      return 0;
+  }
+  static const uint8_t save[] = {
+      0x50, 0x51, 0x52, 0x53, 0x55, 0x56, 0x57,             /* rax..rdi */
+      0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53,       /* r8..r11 */
+      0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57,       /* r12..r15 */
+      0x48, 0x89, 0xe1,                                     /* mov rcx,rsp */
+      0x48, 0x83, 0xec, 0x20,                               /* sub rsp,32 */
+      0xfc,                                                 /* cld */
+      0xe8, 0, 0, 0, 0};                                    /* call handler */
+  if (!raw(g, save, sizeof save) ||
+      !add_patch(g, g->image->size - 4, f->resolved, f->span))
+    return 0;
+  static const uint8_t resume[] = {
+      0x48, 0x89, 0xc4,                                     /* mov rsp,rax */
+      0x41, 0x5f, 0x41, 0x5e, 0x41, 0x5d, 0x41, 0x5c,       /* r15..r12 */
+      0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58,       /* r11..r8 */
+      0x5f, 0x5e, 0x5d, 0x5b, 0x5a, 0x59, 0x58,             /* rdi..rax */
+      0x48, 0x83, 0xc4, 0x10,                               /* add rsp,16 */
+      0x48, 0xcf};                                          /* iretq */
+  if (!raw(g, resume, sizeof resume))
+    return 0;
+  return add_symbol(g, f->name, g->program->modules[f->module - 1].name,
+                    NT_CODE_SECTION_TEXT, start, g->image->size - start,
+                    f->exported ? 1u : 0u, id, 0, f->span);
+}
 static int emit_function(Generator *g, NtFId id) {
   const NtFFunction *f = &FN(g->program, id);
   if (f->imported)
     return 1;
+  if (f->generated_stub == 3) {
+    g->function = id;
+    g->function_offsets[id - 1] = g->image->size;
+    return emit_dispatch_table(g, id);
+  }
   g->function = id;
   if (f->high_level_expressions > 1 ||
       (f->generated_stub && f->high_level_expressions))

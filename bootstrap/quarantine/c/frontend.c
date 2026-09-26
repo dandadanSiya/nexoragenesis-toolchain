@@ -4349,6 +4349,65 @@ static int parse_interrupt_stub_table(Parser *p, NtFSpan table_span) {
     return syntax(p, "interrupt table requires at least one stub");
   return expect(p, '}', "expected interrupt table end");
 }
+/* interrupt_table NAME { handler FN  vectors FIRST LAST }
+ * Declares generated entry stubs for vectors FIRST..LAST (at most 127). Each
+ * stub pushes a zero error code when the CPU does not, then its vector, and
+ * jumps to a common routine that saves the 15 general registers, calls
+ * FN(frame:u64 @rcx) -> u64 and resumes (restore, drop vector/error, iretq)
+ * on the frame FN returns. Returning another frame switches task. */
+static int parse_interrupt_table(Parser *p) {
+  NtFSpan span = p->token.span;
+  if (!expect_word(p, "interrupt_table"))
+    return 0;
+  NtFSpan symbol_span;
+  const char *symbol = name(p, &symbol_span);
+  if (!symbol || !expect(p, '{', "expected interrupt table body"))
+    return 0;
+  lines(p);
+  if (!expect_word(p, "handler"))
+    return 0;
+  const char *handler = name(p, NULL);
+  if (!handler || !term(p))
+    return 0;
+  if (!expect_word(p, "vectors") || p->token.kind != TK_INT)
+    return syntax(p, "expected first interrupt vector");
+  uint64_t first = p->token.value;
+  next(p);
+  if (p->token.kind != TK_INT)
+    return syntax(p, "expected last interrupt vector");
+  uint64_t last = p->token.value;
+  next(p);
+  if (!term(p) || !expect(p, '}', "expected interrupt table end"))
+    return 0;
+  if (first > last || last > 127) {
+    diag(p->p, NTF_E_CONTRACT, span,
+         "interrupt table vectors must be an ascending range within 0..127");
+    p->failed = 1;
+    return 0;
+  }
+  NtFType never = {NTF_T_NEVER, NTF_SPACE_NONE, 0, 0, 0};
+  NtFId never_type = intern_type(p->p, never, span);
+  NtFId function = add_function(p->p, span);
+  if (!function || !never_type) {
+    p->failed = 1;
+    return 0;
+  }
+  NtFFunction *fn = &FN(p->p, function);
+  fn->name = symbol;
+  fn->abi = "nx64-interrupt-dispatch-v0";
+  fn->section = ".text";
+  fn->span = symbol_span;
+  fn->module = p->module;
+  fn->return_type = never_type;
+  fn->effects.flags =
+      NTF_F_PRIVILEGED | NTF_F_CHANGES_FLAGS | NTF_F_CONTROL | NTF_F_NO_RETURN;
+  fn->effects.reads = 1u << NTF_SPACE_KERNEL;
+  fn->effects.writes = 1u << NTF_SPACE_KERNEL;
+  fn->generated_stub = 3;
+  fn->stub_vector = (uint32_t)(first | (last << 8));
+  fn->import_name = handler;
+  return 1;
+}
 static int parse_stub_table(Parser *p) {
   NtFSpan table_span = p->token.span;
   if (!expect_word(p, "stub_table"))
@@ -5151,6 +5210,9 @@ static int parse_source(Parser *p) {
     } else if (is(p, "stub_table")) {
       if (!parse_stub_table(p))
         return 0;
+    } else if (is(p, "interrupt_table")) {
+      if (!parse_interrupt_table(p))
+        return 0;
     } else
       return syntax(p, "unsupported top-level declaration");
     lines(p);
@@ -5402,6 +5464,38 @@ static int verify_statement(NtFProgram *p, NtFId id, NtFId owner) {
       f = &FN(p, owner);
       f->inferred_effects.flags |= NTF_F_PRIVILEGED;
       writes |= BIT((unsigned)EX(p, first).reg.family);
+    } else if (!strcmp(s->name, "fn_address")) {
+      /* fn_address r64,name loads the address of a local function, e.g.
+       * an interrupt table or a callback given to foreign code. */
+      NtFId first = s->expression;
+      NtFId second = first ? EX(p, first).next : 0;
+      if (!first || !second || EX(p, second).next ||
+          EX(p, first).kind != NTF_X_REGISTER || EX(p, first).reg.bits != 64 ||
+          EX(p, first).reg.family < 0 || EX(p, first).reg.family > 15 ||
+          EX(p, first).reg.family == 4 || EX(p, first).reg.family == 5 ||
+          EX(p, second).kind != NTF_X_NAME || !EX(p, second).name) {
+        diag(p, NTF_E_TYPE, s->span,
+             "fn_address requires a 64-bit GPR and a function name");
+        return 0;
+      }
+      NtFId target = find_function(p, f->module, EX(p, second).name);
+      if (!target || FN(p, target).imported) {
+        diag(p, NTF_E_NAME, EX(p, second).span, "unknown local function '%s'",
+             EX(p, second).name);
+        return 0;
+      }
+      NtFType u64 = {NTF_T_U64, NTF_SPACE_NONE, 0, 0, 64};
+      NtFId u64_type = intern_type(p, u64, s->span);
+      NtFExpr *x = &EX(p, second);
+      x->kind = NTF_X_LITERAL;
+      x->value = target;
+      x->type = u64_type;
+      x->resolved = 0;
+      x->constant = 1;
+      f = &FN(p, owner);
+      f->write_footprint |= BIT((unsigned)EX(p, first).reg.family);
+      f->inferred_clobbers |= BIT((unsigned)EX(p, first).reg.family);
+      return 1;
     } else if (!strcmp(s->name, "call_efi")) {
       /* call_efi target,arg5,... calls a UEFI function pointer; the first
        * four arguments are already in rcx,rdx,r8,r9 and the listed 64-bit
@@ -5800,6 +5894,20 @@ static int verify_program(NtFProgram *p) {
     NtFFunction *f = &p->functions[i];
     if (f->imported)
       continue;
+    if (f->generated_stub == 3) {
+      NtFId handler = find_function(p, f->module, f->import_name);
+      const NtFFunction *h = handler ? &FN(p, handler) : NULL;
+      if (!h || h->generated_stub || h->imported || h->param_count != 1 ||
+          TY(p, h->return_type).kind != NTF_T_U64 ||
+          TY(p, VA(p, h->first_param).type).kind != NTF_T_U64 ||
+          VA(p, h->first_param).reg.family != 1) {
+        diag(p, NTF_E_CONTRACT, f->span,
+             "interrupt table handler must be fn(in frame:u64 @rcx) -> u64");
+        return 0;
+      }
+      f->resolved = handler;
+      continue;
+    }
     if (f->generated_stub) {
       int ud2 = f->generated_stub == 1 && f->stub_vector == 6 &&
                 !strcmp(f->abi, "nx64-interrupt-same-cpl-v0");

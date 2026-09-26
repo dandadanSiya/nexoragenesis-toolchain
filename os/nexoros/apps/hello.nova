@@ -1,0 +1,11 @@
+// Runs as a Nexora OS process. A while loop and a buffer prove real Nova
+// control flow executes on the NTASM kernel (result: 6 * 7 = 42).
+fn main()->u64 {
+    let mut total:u64=0;
+    let mut i:u64=0;
+    while i<6 {
+        total=total+7;
+        i=i+1;
+    }
+    return total;
+}

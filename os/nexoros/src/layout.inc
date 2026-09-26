@@ -174,3 +174,6 @@
 %define S_LINE_LEN 9344
 %define S_LINE_MAX 96
 %define S_BLIT 9408
+%define OFF_NOVA 163840
+%define OFF_NOVA_CTX 212992
+%define OFF_NOVA_RT 213504

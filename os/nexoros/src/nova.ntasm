@@ -1,15 +1,111 @@
-// Nexora OS Nova process support (filled in below). For now nova_run reports
-// that no Nova program is embedded; replaced by the real loader next.
+// Nexora OS Nova process support: loads an embedded Nova ABI2 program with
+// the layout its compiler assumes (text at base+0, rdata at the next page
+// after an 8-byte anchor, data at the next page) and runs its entry. A pure
+// compute program needs no runtime callbacks, so this proves a Nova-compiled
+// program runs as a process on the NTASM kernel.
+
+%include "../build/novaapp.ntasm"
+
 section .text {
+    // Copies n bytes from an rdata source (integer address in r12) to a
+    // kernel destination (integer address in r13).
+    fn nova_copy(in src:ptr<user,u8> @r12, in dst:u64 @r13, in n:u64 @r14) -> u64
+    FX
+    CLOB {
+        adopt rdi,[r13]:ptr<kernel,u8>
+        mov rcx,0
+    loop:
+        cmp rcx,r14
+        jae done
+        adopt rsi,[r12]:ptr<user,u8>
+        movzx eax,[rsi+rcx]:ptr<user,u8>
+        store [rdi+rcx]:ptr<kernel,u8>,al
+        inc rcx
+        jmp loop
+    done:
+        return 0
+    }
+
     export fn nova_run() -> u64
     FX
     CLOB {
-        mov r12,C_DIM
+        mov r12,C_CYAN
         call con_color(r12)
         mov r12,STR_NOVA_RUN
         call con_str(r12)
         mov r12,10
         call con_char(r12)
+        call con_blit()
+
+        // text -> nova_base + 0
+        lea r12,[novaapp_text]:ptr<user,array<u8,NOVA_TEXT_LEN>>
+        adopt r12,[r12]:ptr<user,u8>
+        load r13,[g_base]:ptr<user,u64>
+        add r13,OFF_NOVA
+        mov r14,NOVA_TEXT_LEN
+        call nova_copy(r12,r13,r14)
+        // rdata -> nova_base + align(text)
+        lea r12,[novaapp_rdata]:ptr<user,array<u8,NOVA_RDATA_LEN>>
+        adopt r12,[r12]:ptr<user,u8>
+        load r13,[g_base]:ptr<user,u64>
+        add r13,OFF_NOVA
+        add r13,4096
+        mov r14,NOVA_RDATA_LEN
+        call nova_copy(r12,r13,r14)
+        // data -> nova_base + align(text) + align(rdata)
+        lea r12,[novaapp_data]:ptr<user,array<u8,NOVA_DATA_LEN>>
+        adopt r12,[r12]:ptr<user,u8>
+        load r13,[g_base]:ptr<user,u64>
+        add r13,OFF_NOVA
+        add r13,8192
+        mov r14,NOVA_DATA_LEN
+        call nova_copy(r12,r13,r14)
+
+        // minimal ABI2 context: version=2, size=48, error=0, runtime ptr
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15+OFF_NOVA_CTX]:ptr<kernel,u64>
+        mov rax,0
+        store [r14]:ptr<kernel,u64>,rax
+        store [r14+8]:ptr<kernel,u64>,rax
+        store [r14+16]:ptr<kernel,u64>,rax
+        store [r14+24]:ptr<kernel,u64>,rax
+        store [r14+32]:ptr<kernel,u64>,rax
+        mov rax,2
+        store [r14]:ptr<kernel,u64>,rax        // version
+        mov rax,48
+        store [r14+8]:ptr<kernel,u64>,rax       // size
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_NOVA_RT
+        store [r14+40]:ptr<kernel,u64>,rax      // runtime ptr
+
+        // call entry(ctx, args=0, count=0) via the ms ABI
+        load rcx,[g_base]:ptr<user,u64>
+        add rcx,OFF_NOVA_CTX                    // rcx = ctx
+        mov rdx,0
+        mov r8,0
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_NOVA
+        add rax,NOVA_ENTRY
+        call_indirect rax
+        // result in rax
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        store [r15+SV_A]:ptr<kernel,u64>,rax
+
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_NOVA_HELLO
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_A]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,10
+        call con_char(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        call con_blit()
         return 0
     }
 }

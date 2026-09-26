@@ -115,6 +115,7 @@ section .text {
 
         // Interrupt-driven core and paging.
         call gdt_setup()
+        call tss_setup()
         call idt_setup()
         call paging_setup()
         mov r12,STR_PAGING2
@@ -153,38 +154,17 @@ section .text {
         mov r12,C_CYAN
         call con_color(r12)
         mov r12,STR_READY
-        call con_color(r12)
-        mov r12,STR_READY
         call con_str(r12)
         mov r12,10
         call con_char(r12)
         mov r12,C_FG
         call con_color(r12)
-        mov r12,STR_GT
-        call con_str(r12)
         call con_blit()
+
+        // Become the shell (task 0).
+        mov rcx,0
+        call shell_run(rcx)
     idle:
-        call key_pop()
-        cmp rax,0
-        je no_key
-        mov r12,rax
-        call con_char(r12)
-        call status_bar()
-        call con_blit()
-    no_key:
-        call status_bar()
-        // blit at most ~30 times a second
-        load r15,[g_base]:ptr<user,u64>
-        adopt r15,[r15]:ptr<kernel,u64>
-        load rax,[r15+S_TICKS]:ptr<kernel,u64>
-        load rbx,[r15+S_SWITCHES]:ptr<kernel,u64>
-        sub rax,rbx
-        cmp rax,33
-        jb wait
-        load rax,[r15+S_TICKS]:ptr<kernel,u64>
-        store [r15+S_SWITCHES]:ptr<kernel,u64>,rax
-        call con_blit()
-    wait:
         hlt
         jmp idle
     }

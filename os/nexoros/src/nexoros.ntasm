@@ -30,5 +30,7 @@ section .data {
 %include "memory.ntasm"
 %include "sched.ntasm"
 %include "demo.ntasm"
+%include "nova.ntasm"
+%include "shell.ntasm"
 %include "boot.ntasm"
 %include "kmain.ntasm"

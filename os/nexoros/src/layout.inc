@@ -13,8 +13,11 @@
 // ---- Offsets inside the block ----
 %define OFF_STATE 0              // 16 KiB of kernel globals
 %define OFF_GDT 16384            // 8 descriptors
-%define OFF_GDTR 16448           // 10-byte pseudo-descriptor
-%define OFF_IDTR 16464
+%define OFF_GDTR 16512           // 10-byte pseudo-descriptor
+%define OFF_IDTR 16528
+%define OFF_TSS 16640
+%define OFF_FAULT_TOP 81920
+%define SEL_TSS 64
 %define OFF_IDT 17408            // 48 gates x 16 bytes
 %define OFF_PML4 20480
 %define OFF_PDPT 24576
@@ -167,3 +170,7 @@
 %define PIT_CH0 64
 %define PIT_CMD 67
 %define T_USER 88
+%define S_LINE 9216
+%define S_LINE_LEN 9344
+%define S_LINE_MAX 96
+%define S_BLIT 9408

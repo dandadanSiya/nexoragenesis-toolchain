@@ -14,8 +14,9 @@ section .text {
         store [r15+S_CUR]:ptr<kernel,u64>,rax
         mov rax,TS_READY
         store [r15+OFF_TASKS+T_STATE]:ptr<kernel,u64>,rax
-        mov r12,STR_KMAIN
-        call task_name(rax,r12)     // rax ignored, task 0
+        mov r12,0
+        mov r13,STR_KMAIN
+        call task_name(r12,r13)
         return 0
     }
 

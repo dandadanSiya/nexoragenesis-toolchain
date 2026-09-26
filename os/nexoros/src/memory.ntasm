@@ -88,6 +88,64 @@ section .text {
         return 0
     }
 
+    // Builds a TSS whose IST1 is a dedicated fault stack, adds its GDT
+    // descriptor at selector 0x40 and loads it, so #PF/#DF always land on a
+    // known-good stack even when a task overflows its own.
+    export fn tss_setup() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15+OFF_TSS]:ptr<kernel,u64>
+        mov rcx,0
+    zero:
+        mov rax,0
+        store [r14+rcx*8]:ptr<kernel,u64>,rax
+        inc rcx
+        cmp rcx,13
+        jb zero
+        // fault stack top (grows down through the unused bitmap area)
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_FAULT_TOP
+        // RSP0 at offset 4, IST1 at offset 36
+        adopt r13,[r15+OFF_TSS]:ptr<kernel,u32>
+        mov rbx,rax
+        store [r13+4]:ptr<kernel,u32>,ebx     // RSP0 low  (byte 4)
+        mov rcx,rax
+        shr rcx,32
+        store [r13+8]:ptr<kernel,u32>,ecx     // RSP0 high (byte 8)
+        store [r13+36]:ptr<kernel,u32>,ebx    // IST1 low  (byte 36)
+        store [r13+40]:ptr<kernel,u32>,ecx    // IST1 high (byte 40)
+        // GDT TSS descriptor at index 8 (selector 0x40), 16 bytes
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_TSS
+        mov rbx,103                            // limit
+        mov rcx,rax
+        and rcx,0xffff
+        shl rcx,16
+        or rbx,rcx                             // base[15:0]
+        mov rcx,rax
+        shr rcx,16
+        and rcx,0xff
+        shl rcx,32
+        or rbx,rcx                             // base[23:16]
+        mov rcx,0x89
+        shl rcx,40
+        or rbx,rcx                             // type: available 64-bit TSS
+        mov rcx,rax
+        shr rcx,24
+        and rcx,0xff
+        shl rcx,56
+        or rbx,rcx                             // base[31:24]
+        store [r15+OFF_GDT+64]:ptr<kernel,u64>,rbx
+        mov rbx,rax
+        shr rbx,32                             // base[63:32]
+        store [r15+OFF_GDT+72]:ptr<kernel,u64>,rbx
+        mov ax,SEL_TSS
+        ltr ax
+        return 0
+    }
+
     // Returns the stack top (highest address + 1) for task index r12.
     export fn stack_top(in index:u64 @r12) -> u64
     FX

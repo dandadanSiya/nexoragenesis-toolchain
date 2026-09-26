@@ -297,6 +297,27 @@ section .text {
 
 
 section .text {
+    // Reboots via the keyboard controller reset line.
+    export fn reboot() -> u64
+    FX
+    CLOB {
+        cli
+        mov rcx,100000
+    wait:
+        mov dx,0x64
+        in al,dx
+        test al,2
+        je send
+        dec rcx
+        jne wait
+    send:
+        mov al,0xfe
+        out dx,al
+    halt:
+        hlt
+        jmp halt
+    }
+
     // Software division (NTASM refuses div without a nonzero proof).
     export fn udiv(in a:u64 @r8, in b:u64 @r9) -> u64
     FX

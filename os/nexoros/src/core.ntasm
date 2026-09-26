@@ -29,7 +29,7 @@ section .text {
         store [r15+OFF_GDT+56]:ptr<kernel,u64>,rax
         // pseudo-descriptor: limit then base
         adopt r14,[r15+OFF_GDTR]:ptr<kernel,u16>
-        mov ax,63
+        mov ax,79
         store [r14]:ptr<kernel,u16>,ax
         load rax,[g_base]:ptr<user,u64>
         add rax,OFF_GDT
@@ -71,6 +71,17 @@ section .text {
         and rsi,0xffff
         shl rsi,48
         or rdx,rsi                   // offset[31:16]
+        // vectors 8 (#DF) and 14 (#PF) run on IST1 to survive a bad stack
+        cmp rcx,8
+        je set_ist
+        cmp rcx,14
+        je set_ist
+        jmp no_ist
+    set_ist:
+        mov rsi,1
+        shl rsi,32
+        or rdx,rsi
+    no_ist:
         mov rdi,rcx
         shl rdi,4
         store [r15+rdi+OFF_IDT]:ptr<kernel,u64>,rdx
@@ -313,7 +324,8 @@ section .text {
         add rax,2097152
         cmp r13,rax
         jae real_fault
-        // stack overflow: kill the current task and switch away
+        // stack overflow: log and halt (probe) 
+        call overflow_probe()
         call kill_current()
         call schedule()
         load rax,[g_next]:ptr<user,u64>
@@ -322,6 +334,24 @@ section .text {
         call panic()
         load rax,[g_frame]:ptr<user,u64>
         return rax
+    }
+
+    // Probe: prints that a task hit its stack guard, on the console.
+    fn overflow_probe() -> u64
+    FX
+    CLOB {
+        mov r12,C_WARN
+        call con_color(r12)
+        mov r12,STR_OVERFLOW
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_CUR]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,10
+        call con_char(r12)
+        call con_blit()
+        return 0
     }
 
     // Frees the running task after a fatal stack fault and logs it.

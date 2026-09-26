@@ -1,0 +1,15 @@
+// Nexora OS Nova process support (filled in below). For now nova_run reports
+// that no Nova program is embedded; replaced by the real loader next.
+section .text {
+    export fn nova_run() -> u64
+    FX
+    CLOB {
+        mov r12,C_DIM
+        call con_color(r12)
+        mov r12,STR_NOVA_RUN
+        call con_str(r12)
+        mov r12,10
+        call con_char(r12)
+        return 0
+    }
+}

@@ -1,0 +1,428 @@
+// Nexora OS shell: the interactive task 0. It reads a line from the keyboard
+// ring, echoes it, and runs a built-in command. Runs concurrently with the
+// background tasks, so the spinners keep animating while you type.
+
+section .text {
+    // Compares the first word of the current line to the command whose name
+    // is at strings offset r12. Returns 1 on a full-word match.
+    fn cmd_is(in name:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15]:ptr<kernel,u8>
+        lea rsi,[strings]:ptr<user,array<u8,STRINGS_LEN>>
+        mov rcx,0
+    compare:
+        movzx eax,[rsi+r12]:ptr<user,u8>        // command char
+        movzx edx,[r14+rcx+S_LINE]:ptr<kernel,u8>  // line char
+        cmp rax,0
+        je name_end
+        cmp rax,rdx
+        jne no
+        inc rcx
+        inc r12
+        jmp compare
+    name_end:
+        // line char must be a separator (space or end)
+        cmp rdx,32
+        je yes
+        cmp rdx,0
+        je yes
+        cmp rcx,0
+        je no
+        load rbx,[r15+S_LINE_LEN]:ptr<kernel,u64>
+        cmp rcx,rbx
+        jae yes
+    no:
+        mov rax,0
+        return rax
+    yes:
+        mov rax,1
+        return rax
+    }
+
+    // Prints the argument that follows the first word (for echo).
+    fn print_args() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15]:ptr<kernel,u8>
+        load rbx,[r15+S_LINE_LEN]:ptr<kernel,u64>
+        mov rcx,0
+    skip_word:
+        cmp rcx,rbx
+        jae done
+        movzx eax,[r14+rcx+S_LINE]:ptr<kernel,u8>
+        cmp rax,32
+        je skip_space
+        inc rcx
+        jmp skip_word
+    skip_space:
+        inc rcx
+        store [r15+SV_J]:ptr<kernel,u64>,rcx
+    emit:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15]:ptr<kernel,u8>
+        load rcx,[r15+SV_J]:ptr<kernel,u64>
+        load rbx,[r15+S_LINE_LEN]:ptr<kernel,u64>
+        cmp rcx,rbx
+        jae done
+        movzx r12d,[r14+rcx+S_LINE]:ptr<kernel,u8>
+        inc rcx
+        store [r15+SV_J]:ptr<kernel,u64>,rcx
+        call con_char(r12)
+        jmp emit
+    done:
+        return 0
+    }
+
+    fn newline() -> u64
+    FX
+    CLOB {
+        mov r12,10
+        call con_char(r12)
+        return 0
+    }
+
+    // Prints one task's row for `ps`.
+    fn ps_row(in index:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rcx,[r15+rax+T_STATE]:ptr<kernel,u64>
+        cmp rcx,TS_FREE
+        je skip
+        store [r15+SV_J+16]:ptr<kernel,u64>,r12
+        mov r12,C_DIM
+        call con_color(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_J+16]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,STR_SP
+        call con_str(r12)
+        // state
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_J+16]:ptr<kernel,u64>
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rcx,[r15+rax+T_STATE]:ptr<kernel,u64>
+        mov r12,STR_ST_READY
+        cmp rcx,TS_READY
+        je have_state
+        mov r12,STR_ST_SLEEP
+        cmp rcx,TS_SLEEP
+        je have_state
+        mov r12,STR_ST_RUN
+    have_state:
+        store [r15+SV_J+8]:ptr<kernel,u64>,r12
+        mov r12,C_FG
+        call con_color(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_J+8]:ptr<kernel,u64>
+        call con_str(r12)
+        mov r12,STR_SP
+        call con_str(r12)
+        // name
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+SV_J+16]:ptr<kernel,u64>
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        add rax,T_NAME
+        mov r12,rax                    // integer address of the name
+        add r12,0                      // (kept integer)
+        load rbx,[g_base]:ptr<user,u64>
+        add r12,rbx
+        call con_write(r12)
+        mov r12,STR_SP
+        call con_str(r12)
+        // cpu ticks
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+SV_J+16]:ptr<kernel,u64>
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load r12,[r15+rax+T_CPU]:ptr<kernel,u64>
+        call con_dec(r12)
+        call newline()
+    skip:
+        return 0
+    }
+
+    // Recurses forever to overflow its stack and hit the guard page. The
+    // scheduler's page-fault path then kills just this task.
+    // Recurses forever to overflow its stack. When rsp descends into the
+    // unmapped guard page the #PF lands on the IST fault stack and the
+    // scheduler kills only this task.
+    export fn crash_task(in arg:u64 @rcx) -> u64
+    FX
+    CLOB {
+        mov r12,rcx
+        add r12,1
+        call crash_task(r12)
+        return 0
+    }
+
+    fn run_command() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_LINE_LEN]:ptr<kernel,u64>
+        cmp rax,0
+        je empty
+        mov r12,STR_C_HELP
+        call cmd_is(r12)
+        cmp rax,1
+        je do_help
+        mov r12,STR_C_PS
+        call cmd_is(r12)
+        cmp rax,1
+        je do_ps
+        mov r12,STR_C_MEM
+        call cmd_is(r12)
+        cmp rax,1
+        je do_mem
+        mov r12,STR_C_CLEAR
+        call cmd_is(r12)
+        cmp rax,1
+        je do_clear
+        mov r12,STR_C_ECHO
+        call cmd_is(r12)
+        cmp rax,1
+        je do_echo
+        mov r12,STR_C_SPIN
+        call cmd_is(r12)
+        cmp rax,1
+        je do_spin
+        mov r12,STR_C_CRASH
+        call cmd_is(r12)
+        cmp rax,1
+        je do_crash
+        mov r12,STR_C_LAYOUT
+        call cmd_is(r12)
+        cmp rax,1
+        je do_layout
+        mov r12,STR_C_REBOOT
+        call cmd_is(r12)
+        cmp rax,1
+        je do_reboot
+        mov r12,STR_C_UPTIME
+        call cmd_is(r12)
+        cmp rax,1
+        je do_uptime
+        mov r12,STR_C_NOVA
+        call cmd_is(r12)
+        cmp rax,1
+        je do_nova
+        // unknown
+        mov r12,C_BAD
+        call con_color(r12)
+        mov r12,STR_UNKNOWN
+        call con_str(r12)
+        call newline()
+        jmp empty
+    do_help:
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_HELP_TXT
+        call con_str(r12)
+        call newline()
+        jmp empty
+    do_ps:
+        mov r12,C_ACCENT
+        call con_color(r12)
+        mov r12,STR_PS_HDR
+        call con_str(r12)
+        call newline()
+        mov r12,0
+    ps_loop:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        store [r15+SV_J+24]:ptr<kernel,u64>,r12
+        call ps_row(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+SV_J+24]:ptr<kernel,u64>
+        inc r12
+        cmp r12,MAX_TASKS
+        jb ps_loop
+        jmp empty
+    do_mem:
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_MEM
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_RAM_KB]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,STR_RAM
+        call con_str(r12)
+        call newline()
+        jmp empty
+    do_uptime:
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_UP
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r8,[r15+S_TICKS]:ptr<kernel,u64>
+        mov r9,1000
+        call udiv(r8,r9)
+        mov r12,rax
+        call con_dec(r12)
+        mov r12,STR_S
+        call con_str(r12)
+        call newline()
+        jmp empty
+    do_clear:
+        call con_clear()
+        jmp empty
+    do_echo:
+        mov r12,C_FG
+        call con_color(r12)
+        call print_args()
+        call newline()
+        jmp empty
+    do_spin:
+        fn_address r12,spinner
+        mov r13,180
+        shl r13,32
+        or r13,10
+        mov r14,STR_SPIN
+        call task_create(r12,r13,r14)
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_SPAWNED
+        call con_str(r12)
+        call newline()
+        jmp empty
+    do_crash:
+        fn_address r12,crash_task
+        mov r13,0
+        mov r14,STR_CRASHER
+        call task_create(r12,r13,r14)
+        mov r12,C_WARN
+        call con_color(r12)
+        mov r12,STR_CRASHMSG
+        call con_str(r12)
+        call newline()
+        jmp empty
+    do_layout:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_LAYOUT]:ptr<kernel,u64>
+        cmp rax,0
+        je set_qwerty
+        mov rax,0
+        jmp store_layout
+    set_qwerty:
+        mov rax,1
+    store_layout:
+        store [r15+S_LAYOUT]:ptr<kernel,u64>,rax
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_LAYOUT_AZ
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_LAYOUT]:ptr<kernel,u64>
+        cmp rax,0
+        je name_az
+        mov r12,STR_LAYOUT_QW
+    name_az:
+        call con_str(r12)
+        call newline()
+        jmp empty
+    do_nova:
+        call nova_run()
+        jmp empty
+    do_reboot:
+        call reboot()
+    empty:
+        return 0
+    }
+
+    // The shell task: prompt, read a line, run it, repeat.
+    export fn shell_run(in arg:u64 @rcx) -> u64
+    FX
+    CLOB {
+    prompt:
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_PROMPT
+        call con_str(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov rax,0
+        store [r15+S_LINE_LEN]:ptr<kernel,u64>,rax
+        call con_blit()
+    read:
+        call key_pop()
+        cmp rax,0
+        je idle
+        mov r12,rax
+        cmp r12,10
+        je enter
+        cmp r12,8
+        je backspace
+        // append printable
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15]:ptr<kernel,u8>
+        load rbx,[r15+S_LINE_LEN]:ptr<kernel,u64>
+        cmp rbx,S_LINE_MAX
+        jae read
+        store [r14+rbx+S_LINE]:ptr<kernel,u8>,r12b
+        inc rbx
+        store [r15+S_LINE_LEN]:ptr<kernel,u64>,rbx
+        call con_char(r12)
+        call con_blit()
+        jmp read
+    backspace:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rbx,[r15+S_LINE_LEN]:ptr<kernel,u64>
+        cmp rbx,0
+        je read
+        dec rbx
+        store [r15+S_LINE_LEN]:ptr<kernel,u64>,rbx
+        mov r12,8
+        call con_char(r12)
+        call con_blit()
+        jmp read
+    enter:
+        call newline()
+        call run_command()
+        jmp prompt
+    idle:
+        call status_bar()
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_TICKS]:ptr<kernel,u64>
+        load rbx,[r15+S_BLIT]:ptr<kernel,u64>
+        sub rax,rbx
+        cmp rax,50
+        jb wait
+        load rax,[r15+S_TICKS]:ptr<kernel,u64>
+        store [r15+S_BLIT]:ptr<kernel,u64>,rax
+        call con_blit()
+    wait:
+        hlt
+        jmp read
+    }
+}

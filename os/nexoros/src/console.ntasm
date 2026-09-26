@@ -71,7 +71,7 @@ section .text {
     CLOB {
         load r14,[g_base]:ptr<user,u64>
         adopt r14,[r14]:ptr<kernel,u8>
-        mov rcx,CON_COLS
+        mov rcx,160
     move:
         movzx eax,[r14+rcx+CON_CHARS]:ptr<kernel,u8>
         mov rdx,rcx

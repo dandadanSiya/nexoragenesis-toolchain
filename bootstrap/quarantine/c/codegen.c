@@ -385,6 +385,14 @@ static void statement_requirements(const NtFProgram *p, NtFId id,
       statement_requirements(p, s->first, expr, calls, args, stack);
     argument_requirements(p, s->expression, args, stack);
     argument_requirements(p, s->condition, args, stack);
+    if (s->kind == NTF_S_INSTRUCTION && s->name &&
+        !strcmp(s->name, "call_efi")) {
+      unsigned operands = 0;
+      for (NtFId a = s->expression; a; a = EX(p, a).next)
+        operands++;
+      if (operands > 1 && operands - 1 > *stack)
+        *stack = operands - 1;
+    }
     unsigned d = expression_depth(p, s->expression);
     if (expression_depth(p, s->condition) > d)
       d = expression_depth(p, s->condition);
@@ -900,8 +908,24 @@ static int machine_operand(Generator *g, NtFId id, const char *mnemonic,
               "machine operand must be register, typed memory or constant");
 }
 static int emit_machine_instruction(Generator *g, const NtFStmt *s) {
-  const char *machine_name =
-      !strcmp(s->name, "call_indirect") ? "call" : s->name;
+  if (!strcmp(s->name, "call_efi")) {
+    /* UEFI call: arguments five onwards go above the 32-byte shadow area
+     * reserved at the bottom of every frame (see statement_requirements). */
+    unsigned i = 0;
+    for (NtFId a = EX(g->program, s->expression).next; a;
+         a = EX(g->program, a).next, i++) {
+      NtX64Operand outgoing = mem_rbp((int32_t)(32 + i * 8));
+      outgoing.base = 4;
+      if (!ins2(g, s->span, "store", outgoing,
+                reg64((unsigned)EX(g->program, a).reg.family)))
+        return 0;
+    }
+    return ins1(g, s->span, "call",
+                reg64((unsigned)EX(g->program, s->expression).reg.family));
+  }
+  const char *machine_name = !strcmp(s->name, "call_indirect") ? "call"
+                             : !strcmp(s->name, "adopt")       ? "lea"
+                                                               : s->name;
   if (!strcmp(s->name, "mov") && s->expression) {
     NtFId source = EX(g->program, s->expression).next;
     uint64_t constant;

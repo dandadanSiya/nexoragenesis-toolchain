@@ -1,0 +1,69 @@
+// temporary boot test scene
+section .text {
+    export fn game_main() -> u64
+    FX
+    CLOB {
+        mov r12,0
+    frame:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+BACK]:ptr<user,u8>
+        mov rcx,0
+        mov rdx,0
+    row:
+        mov rbx,0
+    col:
+        mov rax,rbx
+        add rax,rdx
+        add rax,r12
+        shr rax,3
+        and rax,15
+        add rax,80
+        store [rdi+rcx]:ptr<user,u8>,al
+        inc rcx
+        inc rbx
+        cmp rbx,320
+        jb col
+        inc rdx
+        cmp rdx,200
+        jb row
+        // key squares
+        adopt r14,[r15]:ptr<user,u8>
+        mov rsi,0
+    key:
+        movzx eax,[r14+rsi+KEYS]:ptr<user,u8>
+        mov rbx,rsi
+        imul rbx,rbx,20
+        add rbx,6420
+        mov r8,4
+        cmp rax,0
+        je paint
+        mov r8,3
+    paint:
+        mov r9,0
+    square:
+        mov r10,r9
+        and r10,15
+        mov r11,r9
+        shr r11,4
+        imul r11,r11,320
+        add r11,r10
+        add r11,rbx
+        store [rdi+r11]:ptr<user,u8>,r8b
+        inc r9
+        cmp r9,256
+        jb square
+        inc rsi
+        cmp rsi,8
+        jb key
+        call present()
+        inc r12
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt r14,[r15]:ptr<user,u8>
+        movzx eax,[r14+KEYS+K_ESC]:ptr<user,u8>
+        cmp rax,0
+        je frame
+        return 0
+    }
+}

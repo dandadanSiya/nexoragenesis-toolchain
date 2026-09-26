@@ -111,11 +111,41 @@ section .text {
         call con_color(r12)
         call con_blit()
 
-        // Interrupt-driven core.
+        call mem_scan()
+
+        // Interrupt-driven core and paging.
         call gdt_setup()
         call idt_setup()
+        call paging_setup()
+        mov r12,STR_PAGING2
+        call ok(r12)
+        mov r12,STR_RAMLINE
+        call ok2ram()
         call pic_setup()
         call pit_setup()
+
+        // Scheduler and demo tasks.
+        call sched_init()
+        fn_address r12,spinner
+        mov r13,120
+        shl r13,32
+        or r13,4
+        mov r14,STR_SPIN
+        call task_create(r12,r13,r14)
+        fn_address r12,spinner
+        mov r13,200
+        shl r13,32
+        or r13,6
+        mov r14,STR_SPIN
+        call task_create(r12,r13,r14)
+        fn_address r12,spinner
+        mov r13,350
+        shl r13,32
+        or r13,8
+        mov r14,STR_SPIN
+        call task_create(r12,r13,r14)
+        mov r12,STR_SCHED
+        call ok(r12)
         sti
 
         mov r12,10
@@ -157,6 +187,54 @@ section .text {
     wait:
         hlt
         jmp idle
+    }
+
+    // Prints "[ OK ] free RAM: N KiB".
+    fn ok2ram() -> u64
+    FX
+    CLOB {
+        mov r12,C_GOOD
+        call con_color(r12)
+        mov r12,STR_OK
+        call con_str(r12)
+        mov r12,C_FG
+        call con_color(r12)
+        mov r12,STR_MEM
+        call con_str(r12)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_RAM_KB]:ptr<kernel,u64>
+        call con_dec(r12)
+        mov r12,STR_RAM
+        call con_str(r12)
+        mov r12,10
+        call con_char(r12)
+        call con_blit()
+        return 0
+    }
+
+    // Counts non-free tasks.
+    fn count_tasks() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov r12,0
+        mov r13,0
+    scan:
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rcx,[r15+rax+T_STATE]:ptr<kernel,u64>
+        cmp rcx,TS_FREE
+        je next
+        inc r13
+    next:
+        inc r12
+        cmp r12,MAX_TASKS
+        jb scan
+        mov rax,r13
+        return rax
     }
 
     // Row 0 status bar: name on the left, uptime and IRQ count on the right.
@@ -202,6 +280,12 @@ section .text {
         load r15,[g_base]:ptr<user,u64>
         adopt r15,[r15]:ptr<kernel,u64>
         load r12,[r15+S_IRQ_KBD]:ptr<kernel,u64>
+        call con_dec(r12)
+        // live task count
+        mov r12,STR_TASKS
+        call con_str(r12)
+        call count_tasks()
+        mov r12,rax
         call con_dec(r12)
         load r15,[g_base]:ptr<user,u64>
         adopt r15,[r15]:ptr<kernel,u64>

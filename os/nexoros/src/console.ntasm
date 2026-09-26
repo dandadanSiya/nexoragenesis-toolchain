@@ -295,6 +295,21 @@ section .text {
         return 0
     }
 
+    // Writes one character+colour at (col r12, row r13) without moving the
+    // cursor. Used by background tasks so they never disturb typing.
+    export fn con_poke(in col:u64 @r12, in row:u64 @r13, in ch:u64 @r14, in color:u64 @r8) -> u64
+    FX
+    CLOB {
+        load rbx,[g_base]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<kernel,u8>
+        mov rax,r13
+        imul rax,rax,CON_COLS
+        add rax,r12
+        store [rbx+rax+CON_CHARS]:ptr<kernel,u8>,r14b
+        store [rbx+rax+CON_COLORS]:ptr<kernel,u8>,r8b
+        return 0
+    }
+
     // Renders the whole 80x30 grid to the framebuffer. Persistent values
     // live in spill slots so the pixel math has every register free.
     export fn con_blit() -> u64

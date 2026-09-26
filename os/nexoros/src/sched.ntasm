@@ -1,0 +1,259 @@
+// Nexora OS scheduler: preemptive round-robin over kernel tasks. On every
+// timer tick the handler saves the interrupted register frame into the
+// current task, picks the next ready task and returns its frame, so iretq
+// resumes a different task. Each task has its own guard-page-protected stack.
+
+section .text {
+    // Marks task 0 as the running kernel thread (kmain) before interrupts.
+    export fn sched_init() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        mov rax,0
+        store [r15+S_CUR]:ptr<kernel,u64>,rax
+        mov rax,TS_READY
+        store [r15+OFF_TASKS+T_STATE]:ptr<kernel,u64>,rax
+        mov r12,STR_KMAIN
+        call task_name(rax,r12)     // rax ignored, task 0
+        return 0
+    }
+
+    // Copies a name (strings offset r13) into task index r12.
+    fn task_name(in index:u64 @r12, in name:u64 @r13) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r14,[r15]:ptr<kernel,u8>
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        add rax,T_NAME
+        store [r15+SV_H]:ptr<kernel,u64>,rax
+        lea rsi,[strings]:ptr<user,array<u8,STRINGS_LEN>>
+        mov rcx,0
+    copy:
+        movzx edx,[rsi+r13]:ptr<user,u8>
+        load rax,[r15+SV_H]:ptr<kernel,u64>
+        add rax,rcx
+        store [r14+rax]:ptr<kernel,u8>,dl
+        cmp rdx,0
+        je done
+        inc rcx
+        inc r13
+        cmp rcx,31
+        jb copy
+        mov dl,0
+        load rax,[r15+SV_H]:ptr<kernel,u64>
+        add rax,rcx
+        store [r14+rax]:ptr<kernel,u8>,dl
+    done:
+        return 0
+    }
+
+    // Creates a task running fn(arg) with the given name. Returns its index,
+    // or 0xffff if the table is full. entry is a raw code address.
+    export fn task_create(in entry:u64 @r12, in arg:u64 @r13, in name:u64 @r14) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        store [r15+SV_I]:ptr<kernel,u64>,r12      // entry
+        store [r15+SV_I+8]:ptr<kernel,u64>,r13     // arg
+        store [r15+SV_I+16]:ptr<kernel,u64>,r14    // name
+        mov r12,1
+    find:
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rcx,[r15+rax+T_STATE]:ptr<kernel,u64>
+        cmp rcx,TS_FREE
+        je found
+        inc r12
+        cmp r12,MAX_TASKS
+        jb find
+        mov rax,0xffff
+        return rax
+    found:
+        store [r15+SV_I+24]:ptr<kernel,u64>,r12    // index
+        // clear the record
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        adopt r8,[r15+rax]:ptr<kernel,u64>
+        mov rcx,0
+    wipe:
+        mov rdx,0
+        store [r8+rcx*8]:ptr<kernel,u64>,rdx
+        inc rcx
+        cmp rcx,64
+        jb wipe
+        // stack top and initial frame
+        call stack_top(r12)
+        mov r11,rax                                // stack top
+        sub rax,F_BYTES
+        mov r10,rax                                // frame base
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        adopt r9,[r10]:ptr<kernel,u64>
+        mov rcx,0
+    fzero:
+        mov rdx,0
+        store [r9+rcx*8]:ptr<kernel,u64>,rdx
+        inc rcx
+        cmp rcx,22
+        jb fzero
+        load rax,[r15+SV_I+8]:ptr<kernel,u64>      // arg -> rcx slot
+        store [r9+F_RCX]:ptr<kernel,u64>,rax
+        load rax,[r15+SV_I]:ptr<kernel,u64>        // entry -> rip
+        store [r9+F_RIP]:ptr<kernel,u64>,rax
+        mov rax,SEL_CODE
+        store [r9+F_CS]:ptr<kernel,u64>,rax
+        mov rax,0x202                              // rflags: IF set
+        store [r9+F_RFLAGS]:ptr<kernel,u64>,rax
+        store [r9+F_RSP]:ptr<kernel,u64>,r11
+        mov rax,SEL_DATA
+        store [r9+F_SS]:ptr<kernel,u64>,rax
+        // task fields
+        load r12,[r15+SV_I+24]:ptr<kernel,u64>
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        mov rdx,r10
+        store [r15+rax+T_FRAME]:ptr<kernel,u64>,rdx
+        load rdx,[r15+SV_I]:ptr<kernel,u64>
+        store [r15+rax+T_ENTRY]:ptr<kernel,u64>,rdx
+        load rdx,[r15+S_TICKS]:ptr<kernel,u64>
+        store [r15+rax+T_START]:ptr<kernel,u64>,rdx
+        mov rdx,TS_READY
+        store [r15+rax+T_STATE]:ptr<kernel,u64>,rdx
+        load r13,[r15+SV_I+16]:ptr<kernel,u64>
+        call task_name(r12,r13)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+SV_I+24]:ptr<kernel,u64>
+        return rax
+    }
+
+    // Picks the next task after the current one, waking sleepers whose time
+    // has come. Saves g_frame into the current task, sets g_next to the
+    // chosen task's frame. Assumes at least task 0 is runnable.
+    export fn schedule() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        // charge one tick of CPU to the current task
+        load r12,[r15+S_CUR]:ptr<kernel,u64>
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rcx,[r15+rax+T_CPU]:ptr<kernel,u64>
+        inc rcx
+        store [r15+rax+T_CPU]:ptr<kernel,u64>,rcx
+        // save the interrupted frame into the current task
+        load rdx,[g_frame]:ptr<user,u64>
+        store [r15+rax+T_FRAME]:ptr<kernel,u64>,rdx
+        // wake any sleeper that is due
+        load r11,[r15+S_TICKS]:ptr<kernel,u64>
+        mov r10,0
+    wake:
+        mov rax,r10
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rcx,[r15+rax+T_STATE]:ptr<kernel,u64>
+        cmp rcx,TS_SLEEP
+        jne wake_next
+        load rdx,[r15+rax+T_WAKE]:ptr<kernel,u64>
+        cmp r11,rdx
+        jb wake_next
+        mov rcx,TS_READY
+        store [r15+rax+T_STATE]:ptr<kernel,u64>,rcx
+    wake_next:
+        inc r10
+        cmp r10,MAX_TASKS
+        jb wake
+        // round-robin search for the next READY task
+        load r12,[r15+S_CUR]:ptr<kernel,u64>
+        mov r10,0
+    scan:
+        inc r12
+        cmp r12,MAX_TASKS
+        jb no_wrap
+        mov r12,0
+    no_wrap:
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rcx,[r15+rax+T_STATE]:ptr<kernel,u64>
+        cmp rcx,TS_READY
+        je picked
+        inc r10
+        cmp r10,MAX_TASKS
+        jb scan
+        // nobody ready but us: stay on task 0
+        mov r12,0
+    picked:
+        store [r15+S_CUR]:ptr<kernel,u64>,r12
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        load rdx,[r15+rax+T_FRAME]:ptr<kernel,u64>
+        store [g_next]:ptr<user,u64>,rdx
+        load rax,[r15+S_SWITCHES]:ptr<kernel,u64>
+        inc rax
+        store [r15+S_SWITCHES]:ptr<kernel,u64>,rax
+        return 0
+    }
+
+    // Cooperative yield: the current task sleeps for r12 milliseconds. It is
+    // marked SLEEP and hlts; the timer switches away and only brings it back
+    // once its wake time passes.
+    export fn sleep(in ms:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_TICKS]:ptr<kernel,u64>
+        add rax,r12
+        load r13,[r15+S_CUR]:ptr<kernel,u64>
+        mov rcx,r13
+        imul rcx,rcx,T_SIZE
+        add rcx,OFF_TASKS
+        store [r15+rcx+T_WAKE]:ptr<kernel,u64>,rax
+        mov rdx,TS_SLEEP
+        store [r15+rcx+T_STATE]:ptr<kernel,u64>,rdx
+    spin:
+        hlt
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r13,[r15+S_CUR]:ptr<kernel,u64>
+        mov rcx,r13
+        imul rcx,rcx,T_SIZE
+        add rcx,OFF_TASKS
+        load rax,[r15+rcx+T_STATE]:ptr<kernel,u64>
+        cmp rax,TS_READY
+        jne spin
+        return 0
+    }
+
+    // Ends the current task: marks it dead and hlts forever; the scheduler
+    // never returns to a dead task and reclaims the slot.
+    export fn task_exit(in code:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r13,[r15+S_CUR]:ptr<kernel,u64>
+        mov rcx,r13
+        imul rcx,rcx,T_SIZE
+        add rcx,OFF_TASKS
+        store [r15+rcx+T_EXIT]:ptr<kernel,u64>,r12
+        mov rdx,TS_FREE
+        store [r15+rcx+T_STATE]:ptr<kernel,u64>,rdx
+    gone:
+        hlt
+        jmp gone
+    }
+}

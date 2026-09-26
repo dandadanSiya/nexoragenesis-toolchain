@@ -166,3 +166,4 @@
 %define PIC2_DATA 161
 %define PIT_CH0 64
 %define PIT_CMD 67
+%define T_USER 88

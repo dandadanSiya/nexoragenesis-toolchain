@@ -21,10 +21,14 @@ section .data {
     data g_desc_ver:u64 = 0
     data g_image:u64 = 0
     data g_frame:u64 = 0
+    data g_next:u64 = 0
 }
 
 %include "console.ntasm"
 %include "panic.ntasm"
 %include "core.ntasm"
+%include "memory.ntasm"
+%include "sched.ntasm"
+%include "demo.ntasm"
 %include "boot.ntasm"
 %include "kmain.ntasm"

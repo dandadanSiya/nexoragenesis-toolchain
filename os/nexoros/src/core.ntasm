@@ -284,7 +284,11 @@ section .text {
         load rax,[r15+S_TICKS]:ptr<kernel,u64>
         inc rax
         store [r15+S_TICKS]:ptr<kernel,u64>,rax
-        jmp eoi
+        mov r12,0x20
+        call pic_eoi(r12)
+        call schedule()
+        load rax,[g_next]:ptr<user,u64>
+        return rax
     keyboard:
         call keyboard_irq()
     eoi:
@@ -296,8 +300,42 @@ section .text {
         load rax,[g_frame]:ptr<user,u64>
         return rax
     exception:
+        cmp r12,14
+        je page_fault
         call panic()
         load rax,[g_frame]:ptr<user,u64>
         return rax
+    page_fault:
+        read_cr r13,cr2
+        load rax,[r15+S_STACK_WIN]:ptr<kernel,u64>
+        cmp r13,rax
+        jb real_fault
+        add rax,2097152
+        cmp r13,rax
+        jae real_fault
+        // stack overflow: kill the current task and switch away
+        call kill_current()
+        call schedule()
+        load rax,[g_next]:ptr<user,u64>
+        return rax
+    real_fault:
+        call panic()
+        load rax,[g_frame]:ptr<user,u64>
+        return rax
+    }
+
+    // Frees the running task after a fatal stack fault and logs it.
+    fn kill_current() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r13,[r15+S_CUR]:ptr<kernel,u64>
+        mov rcx,r13
+        imul rcx,rcx,T_SIZE
+        add rcx,OFF_TASKS
+        mov rdx,TS_FREE
+        store [r15+rcx+T_STATE]:ptr<kernel,u64>,rdx
+        return 0
     }
 }

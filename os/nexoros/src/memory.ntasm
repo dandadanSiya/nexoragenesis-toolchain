@@ -1,0 +1,138 @@
+// Nexora OS memory: builds the kernel's own page tables (identity map of the
+// first 4 GiB with 2 MiB pages) with one 2 MiB window mapped as 4 KiB pages
+// for task stacks, each stack preceded by an unmapped guard page. Also sums
+// the conventional RAM reported by the firmware.
+
+section .text {
+    // Places the stack window at a 2 MiB-aligned address inside the block and
+    // remembers it, then builds and installs the page tables.
+    export fn paging_setup() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        // stack window base = block + OFF_STACK_MIN, rounded up to 2 MiB
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_STACK_MIN
+        add rax,0x1fffff
+        mov rbx,0xffffffffffe00000
+        and rax,rbx
+        store [r15+S_STACK_WIN]:ptr<kernel,u64>,rax
+
+        // PML4[0] -> PDPT
+        adopt r14,[r15+OFF_PML4]:ptr<kernel,u64>
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_PDPT
+        or rax,3
+        store [r14]:ptr<kernel,u64>,rax
+        // PDPT[0..3] -> PD[i]
+        adopt r14,[r15+OFF_PDPT]:ptr<kernel,u64>
+        mov rcx,0
+    pdpt:
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_PD
+        mov rdx,rcx
+        shl rdx,12
+        add rax,rdx
+        or rax,3
+        store [r14+rcx*8]:ptr<kernel,u64>,rax
+        inc rcx
+        cmp rcx,4
+        jb pdpt
+        // PD entries: 2 MiB identity pages for all 2048 entries
+        adopt r14,[r15+OFF_PD]:ptr<kernel,u64>
+        mov rcx,0
+    pd:
+        mov rax,rcx
+        shl rax,21                 // page * 2 MiB
+        or rax,0x83                // P|W|PS
+        store [r14+rcx*8]:ptr<kernel,u64>,rax
+        inc rcx
+        cmp rcx,2048
+        jb pd
+        // Replace the PD entry covering the stack window with a 4 KiB table.
+        load rax,[r15+S_STACK_WIN]:ptr<kernel,u64>
+        shr rax,21                 // 2 MiB index
+        mov r13,rax                // stack window PD index
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_STACK_PT
+        or rax,3
+        store [r14+r13*8]:ptr<kernel,u64>,rax
+        // Fill the stack PT: page 0 of each 32-page slot is a guard (absent),
+        // the rest map the corresponding physical frames of the window.
+        adopt r14,[r15+OFF_STACK_PT]:ptr<kernel,u64>
+        load r12,[r15+S_STACK_WIN]:ptr<kernel,u64>
+        mov rcx,0
+    pt:
+        mov rax,rcx
+        and rax,31
+        cmp rax,0
+        je guard
+        mov rax,rcx
+        shl rax,12
+        add rax,r12
+        or rax,3
+        store [r14+rcx*8]:ptr<kernel,u64>,rax
+        jmp pt_next
+    guard:
+        mov rax,0
+        store [r14+rcx*8]:ptr<kernel,u64>,rax
+    pt_next:
+        inc rcx
+        cmp rcx,512
+        jb pt
+        // install
+        load rax,[g_base]:ptr<user,u64>
+        add rax,OFF_PML4
+        write_cr cr3,rax
+        return 0
+    }
+
+    // Returns the stack top (highest address + 1) for task index r12.
+    export fn stack_top(in index:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load rax,[r15+S_STACK_WIN]:ptr<kernel,u64>
+        mov rcx,r12
+        inc rcx
+        shl rcx,5                  // (index+1) * 32 pages
+        shl rcx,12
+        add rax,rcx
+        return rax
+    }
+
+    // Sums EfiConventionalMemory (type 7) pages from the saved UEFI map and
+    // stores the total (KiB) in S_RAM_KB.
+    export fn mem_scan() -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r13,[r15+S_MMAP_DESC]:ptr<kernel,u64>
+        load r12,[r15+S_MMAP_SIZE]:ptr<kernel,u64>
+        mov r11,0                  // offset into the map
+        mov r10,0                  // total pages
+    entry:
+        cmp r11,r12
+        jae done
+        load r14,[g_base]:ptr<user,u64>
+        add r14,OFF_MMAP
+        adopt r14,[r14]:ptr<kernel,u64>
+        load rax,[r14+r11]:ptr<kernel,u64>       // type in low 32 bits
+        shl rax,32
+        shr rax,32
+        cmp rax,7
+        jne skip
+        load rcx,[r14+r11+24]:ptr<kernel,u64>    // number of pages
+        add r10,rcx
+    skip:
+        add r11,r13
+        jmp entry
+    done:
+        shl r10,2                  // pages * 4 KiB = KiB
+        store [r15+S_RAM_KB]:ptr<kernel,u64>,r10
+        return 0
+    }
+}

@@ -1,0 +1,55 @@
+// Nexora OS demo tasks: three animated spinners that run concurrently with
+// the shell, driven only by the preemptive scheduler. Each keeps its own
+// state in its task record, which survives every preemption.
+
+section .rdata {
+    data spin_chars:array<u8,4> = "|/-\\"
+}
+
+section .text {
+    // spinner(arg): low 32 bits = column, high 32 bits = period in ms.
+    export fn spinner(in arg:u64 @rcx) -> u64
+    FX
+    CLOB {
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_CUR]:ptr<kernel,u64>
+        mov rax,r12
+        imul rax,rax,T_SIZE
+        add rax,OFF_TASKS
+        store [r15+rax+T_ARG]:ptr<kernel,u64>,rcx
+    loop:
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_CUR]:ptr<kernel,u64>
+        mov rbx,r12
+        imul rbx,rbx,T_SIZE
+        add rbx,OFF_TASKS
+        load rcx,[r15+rbx+T_ARG]:ptr<kernel,u64>
+        mov r12,rcx
+        shl r12,32
+        shr r12,32                       // column
+        load r14,[r15+rbx+T_USER]:ptr<kernel,u64>
+        mov rax,r14
+        and rax,3
+        lea rsi,[spin_chars]:ptr<user,array<u8,4>>
+        movzx r14d,[rsi+rax]:ptr<user,u8>   // spinner glyph
+        mov r13,22                        // row
+        mov r8,C_CYAN
+        call con_poke(r12,r13,r14,r8)
+        load r15,[g_base]:ptr<user,u64>
+        adopt r15,[r15]:ptr<kernel,u64>
+        load r12,[r15+S_CUR]:ptr<kernel,u64>
+        mov rbx,r12
+        imul rbx,rbx,T_SIZE
+        add rbx,OFF_TASKS
+        load rax,[r15+rbx+T_USER]:ptr<kernel,u64>
+        inc rax
+        store [r15+rbx+T_USER]:ptr<kernel,u64>,rax
+        load rcx,[r15+rbx+T_ARG]:ptr<kernel,u64>
+        shr rcx,32                        // period
+        mov r12,rcx
+        call sleep(r12)
+        jmp loop
+    }
+}

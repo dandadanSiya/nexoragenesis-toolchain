@@ -203,6 +203,11 @@ STRINGS = [
     ("UP", "uptime "),
     ("S", "s"),
     ("IRQ", "  clavier "),
+    ("PAGING2", "Pagination activee : mon cr3, pages de garde sous les piles"),
+    ("RAMLINE", ""),
+    ("KMAIN", "kshell"),
+    ("SPIN", "spinner"),
+    ("SCHED", "Ordonnanceur preemptif : 4 taches sur le timer"),
 ]
 
 

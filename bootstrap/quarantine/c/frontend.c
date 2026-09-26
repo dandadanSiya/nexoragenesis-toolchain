@@ -5382,6 +5382,54 @@ static int verify_statement(NtFProgram *p, NtFId id, NtFId owner) {
       }
       s->flags_read = branch_flags(s->name);
       return 1;
+    } else if (!strcmp(s->name, "adopt")) {
+      /* adopt r64,[address]:ptr<space,T> computes the address like lea and
+       * gives the register that declared pointer type. It is the only way to
+       * turn an integer address into a pointer, so it is a privileged act. */
+      NtFId first = s->expression;
+      NtFId second = first ? EX(p, first).next : 0;
+      if (!first || !second || EX(p, second).next ||
+          EX(p, first).kind != NTF_X_REGISTER || EX(p, first).reg.bits != 64 ||
+          EX(p, first).reg.family < 0 || EX(p, first).reg.family > 15 ||
+          EX(p, first).reg.family == 4 || EX(p, first).reg.family == 5 ||
+          EX(p, second).kind != NTF_X_MEMORY || EX(p, second).memory.segment) {
+        diag(p, NTF_E_MEMORY, s->span,
+             "adopt requires a 64-bit GPR and a typed memory address");
+        return 0;
+      }
+      if (!infer(p, second, 0, owner))
+        return 0;
+      f = &FN(p, owner);
+      f->inferred_effects.flags |= NTF_F_PRIVILEGED;
+      writes |= BIT((unsigned)EX(p, first).reg.family);
+    } else if (!strcmp(s->name, "call_efi")) {
+      /* call_efi target,arg5,... calls a UEFI function pointer; the first
+       * four arguments are already in rcx,rdx,r8,r9 and the listed 64-bit
+       * registers become stack arguments five onwards. */
+      NtFId target = s->expression;
+      unsigned count = 0;
+      for (NtFId id = target; id; id = EX(p, id).next, count++)
+        if (EX(p, id).kind != NTF_X_REGISTER || EX(p, id).reg.bits != 64 ||
+            EX(p, id).reg.family < 0 || EX(p, id).reg.family > 15 ||
+            EX(p, id).reg.family == 4 || EX(p, id).reg.family == 5) {
+          diag(p, NTF_E_ABI, s->span,
+               "call_efi operands must be 64-bit general registers");
+          return 0;
+        }
+      if (!count || count > 9) {
+        diag(p, NTF_E_ABI, s->span,
+             "call_efi takes a target and at most eight stack arguments");
+        return 0;
+      }
+      f = &FN(p, owner);
+      f->inferred_effects.flags |= NTF_F_CHANGES_FLAGS;
+      /* Volatile registers of the UEFI calling convention. */
+      uint64_t volatile_set = BIT(0) | BIT(1) | BIT(2) | BIT(8) | BIT(9) |
+                              BIT(10) | BIT(11) | BIT(17);
+      f->write_footprint |= volatile_set;
+      f->inferred_clobbers |= volatile_set;
+      s->flags_written = NT_X64_FLAGS_ARITH;
+      return 1;
     } else if (!strcmp(s->name, "load") || !strcmp(s->name, "store")) {
       NtFId first = s->expression;
       NtFId second = first ? EX(p, first).next : 0;

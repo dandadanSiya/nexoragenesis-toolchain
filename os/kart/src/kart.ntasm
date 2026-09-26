@@ -1,0 +1,12 @@
+// Nexora Kart: a Mode-7 kart racer that boots as its own tiny OS.
+// Everything that runs on the machine is NTASM; see README.md.
+module nexora.kart
+target x86_64-nexora-uefi
+features { tsc }
+
+%include "../build/assets.ntasm"
+%include "layout.inc"
+%include "kernel.ntasm"
+%include "gfx.ntasm"
+%include "race.ntasm"
+%include "game.ntasm"

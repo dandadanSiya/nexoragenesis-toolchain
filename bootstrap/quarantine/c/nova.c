@@ -1011,22 +1011,6 @@ static NtFId atom(Compiler *c) {
                                          .reg = {15, 64, 0},
                                          .span = t->span});
     }
-    /* Explicit integer conversions: as_u64/as_i64 reinterpret the 64-bit
-     * two's-complement pattern, as_u8 keeps the low byte. Nothing implicit. */
-    if (c->safe_v2 && (!strcmp(t->text, "as_u64") ||
-                       !strcmp(t->text, "as_i64") || !strcmp(t->text, "as_u8"))) {
-      NtFId value = parse_expression(c, 0);
-      need(c, ')', "conversion takes exactly one integer");
-      NtFId from = EX(c, value).type;
-      if (!integer(from))
-        fail_at(c, 400, t->span, "conversion expects an integer");
-      NtFId to = !strcmp(t->text, "as_u8")    ? TY_U8
-                 : !strcmp(t->text, "as_i64") ? TY_I64
-                                              : TY_U64;
-      uint64_t mask = to == TY_U8 ? 255 : UINT64_MAX;
-      return binary(c, NTF_OP_AND, value, literal(c, mask, TY_U64, t->span), to,
-                    t->span);
-    }
     if (!strcmp(t->text, "alloc")) {
       NtFId rt = parse_expression(c, 0);
       compatible(c, rt, TY_RUNTIME, t->span);

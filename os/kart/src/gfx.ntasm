@@ -1,0 +1,475 @@
+// Nexora Kart renderer: sky, Mode-7 floor, scaled sprites and text.
+// Everything draws into the 320x200 palette back buffer at BACK.
+
+section .text {
+    // Sky gradient with two parallax mountain ranges driven by the camera.
+    export fn draw_sky() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+BACK]:ptr<user,u8>
+        lea r12,[mount_far]:ptr<user,array<u8,MOUNT_FAR_LEN>>
+        lea r13,[mount_near]:ptr<user,array<u8,MOUNT_NEAR_LEN>>
+        load r14,[r15+G_CAM_A]:ptr<user,u64>
+        mov rcx,0
+        mov rdx,0
+    sky_row:
+        mov rax,rdx
+        shr rax,2
+        add rax,SKY_COLOR
+        mov rbx,BACK_W
+    sky_px:
+        store [rdi+rcx]:ptr<user,u8>,al
+        inc rcx
+        dec rbx
+        jne sky_px
+        inc rdx
+        cmp rdx,HORIZON
+        jb sky_row
+        mov rsi,0
+    column:
+        mov rax,r14
+        shr rax,2
+        add rax,rsi
+        and rax,1023
+        movzx ebx,[r12+rax]:ptr<user,u8>
+        mov rcx,HORIZON
+        sub rcx,rbx
+        imul rcx,rcx,BACK_W
+        add rcx,rsi
+        mov r8,rbx
+        mov al,MOUNT_FAR_COLOR
+        cmp rbx,27
+        jb far_body
+        mov al,SNOW_COLOR
+        store [rdi+rcx]:ptr<user,u8>,al
+        add rcx,BACK_W
+        store [rdi+rcx]:ptr<user,u8>,al
+        add rcx,BACK_W
+        sub r8,2
+        mov al,MOUNT_FAR_COLOR
+    far_body:
+        cmp r8,0
+        je far_done
+        store [rdi+rcx]:ptr<user,u8>,al
+        add rcx,BACK_W
+        dec r8
+        jmp far_body
+    far_done:
+        mov rax,r14
+        shr rax,1
+        add rax,rsi
+        and rax,1023
+        movzx ebx,[r13+rax]:ptr<user,u8>
+        mov rcx,HORIZON
+        sub rcx,rbx
+        imul rcx,rcx,BACK_W
+        add rcx,rsi
+        mov r8,rbx
+        mov al,MOUNT_NEAR_COLOR
+    near_body:
+        cmp r8,0
+        je near_done
+        store [rdi+rcx]:ptr<user,u8>,al
+        add rcx,BACK_W
+        dec r8
+        jmp near_body
+    near_done:
+        inc rsi
+        cmp rsi,BACK_W
+        jb column
+        return 0
+    }
+
+    // Mode-7 floor. For each screen row below the horizon the generated
+    // row tables give the ground distance D and the lateral step S; the row
+    // is a straight segment of the track map sampled from left to right.
+    export fn draw_floor() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        lea r8,[sine]:ptr<user,array<u8,SINE_LEN>>
+        adopt r8,[r8]:ptr<user,i32>
+        load rax,[r15+G_CAM_A]:ptr<user,u64>
+        and rax,4095
+        load r9d,[r8+rax*4]:ptr<user,i32>
+        movsxd r9,r9d
+        store [r15+G_FY]:ptr<user,u64>,r9
+        add rax,1024
+        and rax,4095
+        load r10d,[r8+rax*4]:ptr<user,i32>
+        movsxd r10,r10d
+        store [r15+G_FX]:ptr<user,u64>,r10
+        adopt rdi,[r15+BACK]:ptr<user,u8>
+        lea rsi,[track]:ptr<user,array<u8,TRACK_LEN>>
+        mov r12,HORIZON
+    row:
+        lea r8,[row_dist]:ptr<user,array<u8,ROW_DIST_LEN>>
+        adopt r8,[r8]:ptr<user,i32>
+        load eax,[r8+r12*4]:ptr<user,i32>
+        movsxd rax,eax
+        lea r8,[row_step]:ptr<user,array<u8,ROW_STEP_LEN>>
+        adopt r8,[r8]:ptr<user,i32>
+        load ebx,[r8+r12*4]:ptr<user,i32>
+        movsxd rbx,ebx
+        load r10,[r15+G_FX]:ptr<user,u64>
+        load r9,[r15+G_FY]:ptr<user,u64>
+        mov rdx,r10
+        imul rdx,rax
+        sar rdx,16
+        load r11,[r15+G_CAM_X]:ptr<user,u64>
+        add rdx,r11
+        mov r13,r9
+        imul r13,rax
+        sar r13,16
+        load r11,[r15+G_CAM_Y]:ptr<user,u64>
+        add r13,r11
+        mov r14,r9
+        imul r14,rbx
+        sar r14,16
+        neg r14
+        mov r9,r10
+        imul r9,rbx
+        sar r9,16
+        imul rax,r14,160
+        sub rdx,rax
+        imul rax,r9,160
+        sub r13,rax
+        imul rcx,r12,BACK_W
+        mov r8,BACK_W
+    px:
+        mov rax,rdx
+        sar rax,16
+        cmp rax,512
+        jae outside
+        mov rbx,r13
+        sar rbx,16
+        cmp rbx,512
+        jae outside
+        shl rbx,9
+        add rbx,rax
+        movzx eax,[rsi+rbx]:ptr<user,u8>
+        jmp put
+    outside:
+        mov rax,rdx
+        xor rax,r13
+        shr rax,20
+        and rax,1
+        add rax,GRASS_COLOR
+    put:
+        store [rdi+rcx]:ptr<user,u8>,al
+        add rdx,r14
+        add r13,r9
+        inc rcx
+        dec r8
+        jne px
+        inc r12
+        cmp r12,BACK_H
+        jb row
+        return 0
+    }
+
+    // Draws sprite r12 (32x32 frames) scaled to rbx pixels, centred on
+    // x = r13 with its bottom row on y = r14; rsi is the 16.16 texel step.
+    // Palette index 0 is transparent.
+    export fn draw_sprite(in sprite:u64 @r12, in center:u64 @r13, in bottom:u64 @r14, in size:u64 @rbx, in step:u64 @rsi) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+BACK]:ptr<user,u8>
+        lea r8,[sprites]:ptr<user,array<u8,SPRITES_LEN>>
+        shl r12,10
+        mov r9,rbx
+        shr r9,1
+        sub r13,r9
+        sub r14,rbx
+        mov r10,0
+    srow:
+        cmp r10,rbx
+        jae sdone
+        mov rax,r14
+        add rax,r10
+        cmp rax,BACK_H
+        jae snext_row
+        imul rax,rax,BACK_W
+        mov r11,r10
+        imul r11,rsi
+        shr r11,16
+        cmp r11,31
+        jbe srow_ok
+        mov r11,31
+    srow_ok:
+        shl r11,5
+        add r11,r12
+        mov rcx,0
+    scol:
+        cmp rcx,rbx
+        jae snext_row
+        mov rdx,r13
+        add rdx,rcx
+        cmp rdx,BACK_W
+        jae snext_col
+        mov r9,rcx
+        imul r9,rsi
+        shr r9,16
+        cmp r9,31
+        jbe scol_ok
+        mov r9,31
+    scol_ok:
+        add r9,r11
+        movzx r9d,[r8+r9]:ptr<user,u8>
+        cmp r9,0
+        je snext_col
+        add rdx,rax
+        store [rdi+rdx]:ptr<user,u8>,r9b
+    snext_col:
+        inc rcx
+        jmp scol
+    snext_row:
+        inc r10
+        jmp srow
+    sdone:
+        return 0
+    }
+
+    // Clipped solid rectangle.
+    export fn fill_rect(in x:u64 @r12, in y:u64 @r13, in w:u64 @r14, in h:u64 @rbx, in color:u64 @rsi) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+BACK]:ptr<user,u8>
+        mov r8,0
+    frow:
+        cmp r8,rbx
+        jae fdone
+        mov rax,r13
+        add rax,r8
+        cmp rax,BACK_H
+        jae fnext_row
+        imul rax,rax,BACK_W
+        mov rcx,0
+    fcol:
+        cmp rcx,r14
+        jae fnext_row
+        mov rdx,r12
+        add rdx,rcx
+        cmp rdx,BACK_W
+        jae fnext_col
+        add rdx,rax
+        mov r9,rsi
+        store [rdi+rdx]:ptr<user,u8>,r9b
+    fnext_col:
+        inc rcx
+        jmp fcol
+    fnext_row:
+        inc r8
+        jmp frow
+    fdone:
+        return 0
+    }
+
+    // ------------------------------------------------------------ text line
+    export fn text_clear() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov rax,0
+        store [r15+TEXT_LEN]:ptr<user,u64>,rax
+        return 0
+    }
+
+    // Appends the NUL-terminated string at offset r12 of the strings table.
+    export fn text_str(in offset:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+TEXT]:ptr<user,u8>
+        lea rsi,[strings]:ptr<user,array<u8,STRINGS_LEN>>
+        load rcx,[r15+TEXT_LEN]:ptr<user,u64>
+    copy:
+        movzx eax,[rsi+r12]:ptr<user,u8>
+        cmp rax,0
+        je copied
+        cmp rcx,60
+        jae copied
+        store [rdi+rcx]:ptr<user,u8>,al
+        inc rcx
+        inc r12
+        jmp copy
+    copied:
+        store [r15+TEXT_LEN]:ptr<user,u64>,rcx
+        return 0
+    }
+
+    // Appends r12 in decimal with at least r13 digits.
+    export fn text_num(in value:u64 @r12, in digits:u64 @r13) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+DIGITS]:ptr<user,u8>
+        mov r8,0
+    divide:
+        mov rax,r12
+        mov rcx,0xcccccccccccccccd
+        mul rcx
+        shr rdx,3
+        imul rax,rdx,10
+        mov rbx,r12
+        sub rbx,rax
+        add rbx,48
+        store [rdi+r8]:ptr<user,u8>,bl
+        inc r8
+        mov r12,rdx
+        cmp r12,0
+        jne divide
+        cmp r8,r13
+        jb divide
+        adopt rsi,[r15+TEXT]:ptr<user,u8>
+        load rcx,[r15+TEXT_LEN]:ptr<user,u64>
+    reverse:
+        cmp r8,0
+        je reversed
+        dec r8
+        movzx eax,[rdi+r8]:ptr<user,u8>
+        cmp rcx,60
+        jae reversed
+        store [rsi+rcx]:ptr<user,u8>,al
+        inc rcx
+        jmp reverse
+    reversed:
+        store [r15+TEXT_LEN]:ptr<user,u64>,rcx
+        return 0
+    }
+
+    // Renders the text line with the 5x7 font; each font pixel becomes a
+    // scale x scale block. Pixels outside the back buffer are dropped.
+    fn text_render(in x:u64 @r12, in y:u64 @r13, in color:u64 @r14, in scale:u64 @rbx) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rdi,[r15+BACK]:ptr<user,u8>
+        mov r9,0
+        store [r15+TEXT_I]:ptr<user,u64>,r9
+    tchar:
+        load r9,[r15+TEXT_I]:ptr<user,u64>
+        load rax,[r15+TEXT_LEN]:ptr<user,u64>
+        cmp r9,rax
+        jae tdone
+        adopt rsi,[r15+TEXT]:ptr<user,u8>
+        movzx r10d,[rsi+r9]:ptr<user,u8>
+        cmp r10,32
+        jb tnext_char
+        sub r10,32
+        shl r10,3
+        mov r11,0
+    trow:
+        lea r8,[font]:ptr<user,array<u8,FONT_LEN>>
+        mov rax,r10
+        add rax,r11
+        movzx edx,[r8+rax]:ptr<user,u8>
+        mov rcx,0
+    tcol:
+        mov rax,16
+        shr rax,cl
+        test rdx,rax
+        je tnext_col
+        mov rsi,0
+    tby:
+        cmp rsi,rbx
+        jae tnext_col
+        mov rax,r11
+        imul rax,rbx
+        add rax,r13
+        add rax,rsi
+        cmp rax,BACK_H
+        jae tnext_by
+        imul rax,rax,BACK_W
+        mov r9,rcx
+        imul r9,rbx
+        add r9,r12
+        add rax,r9
+        mov r8,0
+    tbx:
+        cmp r8,rbx
+        jae tnext_by
+        mov r9,rax
+        add r9,r8
+        cmp r9,64000
+        jae tskip_px
+        store [rdi+r9]:ptr<user,u8>,r14b
+    tskip_px:
+        inc r8
+        jmp tbx
+    tnext_by:
+        inc rsi
+        jmp tby
+    tnext_col:
+        inc rcx
+        cmp rcx,5
+        jb tcol
+        inc r11
+        cmp r11,7
+        jb trow
+    tnext_char:
+        imul rax,rbx,6
+        add r12,rax
+        load r9,[r15+TEXT_I]:ptr<user,u64>
+        inc r9
+        store [r15+TEXT_I]:ptr<user,u64>,r9
+        jmp tchar
+    tdone:
+        return 0
+    }
+
+    // Draws the text line with a drop shadow; x = CENTER_TEXT centres it.
+    export fn text_draw(in x:u64 @r12, in y:u64 @r13, in color:u64 @r14, in scale:u64 @rbx) -> u64
+    FX
+    CLOB {
+        cmp r12,CENTER_TEXT
+        jne placed
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+TEXT_LEN]:ptr<user,u64>
+        imul rax,rbx
+        imul rax,rax,6
+        sub rax,rbx
+        mov r12,BACK_W
+        sub r12,rax
+        shr r12,1
+    placed:
+        mov rax,rbx
+        shr rax,1
+        cmp rax,0
+        jne shadow
+        mov rax,1
+    shadow:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+SV_TD_X]:ptr<user,u64>,r12
+        store [r15+SV_TD_Y]:ptr<user,u64>,r13
+        store [r15+SV_TD_C]:ptr<user,u64>,r14
+        store [r15+SV_TD_C+8]:ptr<user,u64>,rbx
+        mov r8,r12
+        add r8,rax
+        mov r9,r13
+        add r9,rax
+        mov r10,C_INK
+        call text_render(r8,r9,r10,rbx)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+SV_TD_X]:ptr<user,u64>
+        load r13,[r15+SV_TD_Y]:ptr<user,u64>
+        load r14,[r15+SV_TD_C]:ptr<user,u64>
+        load rbx,[r15+SV_TD_C+8]:ptr<user,u64>
+        call text_render(r12,r13,r14,rbx)
+        return 0
+    }
+}

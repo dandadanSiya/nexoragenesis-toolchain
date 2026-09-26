@@ -1,0 +1,641 @@
+// Nexora OS toy kernel, written in NTASM v0.
+//
+// efi_main keeps the firmware only long enough to choose a GOP mode, obtain
+// memory and calibrate the TSC. It then calls ExitBootServices: from that
+// point no firmware code runs, the kernel drives the framebuffer, the PS/2
+// controller, the PC speaker and the serial port directly, and hands the
+// machine to the game loop (game.ntasm). QEMU/OVMF laboratory only.
+
+%text FX effects {reads_mem,writes_mem,changes_flags,privileged,io_port,reads_clock,interrupt_state,suspends}
+%text CLOB clobbers {rax,rbx,rcx,rdx,rsi,rdi,r8,r9,r10,r11,r12,r13,r14,r15,rflags}
+
+// EFI_BOOT_SERVICES offsets
+%define BS_ALLOCATE_PAGES 40
+%define BS_GET_MEMORY_MAP 56
+%define BS_EXIT_BOOT_SERVICES 232
+%define BS_STALL 248
+%define BS_SET_WATCHDOG 256
+%define BS_LOCATE_PROTOCOL 320
+
+section .rdata {
+    data gop_guid:array<u8,16> = "\xde\xa9\x42\x90\xdc\x23\x38\x4a\x96\xfb\x7a\xde\xd0\x80\x51\x6a"
+}
+
+section .data {
+    data g_image:u64 = 0
+    data g_bs:u64 = 0
+    data g_gop:u64 = 0
+    data g_state:u64 = 0
+    data g_info:u64 = 0
+    data g_info_size:u64 = 0
+    data g_map_size:u64 = 0
+    data g_map_key:u64 = 0
+    data g_desc_size:u64 = 0
+    data g_desc_version:u64 = 0
+}
+
+section .text {
+    // ---------------------------------------------------------------- serial
+    fn serial_byte(in value:u8 @bl) -> u64
+    FX
+    CLOB {
+        mov rcx,100000
+    wait:
+        mov dx,0x3fd
+        in al,dx
+        test al,0x20
+        jne ready
+        dec rcx
+        jne wait
+    ready:
+        mov dx,0x3f8
+        mov al,bl
+        out dx,al
+        return 0
+    }
+
+    // Writes a NUL-terminated string that lives in .rdata.
+    fn serial_text(in text:ptr<user,u8> @rsi) -> u64
+    FX
+    CLOB {
+        mov rdi,0
+    next:
+        movzx ebx,[rsi+rdi]:ptr<user,u8>
+        cmp rbx,0
+        je done
+        call serial_byte(bl)
+        adopt rsi,[rsi]:ptr<user,u8>
+        inc rdi
+        jmp next
+    done:
+        return 0
+    }
+
+    fn serial_hex(in value:u64 @r12) -> u64
+    FX
+    CLOB {
+        mov r13,60
+    digit:
+        mov rax,r12
+        mov rcx,r13
+        shr rax,cl
+        and rax,15
+        cmp rax,10
+        jb decimal
+        add rax,39
+    decimal:
+        add rax,48
+        mov bl,al
+        call serial_byte(bl)
+        sub r13,4
+        jns digit
+        mov bl,13
+        call serial_byte(bl)
+        mov bl,10
+        call serial_byte(bl)
+        return 0
+    }
+
+    // ------------------------------------------------------------ arithmetic
+    // Unsigned 64-bit division by shift and subtract. NTASM refuses `div`
+    // without a proof that the divisor is non-zero; this routine returns
+    // all ones for a zero divisor instead of trapping.
+    export fn udiv(in dividend:u64 @r8, in divisor:u64 @r9) -> u64
+    FX
+    CLOB {
+        mov rax,0
+        cmp r9,0
+        je by_zero
+        mov r10,0
+        mov rcx,64
+    step:
+        shl r10,1
+        mov r11,r8
+        shr r11,63
+        or r10,r11
+        shl r8,1
+        shl rax,1
+        cmp r10,r9
+        jb keep
+        sub r10,r9
+        or rax,1
+    keep:
+        dec rcx
+        jne step
+        return rax
+    by_zero:
+        mov rax,0xffffffffffffffff
+        return rax
+    }
+
+    // ----------------------------------------------------------------- clock
+    export fn millis() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        rdtsc
+        shl rdx,32
+        or rax,rdx
+        load rbx,[r15+S_TSC0]:ptr<user,u64>
+        sub rax,rbx
+        mov r8,rax
+        load r9,[r15+S_TSC_MS]:ptr<user,u64>
+        call udiv(r8,r9)
+        return rax
+    }
+
+    // -------------------------------------------------------------- keyboard
+    // Drains the PS/2 output buffer and updates held / pressed flags.
+    export fn keyboard_poll() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt r14,[r15]:ptr<user,u8>
+        lea r13,[keymap]:ptr<user,array<u8,KEYMAP_LEN>>
+        mov r12,64
+    poll:
+        mov dx,0x64
+        in al,dx
+        test al,1
+        je done
+        mov bl,al
+        mov dx,0x60
+        in al,dx
+        test bl,0x20
+        jne again
+        movzx eax,al
+        cmp rax,0xe0
+        jne plain
+        mov rcx,1
+        store [r15+S_E0]:ptr<user,u64>,rcx
+        jmp again
+    plain:
+        load rcx,[r15+S_E0]:ptr<user,u64>
+        mov rdx,0
+        store [r15+S_E0]:ptr<user,u64>,rdx
+        mov rsi,rax
+        and rsi,0x7f
+        shl rcx,7
+        add rsi,rcx
+        movzx edi,[r13+rsi]:ptr<user,u8>
+        cmp rdi,0
+        je again
+        dec rdi
+        test rax,0x80
+        jne released
+        movzx ecx,[r14+rdi+KEYS]:ptr<user,u8>
+        cmp rcx,0
+        jne held
+        mov cl,1
+        store [r14+rdi+KEYS_HIT]:ptr<user,u8>,cl
+    held:
+        mov cl,1
+        store [r14+rdi+KEYS]:ptr<user,u8>,cl
+        jmp again
+    released:
+        mov cl,0
+        store [r14+rdi+KEYS]:ptr<user,u8>,cl
+    again:
+        dec r12
+        jne poll
+    done:
+        return 0
+    }
+
+    // ------------------------------------------------------------ PC speaker
+    export fn tone(in hz:u64 @r12) -> u64
+    FX
+    CLOB {
+        cmp r12,20
+        jb silence
+        mov r8,1193182
+        mov r9,r12
+        call udiv(r8,r9)
+        mov rbx,rax
+        mov dx,0x43
+        mov al,0xb6
+        out dx,al
+        mov dx,0x42
+        mov al,bl
+        out dx,al
+        shr rbx,8
+        mov al,bl
+        out dx,al
+        mov dx,0x61
+        in al,dx
+        or al,3
+        out dx,al
+        return 0
+    silence:
+        mov dx,0x61
+        in al,dx
+        and al,0xfc
+        out dx,al
+        return 0
+    }
+
+    export fn reboot() -> u64
+    FX
+    CLOB {
+        mov r12,0
+        call tone(r12)
+        mov rcx,100000
+    wait:
+        mov dx,0x64
+        in al,dx
+        test al,2
+        je send
+        dec rcx
+        jne wait
+    send:
+        mov al,0xfe
+        out dx,al
+    halt:
+        hlt
+        jmp halt
+    }
+
+    // --------------------------------------------------------------- display
+    // Builds the palette lookup (256 RGB triplets -> framebuffer pixels).
+    export fn set_palette() -> u64
+    FX
+    CLOB {
+        lea rsi,[palette]:ptr<user,array<u8,PALETTE_LEN>>
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt r14,[r15+LUT]:ptr<user,u32>
+        load r13,[r15+S_FORMAT]:ptr<user,u64>
+        mov rcx,0
+        mov rdi,0
+    entry:
+        movzx eax,[rsi+rdi]:ptr<user,u8>
+        movzx ebx,[rsi+rdi+1]:ptr<user,u8>
+        movzx edx,[rsi+rdi+2]:ptr<user,u8>
+        cmp r13,0
+        jne bgr
+        shl rdx,16
+        shl rbx,8
+        or rax,rbx
+        or rax,rdx
+        jmp put
+    bgr:
+        shl rax,16
+        shl rbx,8
+        or rax,rbx
+        or rax,rdx
+    put:
+        store [r14+rcx*4]:ptr<user,u32>,eax
+        add rdi,3
+        inc rcx
+        cmp rcx,256
+        jb entry
+        return 0
+    }
+
+    // Copies the 320x200 back buffer to the framebuffer, doubling pixels
+    // when the GOP mode is large enough.
+    export fn present() -> u64
+    FX
+    CLOB {
+        call keyboard_poll()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt rsi,[r15+BACK]:ptr<user,u8>
+        adopt rbx,[r15+LUT]:ptr<user,u32>
+        load rdi,[r15+S_FB]:ptr<user,u64>
+        adopt rdi,[rdi]:ptr<device,u64>
+        adopt r14,[rdi]:ptr<device,u32>
+        load r8,[r15+S_ROWBYTES]:ptr<user,u64>
+        load rdx,[r15+S_ORIGIN]:ptr<user,u64>
+        load r9,[r15+S_SCALE]:ptr<user,u64>
+        mov rcx,0
+        mov r10,BACK_H
+        cmp r9,2
+        jne single
+    double_row:
+        mov r12,rdx
+        add r12,r8
+        mov r13,BACK_W
+    double_pixel:
+        movzx eax,[rsi+rcx]:ptr<user,u8>
+        load eax,[rbx+rax*4]:ptr<user,u32>
+        mov r11,rax
+        shl r11,32
+        or rax,r11
+        store [rdi+rdx]:ptr<device,u64>,rax
+        store [rdi+r12]:ptr<device,u64>,rax
+        add rdx,8
+        add r12,8
+        inc rcx
+        dec r13
+        jne double_pixel
+        sub rdx,2560
+        add rdx,r8
+        add rdx,r8
+        dec r10
+        jne double_row
+        return 0
+    single:
+        mov r13,BACK_W
+    single_pixel:
+        movzx eax,[rsi+rcx]:ptr<user,u8>
+        load eax,[rbx+rax*4]:ptr<user,u32>
+        store [r14+rdx]:ptr<device,u32>,eax
+        add rdx,4
+        inc rcx
+        dec r13
+        jne single_pixel
+        sub rdx,1280
+        add rdx,r8
+        dec r10
+        jne single
+        return 0
+    }
+
+    // Chooses 640x480 when available and records the framebuffer geometry.
+    fn setup_video() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rdi,[rsi+24]:ptr<firmware,u64>
+        adopt rdi,[rdi]:ptr<firmware,u32>
+        load r12d,[rdi]:ptr<firmware,u32>
+        mov r13,0
+        mov r14,0xffffffffffffffff
+    query:
+        cmp r13,r12
+        jae chosen
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rax,[rsi]:ptr<firmware,u64>
+        mov rcx,rsi
+        mov rdx,r13
+        lea r8,[g_info_size]:ptr<user,u64>
+        lea r9,[g_info]:ptr<user,u64>
+        call_efi rax
+        cmp rax,0
+        jne skip
+        load rbx,[g_info]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u32>
+        load eax,[rbx+4]:ptr<firmware,u32>
+        cmp rax,640
+        jne skip
+        load eax,[rbx+8]:ptr<firmware,u32>
+        cmp rax,480
+        jne skip
+        load eax,[rbx+12]:ptr<firmware,u32>
+        cmp rax,1
+        ja skip
+        mov r14,r13
+    skip:
+        inc r13
+        jmp query
+    chosen:
+        mov rax,0xffffffffffffffff
+        cmp r14,rax
+        je keep_mode
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rax,[rsi+8]:ptr<firmware,u64>
+        mov rcx,rsi
+        mov rdx,r14
+        call_efi rax
+    keep_mode:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rsi,[g_gop]:ptr<user,u64>
+        adopt rsi,[rsi]:ptr<firmware,u64>
+        load rdi,[rsi+24]:ptr<firmware,u64>
+        adopt rdi,[rdi]:ptr<firmware,u64>
+        load rax,[rdi+24]:ptr<firmware,u64>
+        store [r15+S_FB]:ptr<user,u64>,rax
+        load rbx,[rdi+8]:ptr<firmware,u64>
+        adopt rbx,[rbx]:ptr<firmware,u32>
+        load eax,[rbx+4]:ptr<firmware,u32>
+        store [r15+S_WIDTH]:ptr<user,u64>,rax
+        mov r8,rax
+        load eax,[rbx+8]:ptr<firmware,u32>
+        store [r15+S_HEIGHT]:ptr<user,u64>,rax
+        mov r9,rax
+        load eax,[rbx+12]:ptr<firmware,u32>
+        store [r15+S_FORMAT]:ptr<user,u64>,rax
+        load eax,[rbx+32]:ptr<firmware,u32>
+        store [r15+S_STRIDE]:ptr<user,u64>,rax
+        shl rax,2
+        store [r15+S_ROWBYTES]:ptr<user,u64>,rax
+        mov r10,rax
+        mov rcx,1
+        cmp r8,640
+        jb scaled
+        cmp r9,400
+        jb scaled
+        mov rcx,2
+    scaled:
+        store [r15+S_SCALE]:ptr<user,u64>,rcx
+        // origin = ((height - 200*scale)/2) * rowbytes + ((width - 320*scale)/2) * 4
+        imul rax,rcx,200
+        sub r9,rax
+        shr r9,1
+        imul r9,r10
+        imul rax,rcx,320
+        sub r8,rax
+        shr r8,1
+        shl r8,2
+        add r9,r8
+        store [r15+S_ORIGIN]:ptr<user,u64>,r9
+        // clear the whole framebuffer
+        load rdi,[r15+S_FB]:ptr<user,u64>
+        adopt rdi,[rdi]:ptr<device,u64>
+        load rax,[r15+S_HEIGHT]:ptr<user,u64>
+        imul rax,r10
+        shr rax,3
+        mov rcx,0
+        mov rdx,0
+    clear:
+        store [rdi+rcx*8]:ptr<device,u64>,rdx
+        inc rcx
+        cmp rcx,rax
+        jb clear
+        return 0
+    }
+
+    fn fail_boot(in code:u64 @r12) -> u64
+    FX
+    CLOB {
+        lea rsi,[msg_fail]:ptr<user,array<u8,MSG_FAIL_LEN>>
+        adopt rsi,[rsi]:ptr<user,u8>
+        call serial_text(rsi)
+        call serial_hex(r12)
+    halt:
+        hlt
+        jmp halt
+    }
+
+    fn boot() -> u64
+    FX
+    CLOB {
+        lea rsi,[msg_boot]:ptr<user,array<u8,MSG_BOOT_LEN>>
+        adopt rsi,[rsi]:ptr<user,u8>
+        call serial_text(rsi)
+
+        // SetWatchdogTimer(0, 0, 0, NULL)
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_SET_WATCHDOG]:ptr<firmware,u64>
+        mov rcx,0
+        mov rdx,0
+        mov r8,0
+        mov r9,0
+        call_efi rax
+
+        // AllocatePages(AnyPages, EfiLoaderData, STATE_PAGES, &g_state)
+        load rax,[rbx+BS_ALLOCATE_PAGES]:ptr<firmware,u64>
+        mov rcx,0
+        mov rdx,2
+        mov r8,STATE_PAGES
+        lea r9,[g_state]:ptr<user,u64>
+        call_efi rax
+        cmp rax,0
+        je have_memory
+        mov r12,1
+        call fail_boot(r12)
+    have_memory:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov rcx,0
+        mov rdx,0
+    zero:
+        store [r15+rcx*8]:ptr<user,u64>,rdx
+        inc rcx
+        cmp rcx,STATE_WORDS
+        jb zero
+
+        // LocateProtocol(&gop_guid, NULL, &g_gop)
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_LOCATE_PROTOCOL]:ptr<firmware,u64>
+        lea rcx,[gop_guid]:ptr<user,array<u8,16>>
+        mov rdx,0
+        lea r8,[g_gop]:ptr<user,u64>
+        call_efi rax
+        cmp rax,0
+        je have_gop
+        mov r12,2
+        call fail_boot(r12)
+    have_gop:
+        call setup_video()
+        call set_palette()
+
+        // TSC ticks per millisecond, measured against Stall(50 ms).
+        rdtsc
+        shl rdx,32
+        or rax,rdx
+        mov r14,rax
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_STALL]:ptr<firmware,u64>
+        mov rcx,50000
+        call_efi rax
+        rdtsc
+        shl rdx,32
+        or rax,rdx
+        sub rax,r14
+        mov r8,rax
+        mov r9,50
+        call udiv(r8,r9)
+        cmp rax,0
+        jne tsc_ok
+        mov rax,1
+    tsc_ok:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+S_TSC_MS]:ptr<user,u64>,rax
+        mov r12,rax
+        call serial_hex(r12)
+
+        // GetMemoryMap + ExitBootServices, retried if the map changed.
+        mov r13,4
+    exit_attempt:
+        load r15,[g_state]:ptr<user,u64>
+        mov r14,r15
+        add r14,MEMMAP
+        mov rax,MEMMAP_BYTES
+        store [g_map_size]:ptr<user,u64>,rax
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_GET_MEMORY_MAP]:ptr<firmware,u64>
+        lea rcx,[g_map_size]:ptr<user,u64>
+        mov rdx,r14
+        lea r8,[g_map_key]:ptr<user,u64>
+        lea r9,[g_desc_size]:ptr<user,u64>
+        lea r10,[g_desc_version]:ptr<user,u64>
+        call_efi rax,r10
+        load rbx,[g_bs]:ptr<user,u64>
+        adopt rbx,[rbx]:ptr<firmware,u64>
+        load rax,[rbx+BS_EXIT_BOOT_SERVICES]:ptr<firmware,u64>
+        load rcx,[g_image]:ptr<user,u64>
+        load rdx,[g_map_key]:ptr<user,u64>
+        call_efi rax
+        cmp rax,0
+        je exited
+        dec r13
+        jne exit_attempt
+        mov r12,3
+        call fail_boot(r12)
+    exited:
+        // The firmware is gone; the machine belongs to Nexora.
+        cli
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        rdtsc
+        shl rdx,32
+        or rax,rdx
+        store [r15+S_TSC0]:ptr<user,u64>,rax
+        lea rsi,[msg_owned]:ptr<user,array<u8,MSG_OWNED_LEN>>
+        adopt rsi,[rsi]:ptr<user,u8>
+        call serial_text(rsi)
+        // Enable keyboard scanning, then discard stale bytes.
+        mov rcx,100000
+    kbd_wait:
+        mov dx,0x64
+        in al,dx
+        test al,2
+        je kbd_send
+        dec rcx
+        jne kbd_wait
+    kbd_send:
+        mov dx,0x60
+        mov al,0xf4
+        out dx,al
+        mov rcx,1000
+    drain:
+        mov dx,0x64
+        in al,dx
+        test al,1
+        je drained
+        mov dx,0x60
+        in al,dx
+        dec rcx
+        jne drain
+    drained:
+        call game_main()
+        call reboot()
+        return 0
+    }
+
+    export fn main(in image_handle:u64 @rcx, in system_table:ptr<firmware,u64> @rdx) -> u64
+    FX
+    CLOB {
+        store [g_image]:ptr<user,u64>,rcx
+        load rax,[rdx+96]:ptr<firmware,u64>
+        store [g_bs]:ptr<user,u64>,rax
+        call boot()
+        return 0
+    }
+}
+

@@ -107,7 +107,13 @@ static int outputs_instruction(Graph *g, const NtFStmt *s,
   NtFId ids[3];
   size_t count = 0;
   uint64_t explicit_families = 0;
-  for (NtFId id = s->expression; id; id = EX(g->p, id).next) {
+  int efi_call = !strcmp(s->name, "call_efi");
+  const char *machine_name = !strcmp(s->name, "adopt") ? "lea"
+                             : efi_call || !strcmp(s->name, "call_indirect")
+                                 ? "call"
+                                 : s->name;
+  for (NtFId id = s->expression; id && !(efi_call && count == 1);
+       id = EX(g->p, id).next) {
     if (count == 3 || id > g->p->expression_count)
       return 0;
     const NtFExpr *x = &EX(g->p, id);
@@ -135,7 +141,7 @@ static int outputs_instruction(Graph *g, const NtFStmt *s,
   }
   NtX64Effects facts;
   NtX64Context context = {NT_X64_ALL_FEATURES, 0};
-  if (nt_x64_effects(s->name, operands, count, context, &facts))
+  if (nt_x64_effects(machine_name, operands, count, context, &facts))
     return 0;
   uint64_t reads[16] = {0}, writes[16] = {0};
   for (unsigned r = 0; r < 16; r++) {
@@ -567,7 +573,9 @@ static int permission_instruction(Graph *g, const NtFStmt *s,
   if (a && b && EX(g->p, a).kind == NTF_X_REGISTER &&
       EX(g->p, a).reg.family < 16 && EX(g->p, a).reg.bits == 64) {
     unsigned r = (unsigned)EX(g->p, a).reg.family;
-    if (!strcmp(s->name, "lea"))
+    if (!strcmp(s->name, "adopt"))
+      after[r] = 1;
+    else if (!strcmp(s->name, "lea"))
       after[r] = (unsigned char)memory_writable(g, b, before);
     else if (named(s->name, "mov|load|xchg")) {
       if (EX(g->p, b).kind == NTF_X_MEMORY) {
@@ -597,11 +605,14 @@ static int pointer_instruction(Graph *g, const NtFStmt *s,
   if (branch(s))
     return 1;
   NtFId a = s->expression, b = a ? EX(g->p, a).next : 0;
-  if (check)
+  /* adopt is the explicit, privileged integer-to-pointer conversion: its
+   * address operand is deliberately not required to carry provenance. */
+  int adopt = !strcmp(s->name, "adopt");
+  if (check && !adopt)
     for (NtFId e = a; e; e = EX(g->p, e).next)
       if (EX(g->p, e).kind == NTF_X_MEMORY && !memory_pointer(g, e, before))
         return 0;
-  int move = named(s->name, "mov|load|movzx|movsx|movsxd|lea");
+  int move = named(s->name, "mov|load|movzx|movsx|movsxd|lea|adopt");
   if (check && a && b && EX(g->p, a).kind == NTF_X_MEMORY &&
       named(s->name, "mov|store|xchg")) {
     NtFId element = g->p->types[EX(g->p, a).type - 1].element;
@@ -636,13 +647,15 @@ static int pointer_instruction(Graph *g, const NtFStmt *s,
     writes |= 4;
   if (named(s->name, "syscall|call"))
     writes = UINT16_MAX;
+  if (!strcmp(s->name, "call_efi"))
+    writes |= 0x0F07; /* rax,rcx,rdx,r8-r11: UEFI volatile registers */
   for (unsigned r = 0; r < 16; r++)
     if (writes & (UINT64_C(1) << r))
       after[r] = 0;
   if (a && b && EX(g->p, a).kind == NTF_X_REGISTER &&
       EX(g->p, a).reg.bits == 64 && EX(g->p, a).reg.family < 16) {
     NtFId value = 0;
-    if (move && !strcmp(s->name, "lea"))
+    if (move && named(s->name, "lea|adopt"))
       value = pointer_type(g->p, EX(g->p, b).type);
     else if ((move || !strcmp(s->name, "xchg")) &&
              EX(g->p, b).kind == NTF_X_MEMORY)

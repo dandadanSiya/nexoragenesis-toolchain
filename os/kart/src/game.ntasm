@@ -1,0 +1,704 @@
+// Nexora Kart scenes, heads-up display and main loop. Game logic runs at
+// a fixed 60 steps per second measured with the TSC; rendering happens
+// once per loop iteration.
+
+section .text {
+    fn beep(in hz:u64 @r12, in ticks:u64 @r13) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+G_TONE_TICKS]:ptr<user,u64>,r13
+        call tone(r12)
+        return 0
+    }
+
+    // Appends a duration in 1/60 s ticks as m:ss.cc.
+    fn text_time(in ticks:u64 @r12) -> u64
+    FX
+    CLOB {
+        imul r8,r12,5
+        mov r9,3
+        call udiv(r8,r9)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+SV_TT_CS]:ptr<user,u64>,rax
+        mov r8,rax
+        mov r9,6000
+        call udiv(r8,r9)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+SV_TT_MIN]:ptr<user,u64>,rax
+        load r8,[r15+SV_TT_CS]:ptr<user,u64>
+        mov r9,100
+        call udiv(r8,r9)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rsi,[r15+SV_TT_MIN]:ptr<user,u64>
+        imul rcx,rsi,60
+        mov rdi,rax
+        sub rdi,rcx
+        store [r15+SV_TT_SEC]:ptr<user,u64>,rdi
+        imul rcx,rax,100
+        load r14,[r15+SV_TT_CS]:ptr<user,u64>
+        sub r14,rcx
+        store [r15+SV_TT_CS]:ptr<user,u64>,r14
+        mov r12,rsi
+        mov r13,1
+        call text_num(r12,r13)
+        mov r12,STR_COLON
+        call text_str(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+SV_TT_SEC]:ptr<user,u64>
+        mov r13,2
+        call text_num(r12,r13)
+        mov r12,STR_DOT
+        call text_str(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+SV_TT_CS]:ptr<user,u64>
+        mov r13,2
+        call text_num(r12,r13)
+        return 0
+    }
+
+    // Appends a place as 1ER, 2E, 3E or 4E.
+    fn text_place(in place:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+SV_TP]:ptr<user,u64>,r12
+        mov r13,1
+        call text_num(r12,r13)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rsi,[r15+SV_TP]:ptr<user,u64>
+        mov r12,STR_E
+        cmp rsi,1
+        jne suffix
+        mov r12,STR_ER
+    suffix:
+        call text_str(r12)
+        return 0
+    }
+
+    fn hud_title() -> u64
+    FX
+    CLOB {
+        call text_clear()
+        mov r12,STR_TITLE
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,16
+        mov r14,C_YELLOW
+        mov rbx,3
+        call text_draw(r12,r13,r14,rbx)
+        call text_clear()
+        mov r12,STR_SUBTITLE
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,42
+        mov r14,C_WHITE
+        mov rbx,1
+        call text_draw(r12,r13,r14,rbx)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_TICKS]:ptr<user,u64>
+        test rax,32
+        je no_prompt
+        call text_clear()
+        mov r12,STR_PRESS
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,122
+        mov r14,C_WHITE
+        mov rbx,2
+        call text_draw(r12,r13,r14,rbx)
+    no_prompt:
+        call text_clear()
+        mov r12,STR_HELP1
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,160
+        mov r14,C_LIGHT
+        mov rbx,1
+        call text_draw(r12,r13,r14,rbx)
+        call text_clear()
+        mov r12,STR_HELP2
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,172
+        mov r14,C_LIGHT
+        mov rbx,1
+        call text_draw(r12,r13,r14,rbx)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_BEST]:ptr<user,u64>
+        cmp rax,0
+        je no_best
+        call text_clear()
+        mov r12,STR_BEST
+        call text_str(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+G_BEST]:ptr<user,u64>
+        call text_time(r12)
+        mov r12,CENTER_TEXT
+        mov r13,186
+        mov r14,C_YELLOW
+        mov rbx,1
+        call text_draw(r12,r13,r14,rbx)
+    no_best:
+        return 0
+    }
+
+    fn hud_race() -> u64
+    FX
+    CLOB {
+        call draw_minimap()
+        call text_clear()
+        mov r12,STR_LAP
+        call text_str(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+KARTS+KLAP]:ptr<user,u64>
+        cmp r12,1
+        jge lap_min
+        mov r12,1
+    lap_min:
+        cmp r12,LAPS
+        jle lap_max
+        mov r12,LAPS
+    lap_max:
+        mov r13,1
+        call text_num(r12,r13)
+        mov r12,STR_OF3
+        call text_str(r12)
+        mov r12,6
+        mov r13,5
+        mov r14,C_WHITE
+        mov rbx,2
+        call text_draw(r12,r13,r14,rbx)
+        call text_clear()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+G_RACE_TICKS]:ptr<user,u64>
+        call text_time(r12)
+        mov r12,6
+        mov r13,24
+        mov r14,C_YELLOW
+        mov rbx,1
+        call text_draw(r12,r13,r14,rbx)
+        call text_clear()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+G_PLACE]:ptr<user,u64>
+        call text_place(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov r14,C_WHITE
+        load rax,[r15+G_PLACE]:ptr<user,u64>
+        cmp rax,1
+        jne place_color
+        mov r14,C_YELLOW
+    place_color:
+        mov r12,252
+        mov r13,168
+        mov rbx,3
+        call text_draw(r12,r13,r14,rbx)
+        mov r12,6
+        mov r13,189
+        mov r14,64
+        mov rbx,6
+        mov rsi,C_INK
+        call fill_rect(r12,r13,r14,rbx,rsi)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+KARTS+KV]:ptr<user,u64>
+        cmp rax,0
+        jge bar_positive
+        mov rax,0
+    bar_positive:
+        imul rax,rax,40
+        sar rax,16
+        cmp rax,62
+        jle bar_width
+        mov rax,62
+    bar_width:
+        mov r14,rax
+        mov r12,7
+        mov r13,190
+        mov rbx,4
+        mov rsi,C_ORANGE
+        call fill_rect(r12,r13,r14,rbx,rsi)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_GO]:ptr<user,u64>
+        cmp rax,0
+        je no_go
+        call text_clear()
+        mov r12,STR_GO
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,72
+        mov r14,C_GREEN
+        mov rbx,5
+        call text_draw(r12,r13,r14,rbx)
+    no_go:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_BANNER]:ptr<user,u64>
+        cmp rax,0
+        je no_banner
+        call text_clear()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+KARTS+KLAP]:ptr<user,u64>
+        cmp rax,LAPS
+        jne lap_number
+        mov r12,STR_LAST
+        call text_str(r12)
+        jmp banner
+    lap_number:
+        mov r12,STR_LAP
+        call text_str(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+KARTS+KLAP]:ptr<user,u64>
+        mov r13,1
+        call text_num(r12,r13)
+    banner:
+        mov r12,CENTER_TEXT
+        mov r13,96
+        mov r14,C_YELLOW
+        mov rbx,2
+        call text_draw(r12,r13,r14,rbx)
+    no_banner:
+        return 0
+    }
+
+    fn hud_countdown() -> u64
+    FX
+    CLOB {
+        call hud_race()
+        call text_clear()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_COUNT]:ptr<user,u64>
+        mov r12,3
+        mov r14,C_RED
+        cmp rax,60
+        jb number
+        mov r12,2
+        mov r14,C_ORANGE
+        cmp rax,120
+        jb number
+        mov r12,1
+        mov r14,C_YELLOW
+    number:
+        store [r15+SV_HC]:ptr<user,u64>,r14
+        mov r13,1
+        call text_num(r12,r13)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r14,[r15+SV_HC]:ptr<user,u64>
+        mov r12,CENTER_TEXT
+        mov r13,60
+        mov rbx,6
+        call text_draw(r12,r13,r14,rbx)
+        return 0
+    }
+
+    fn hud_finish() -> u64
+    FX
+    CLOB {
+        call draw_minimap()
+        call text_clear()
+        mov r12,STR_FINISH
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,30
+        mov r14,C_YELLOW
+        mov rbx,3
+        call text_draw(r12,r13,r14,rbx)
+        call text_clear()
+        mov r12,STR_PLACE
+        call text_str(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+G_FIN_PLACE]:ptr<user,u64>
+        call text_place(r12)
+        mov r12,CENTER_TEXT
+        mov r13,72
+        mov r14,C_WHITE
+        mov rbx,2
+        call text_draw(r12,r13,r14,rbx)
+        call text_clear()
+        mov r12,STR_TIME
+        call text_str(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+G_FINISH_TICKS]:ptr<user,u64>
+        call text_time(r12)
+        mov r12,CENTER_TEXT
+        mov r13,94
+        mov r14,C_WHITE
+        mov rbx,2
+        call text_draw(r12,r13,r14,rbx)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_TICKS]:ptr<user,u64>
+        test rax,32
+        je no_menu
+        call text_clear()
+        mov r12,STR_MENU
+        call text_str(r12)
+        mov r12,CENTER_TEXT
+        mov r13,132
+        mov r14,C_WHITE
+        mov rbx,1
+        call text_draw(r12,r13,r14,rbx)
+    no_menu:
+        return 0
+    }
+
+    // Player input from the keyboard state.
+    fn player_control() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt r14,[r15]:ptr<user,u8>
+        mov r13,0
+        movzx eax,[r14+KEYS+K_LEFT]:ptr<user,u8>
+        cmp rax,0
+        je no_left
+        or r13,1
+    no_left:
+        movzx eax,[r14+KEYS+K_RIGHT]:ptr<user,u8>
+        cmp rax,0
+        je no_right
+        or r13,2
+    no_right:
+        movzx eax,[r14+KEYS+K_UP]:ptr<user,u8>
+        cmp rax,0
+        je no_gas
+        or r13,4
+    no_gas:
+        movzx eax,[r14+KEYS+K_DOWN]:ptr<user,u8>
+        movzx ecx,[r14+KEYS+K_SPACE]:ptr<user,u8>
+        or rax,rcx
+        cmp rax,0
+        je no_brake
+        or r13,8
+    no_brake:
+        mov r12,0
+        call kart_step(r12,r13)
+        return 0
+    }
+
+    // Computer drivers for karts first..3.
+    fn drive_ai(in first:u64 @r12) -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+SV_DA]:ptr<user,u64>,r12
+    next_kart:
+        call ai_input(r12)
+        mov r13,rax
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+SV_DA]:ptr<user,u64>
+        call kart_step(r12,r13)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+SV_DA]:ptr<user,u64>
+        inc r12
+        store [r15+SV_DA]:ptr<user,u64>,r12
+        cmp r12,4
+        jb next_kart
+        return 0
+    }
+
+    fn race_common() -> u64
+    FX
+    CLOB {
+        call collide()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov r12,0
+        store [r15+SV_RC]:ptr<user,u64>,r12
+    progress:
+        call kart_progress(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+SV_RC]:ptr<user,u64>
+        inc r12
+        store [r15+SV_RC]:ptr<user,u64>,r12
+        cmp r12,4
+        jb progress
+        call update_ranks()
+        call camera_follow()
+        return 0
+    }
+
+    // One fixed 1/60 s step of the current scene.
+    fn tick() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_TICKS]:ptr<user,u64>
+        inc rax
+        store [r15+G_TICKS]:ptr<user,u64>,rax
+        load rax,[r15+G_GO]:ptr<user,u64>
+        cmp rax,0
+        je go_idle
+        dec rax
+        store [r15+G_GO]:ptr<user,u64>,rax
+    go_idle:
+        load rax,[r15+G_BANNER]:ptr<user,u64>
+        cmp rax,0
+        je banner_idle
+        dec rax
+        store [r15+G_BANNER]:ptr<user,u64>,rax
+    banner_idle:
+        load rax,[r15+G_TONE_TICKS]:ptr<user,u64>
+        cmp rax,0
+        je tone_idle
+        dec rax
+        store [r15+G_TONE_TICKS]:ptr<user,u64>,rax
+        cmp rax,0
+        jne tone_idle
+        mov r12,0
+        call tone(r12)
+    tone_idle:
+        mov rax,DEBUG
+        cmp rax,0
+        je report_done
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_TICKS]:ptr<user,u64>
+        mov rcx,rax
+        and rcx,255
+        cmp rcx,0
+        jne report_done
+        // frames drawn during the last 256 ticks, then the player's key
+        load r12,[r15+G_FRAMES]:ptr<user,u64>
+        mov rax,0
+        store [r15+G_FRAMES]:ptr<user,u64>,rax
+        call serial_hex(r12)
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load r12,[r15+KARTS+KPROG]:ptr<user,u64>
+        call serial_hex(r12)
+    report_done:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_SCENE]:ptr<user,u64>
+        cmp rax,SCENE_TITLE
+        je title
+        cmp rax,SCENE_COUNTDOWN
+        je countdown
+        cmp rax,SCENE_RACE
+        je race
+        jmp finish
+    title:
+        call camera_orbit()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt r14,[r15]:ptr<user,u8>
+        movzx eax,[r14+KEYS_HIT+K_ENTER]:ptr<user,u8>
+        cmp rax,0
+        je done
+        call race_reset()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov rax,SCENE_COUNTDOWN
+        store [r15+G_SCENE]:ptr<user,u64>,rax
+        call camera_follow()
+        jmp done
+    countdown:
+        load rax,[r15+G_COUNT]:ptr<user,u64>
+        inc rax
+        store [r15+G_COUNT]:ptr<user,u64>,rax
+        cmp rax,1
+        je low_beep
+        cmp rax,61
+        je low_beep
+        cmp rax,121
+        je low_beep
+        cmp rax,181
+        jne counted
+        mov rax,SCENE_RACE
+        store [r15+G_SCENE]:ptr<user,u64>,rax
+        mov rax,60
+        store [r15+G_GO]:ptr<user,u64>,rax
+        mov r12,880
+        mov r13,24
+        call beep(r12,r13)
+        jmp counted
+    low_beep:
+        mov r12,440
+        mov r13,10
+        call beep(r12,r13)
+    counted:
+        call camera_follow()
+        jmp done
+    race:
+        load rax,[r15+G_RACE_TICKS]:ptr<user,u64>
+        inc rax
+        store [r15+G_RACE_TICKS]:ptr<user,u64>,rax
+        mov r12,AUTOPILOT
+        cmp r12,0
+        je manual
+        mov r12,0
+        jmp autopilot
+    manual:
+        call player_control()
+        mov r12,1
+    autopilot:
+        call drive_ai(r12)
+        call race_common()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+KARTS+KDONE]:ptr<user,u64>
+        cmp rax,0
+        je done
+        mov rax,SCENE_FINISH
+        store [r15+G_SCENE]:ptr<user,u64>,rax
+        load rax,[r15+G_PLACE]:ptr<user,u64>
+        store [r15+G_FIN_PLACE]:ptr<user,u64>,rax
+        load rax,[r15+KARTS+KTIME]:ptr<user,u64>
+        store [r15+G_FINISH_TICKS]:ptr<user,u64>,rax
+        load rcx,[r15+G_BEST]:ptr<user,u64>
+        cmp rcx,0
+        je new_best
+        cmp rax,rcx
+        jae keep_best
+    new_best:
+        store [r15+G_BEST]:ptr<user,u64>,rax
+    keep_best:
+        mov r12,1320
+        mov r13,40
+        call beep(r12,r13)
+        jmp done
+    finish:
+        mov r12,0
+        call drive_ai(r12)
+        call race_common()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt r14,[r15]:ptr<user,u8>
+        movzx eax,[r14+KEYS_HIT+K_ENTER]:ptr<user,u8>
+        cmp rax,0
+        je done
+        mov rax,SCENE_TITLE
+        store [r15+G_SCENE]:ptr<user,u64>,rax
+    done:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov rax,0
+        store [r15+KEYS_HIT]:ptr<user,u64>,rax
+        return 0
+    }
+
+    fn render() -> u64
+    FX
+    CLOB {
+        call draw_sky()
+        call draw_floor()
+        call draw_karts()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_SCENE]:ptr<user,u64>
+        cmp rax,SCENE_TITLE
+        jne not_title
+        call hud_title()
+        return 0
+    not_title:
+        cmp rax,SCENE_COUNTDOWN
+        jne not_countdown
+        call hud_countdown()
+        return 0
+    not_countdown:
+        cmp rax,SCENE_RACE
+        jne not_race
+        call hud_race()
+        return 0
+    not_race:
+        call hud_finish()
+        return 0
+    }
+
+    // Main loop: fixed-step simulation, one render per iteration, Escape
+    // leaves (the kernel then reboots the machine).
+    export fn game_main() -> u64
+    FX
+    CLOB {
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        mov rax,SCENE_TITLE
+        store [r15+G_SCENE]:ptr<user,u64>,rax
+        call race_reset()
+        call millis()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        store [r15+G_LAST]:ptr<user,u64>,rax
+        mov rax,0
+        store [r15+G_ACC]:ptr<user,u64>,rax
+    frame:
+        call millis()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rcx,[r15+G_LAST]:ptr<user,u64>
+        store [r15+G_LAST]:ptr<user,u64>,rax
+        sub rax,rcx
+        cmp rax,100
+        jbe elapsed
+        mov rax,100
+    elapsed:
+        imul rax,rax,60
+        load rcx,[r15+G_ACC]:ptr<user,u64>
+        add rcx,rax
+        store [r15+G_ACC]:ptr<user,u64>,rcx
+        mov rax,0
+        store [r15+G_STEPS]:ptr<user,u64>,rax
+    step:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rcx,[r15+G_ACC]:ptr<user,u64>
+        cmp rcx,1000
+        jb stepped
+        sub rcx,1000
+        store [r15+G_ACC]:ptr<user,u64>,rcx
+        call tick()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_STEPS]:ptr<user,u64>
+        inc rax
+        store [r15+G_STEPS]:ptr<user,u64>,rax
+        cmp rax,8
+        jb step
+        mov rax,0
+        store [r15+G_ACC]:ptr<user,u64>,rax
+    stepped:
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        load rax,[r15+G_FRAMES]:ptr<user,u64>
+        inc rax
+        store [r15+G_FRAMES]:ptr<user,u64>,rax
+        call render()
+        call present()
+        load r15,[g_state]:ptr<user,u64>
+        adopt r15,[r15]:ptr<user,u64>
+        adopt r14,[r15]:ptr<user,u8>
+        movzx eax,[r14+KEYS+K_ESC]:ptr<user,u8>
+        cmp rax,0
+        je frame
+        return 0
+    }
+}

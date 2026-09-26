@@ -150,7 +150,9 @@ typedef enum {
   NTF_OP_GE,
   NTF_OP_NEG,
   NTF_OP_NOT,
-  NTF_OP_POS
+  NTF_OP_POS,
+  NTF_OP_LOGICAL_AND,
+  NTF_OP_LOGICAL_OR
 } NtFOp;
 typedef struct {
   NtFRegister base, index;

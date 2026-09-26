@@ -648,3 +648,82 @@ frontend final. Avant le premier comportement v0, il faut figer :
 Tant que ces points ne sont pas gelés, `spec/ntasm-s0.md` reste la seule
 spécification exécutable du bootstrap et ce document ne change aucun attendu de
 Gate B1.
+
+### 17.1 Frontière AST vers NXOV0001 (lot de contrat du 25 septembre 2026)
+
+Le format objet actuellement défini est **NXOV0001**, décrit par
+`spec/nxo-v0.md`. Son en-tête version 1, ses trois sections `.text`, `.rdata`
+et `.data`, ses symboles et ses deux types de relocation REL32 et DIR64 sont
+des règles de ce format. Le nombre `0.1` du bloc source `versions` concerne
+les six domaines déclarés (`ntir`, `machine_ir`, `sections`, `symbols`,
+`relocations`, `nxo`) ; il ne remplace ni les octets de magie NXOV0001 ni la
+version entière 1 de l'objet. Un producteur ou lecteur ne doit pas inférer
+la compatibilité d'un objet à partir du seul bloc source.
+
+La frontière de conversion prend un AST syntaxiquement valide et sémantiquement
+vérifié, une cible et des features explicites, puis construit un objet NXO
+soumis à la validation du writer. Le frontend ne fabrique pas de relocation
+numérique arbitraire : le kind, la largeur et la formule proviennent de
+`spec/nxo-v0.md`. L'index du symbole cible et celui de l'entrée sont en base
+1 ; zéro signifie « aucune entrée » pour ce dernier. Les offsets de sites
+sont relatifs à leur section. Les symboles sont ordonnés par nom, et les
+relocations par section puis offset, sans chevauchement. Un échec de
+validation interdit l'émission de l'objet. Ces règles gardent les octets du
+format existant et s'appliquent aussi aux sorties issues de macros ou stubs.
+
+Les adaptateurs Nova actuels restent des sous-ensembles fermés et nommés :
+
+- `x64_lower_nxo.build` conserve le témoin historique `.text` avec un symbole
+  `main` fixe et aucune donnée ou relocation ;
+- `build_scalar_data` accepte exactement une fonction `main` et au plus 64
+  déclarations littérales `u8`, `u16`, `u32` ou `u64` dans `.rdata`/`.data` ;
+- `build_import_call` accepte un import fonction sans paramètre et un `main`
+  réduit à `call alias()` puis `ret`, avec une relocation REL32 ;
+- `build_import_call_with_scalar_data` compose ce même appel importé avec les
+  données scalaires précédentes ;
+- `build_local_helper_call` accepte les deux fonctions fermées `helper` et
+  `main`, dans l'un ou l'autre ordre source, avec une REL32 locale ;
+- `build_local_helper_call_with_scalar_data` ajoute de 1 à 64 données
+  scalaires à ce cas local ;
+- `build_local_helper_calls` accepte de 1 à 64 appels consécutifs de `helper`
+  depuis `main`, chacun avec son record REL32 trié, avant le `ret` final.
+
+Pour ces APIs, la cible NXO est dérivée de la cible AST ; les producteurs
+destinés directement au PE sont bornés à UEFI, les autres indiquent
+explicitement s'ils acceptent aussi bare. Les octets de données sont
+little-endian et conservent l'ordre source dans leur section. Les symboles et
+chaînes sont sérialisés dans l'ordre canonique, puis les index base 1 de
+l'entrée et des cibles de relocation sont recalculés. Les sites REL32 sont
+croissants, non chevauchants et contenus dans `.text`. Les fonctions et données
+portent le contrat `v0`. Toute forme hors du sous-ensemble échoue avant
+émission ; les entrées et sorties empruntées restent inchangées en erreur. Ces
+règles ont été comparées octet par octet au writer et au reader C, elles ne
+créent aucun nouveau format NXO.
+
+`x64_lower_nxo_pe.build` relie l'objet import+données à un NXO de définition
+par le linker existant, matérialise les relocations puis produit le PE. Les
+APIs PE locales convertissent de la même façon le cas mono-appel, sa composition
+avec données et le cas de 1 à 64 appels. Le buffer NXO reste vivant jusqu'à la
+fin de la conversion car le reader expose des vues de ses sections. Lors de la
+fusion, chaque objet reçoit une base alignée à 16 octets pour chacune des trois
+sections, même si sa section est vide ; le padding résultant fait partie de
+l'objet fusionné observable. Cette règle correspond à l'oracle C et ne modifie
+pas les alignements stockés dans NXOV0001.
+
+Ces adaptateurs ne constituent toujours pas un abaissement AST général : noms
+de fonctions arbitraires, paramètres, appels vers plusieurs cibles, références
+de données, expressions constantes transportées jusqu'aux octets, fonctions
+nombreuses et autres relocations restent ouverts. Les appels multiples prouvés
+visent tous le seul symbole local `helper`. La capacité plus large du linker ou
+du bootstrap C ne doit pas être attribuée aux adaptateurs. La limite de 255
+octets du résultat ancien de `x64_lower_control.lower` est une contrainte de
+cette API historique ; `lower_wide`, avec longueur `u64` séparée, la lève sans
+modifier NXOV0001.
+
+Le bloc source `versions` est actuellement optionnel dans le vérificateur
+Nova ; lorsqu'il est présent, ses six domaines doivent apparaître une fois
+chacun à `0.1`. Cette vérification ne prouve pas l'existence d'un schéma
+NTIR ou Machine IR sérialisé. Les schémas versionnés de ces IR, leur relation
+avec NIR, l'ABI complète `nx64-abi-v0` et l'abaissement AST général restent
+ouverts au sens du critère 17.6. Ainsi A1 reste **partiel** et ne promeut
+ni NTASM v0 ni B2.1.

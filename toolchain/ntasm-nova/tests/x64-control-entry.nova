@@ -1,0 +1,4 @@
+module x64_control_entry;import x64_fixed;
+export fn main(name:buf<u8>,operand_count:u64,kind:u64,width:u64,value:u64,is_signed:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    return x64_fixed.encode_control(name,operand_count,kind,width,value,is_signed,features,cpl,out);
+}

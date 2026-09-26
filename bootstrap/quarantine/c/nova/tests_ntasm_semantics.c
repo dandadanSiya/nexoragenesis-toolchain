@@ -226,4 +226,3 @@ int main(void) {
          failures, cases);
   return failures ? 1 : 0;
 }
-

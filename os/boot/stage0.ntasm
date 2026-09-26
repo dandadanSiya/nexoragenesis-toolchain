@@ -1,10 +1,21 @@
 module nexora.os.stage0
 target x86_64-nexora-uefi
 
+section .rdata {
+    data hello0:u64=0x006c006c00650048
+    data hello1:u64=0x006f00570020006f
+    data hello2:u64=0x000d0064006c0072
+    data hello3:u64=0x000000000000000a
+}
+
 section .text {
-    export fn main() -> u64
-    effects {privileged,io_port}
-    clobbers {rax,rdx} {
+    export fn main(in image_handle:u64 @rcx,in system_table:ptr<firmware,ptr<firmware,u64>> @rdx) -> u64
+    effects {reads_mem(firmware),privileged,io_port}
+    clobbers {rax,rcx,rdx} {
+        load rcx,[rdx+64]:ptr<firmware,ptr<firmware,u64>>
+        load rax,[rcx+8]:ptr<firmware,u64>
+        lea rdx,[hello0]:ptr<user,u64>
+        call_indirect rax
         mov dx,233
         mov al,72
         out dx,al

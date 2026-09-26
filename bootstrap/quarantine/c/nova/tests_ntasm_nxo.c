@@ -41,7 +41,7 @@ static void parity(NovaHostImage *image,const uint8_t *input,size_t size,unsigne
   nt_object_free(&reference);free(reencoded.bytes);free(out);
 }
 int main(void) {
-  size_t sizes[3]={0};char *sources[3]={load("toolchain/ntasm-nova/tests/nxo-entry.nova",sizes),load("toolchain/ntasm-nova/nxo.nova",sizes+1),load("out/c-bootstrap/nova/ntasm-nxo-v1/pe-dependency.nova",sizes+2)};
+  size_t sizes[3]={0};char *sources[3]={load("toolchain/ntasm-nova/tests/nxo-entry.nova",sizes),load("toolchain/ntasm-nova/nxo.nova",sizes+1),load("toolchain/ntasm-nova/tests/fixtures/pe-dependency.nova",sizes+2)};
   CHECK(sources[0] && sources[1] && sources[2],"Nova modules load");
   NtFInput inputs[]={{"nxo-entry.nova",sources[0],sizes[0]},{"nxo.nova",sources[1],sizes[1]},{"pe.nova",sources[2],sizes[2]}};
   NtArtifact artifact={0};NovaHostImage image={0};

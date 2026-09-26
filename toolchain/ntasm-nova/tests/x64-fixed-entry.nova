@@ -1,0 +1,6 @@
+module x64_fixed_entry;
+import x64_fixed;
+
+export fn main(name:buf<u8>,operand_count:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    return x64_fixed.encode(name,operand_count,features,cpl,out);
+}

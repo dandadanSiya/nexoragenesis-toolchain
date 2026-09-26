@@ -1,0 +1,6 @@
+module x64_unary_shift_entry;import x64_fixed;
+export fn main(name:buf<u8>,operand_count:u64,destination:u64,width:u64,amount:u64,features:u64,cpl:u64,mode:u64,out:buf<u8>)->u64 {
+    if mode==0{return x64_fixed.encode_unary(name,operand_count,destination,width,features,cpl,out);}
+    if mode==1{return x64_fixed.encode_shift_imm(name,operand_count,destination,width,amount,features,cpl,out);}
+    return 800;
+}

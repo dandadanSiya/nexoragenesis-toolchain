@@ -1,0 +1,18 @@
+module x64_lower_nxo_local_multi_entry;
+import ntasm_ast;
+import ntasm_parser;
+import ntasm_nxo;
+import ntasm_pe;
+import x64_lower_nxo;
+
+export fn main(source:buf<u8>,out:buf<u8>)->u64 {
+    if len(out)<8{return 827;}
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false{ntasm_ast.release(tree);return 800;}
+    let result:ntasm_nxo.WriteResult=x64_lower_nxo.build_local_helper_calls(source,tree,1,3);
+    ntasm_ast.release(tree);
+    let bytes:buf<u8>=result.bytes;
+    if result.code!=0{rt_free(runtime(),bytes);return result.code;}
+    let size:u64=len(bytes);if size>len(out)-8{rt_free(runtime(),bytes);return 827;}
+    ntasm_pe.put64(out,0,size);ntasm_pe.copy(out,8,bytes);rt_free(runtime(),bytes);return 0;
+}

@@ -132,6 +132,64 @@ static void expect_parse_only(const NovaHostImage *image, const char *name,
   }
   free(parsed.words);
 }
+static const uint64_t *node_at(const Parsed *parsed, uint64_t id) {
+  if (!id || id > parsed->words[9])
+    return NULL;
+  return parsed->words + 10 + (id - 1) * 12;
+}
+static void expect_logical_shape(const NovaHostImage *image, const char *name,
+                                 const char *source, uint64_t root_aux,
+                                 int check_child, uint64_t child_aux) {
+  Parsed parsed = parse(image, source, strlen(source));
+  NtFInput input = {name, source, strlen(source)};
+  NtFProgram c;
+  int c_ok = nt_frontend_compile(&input, 1, &c);
+  uint64_t condition_id = 0;
+  for (uint64_t id = 1; id <= parsed.words[9]; id++) {
+    const uint64_t *node = node_at(&parsed, id);
+    if (node && node[0] == 30) {
+      condition_id = node[8];
+      break;
+    }
+  }
+  const uint64_t *root = node_at(&parsed, condition_id);
+  const uint64_t *left = root ? node_at(&parsed, root[8]) : NULL;
+  const uint64_t *right = left ? node_at(&parsed, left[10]) : NULL;
+  const uint64_t *checked = right;
+  if (root_aux == 268 && left && left[0] == 35 && left[11] == 40) {
+    checked = node_at(&parsed, left[8]);
+    if (!checked || node_at(&parsed, left[8])[10] != 0)
+      checked = NULL;
+  }
+  int ok = !parsed.runtime_error && parsed.returned == 0 &&
+           ast_well_formed(&parsed, strlen(source)) && c_ok && root &&
+           root[0] == 35 && root[11] == root_aux && left && right &&
+           root[9] == left[10] && right[10] == 0 &&
+           (!check_child || (checked && checked[0] == 35 &&
+                             checked[11] == child_aux));
+  checks++;
+  cases++;
+  if (!ok)
+    fprintf(stderr, "FAIL logical shape %s root=%llu left=%llu right=%llu c_ok=%d\n",
+            name, (unsigned long long)(root ? root[11] : 0),
+            (unsigned long long)(left ? left[11] : 0),
+            (unsigned long long)(right ? right[11] : 0), c_ok);
+  nt_frontend_free(&c);
+  free(parsed.words);
+}
+static void expect_logical_type_error(const char *name, const char *source) {
+  NtFInput input = {name, source, strlen(source)};
+  NtFProgram c;
+  int compiled = nt_frontend_compile(&input, 1, &c);
+  int type_error = !compiled && c.diagnostic_count &&
+                   c.diagnostics[0].code == NTF_E_TYPE;
+  checks++;
+  cases++;
+  if (!type_error)
+    fprintf(stderr, "FAIL logical C type error %s compiled=%d diagnostics=%zu\n",
+            name, compiled, c.diagnostic_count);
+  nt_frontend_free(&c);
+}
 static void expect_syntax_error(const NovaHostImage *image, const char *name,
                                 const char *source) {
   Parsed parsed = parse(image, source, strlen(source));
@@ -204,6 +262,26 @@ int main(void) {
         "let value:u64=(4+6)*4\nif value==40 {\nreturn helper(value)\n} "
         "else {\nreturn 0\n}\n}\n}\n";
     expect_valid(&image, "control_and_precedence", control, 30);
+    const char *logical_precedence =
+        "module logical\ntarget x86_64-nexora-none\nsection .text {\n"
+        "fn main(in a:bool @al,in b:bool @cl,in c:bool @dl)->u64\n"
+        "effects {}\nclobbers {} {\nif a || b && c {\nreturn 1\n} "
+        "else {\nreturn 0\n}\n}\n}\n";
+    expect_logical_shape(&image, "logical_and_binds_inside_or",
+                         logical_precedence, 269, 1, 268);
+    const char *logical_parentheses =
+        "module logical_group\ntarget x86_64-nexora-none\nsection .text {\n"
+        "fn main(in a:bool @al,in b:bool @cl,in c:bool @dl)->u64\n"
+        "effects {}\nclobbers {} {\nif (a || b) && c {\nreturn 1\n} "
+        "else {\nreturn 0\n}\n}\n}\n";
+    expect_logical_shape(&image, "parentheses_override_logical_precedence",
+                         logical_parentheses, 268, 1, 269);
+    const char *logical_c_mismatch =
+        "module logical_bad\ntarget x86_64-nexora-none\nsection .text {\n"
+        "fn main(in ready:bool @al,in x:u64 @rcx)->u64\n"
+        "effects {}\nclobbers {} {\nif ready && x {\nreturn 1\n} "
+        "else {\nreturn 0\n}\n}\n}\n";
+    expect_logical_type_error("logical_requires_bool", logical_c_mismatch);
     const char *memory_source =
         "module memory\ntarget x86_64-nexora-none\nsection .rdata {\n"
         "data answer:u64=42\n}\nsection .text {\n"
@@ -277,7 +355,7 @@ int main(void) {
                         "clobbers {} {\nreturn 0\n}\n}\n");
     const char *complex_address =
         "module address\ntarget x86_64-nexora-none\nsection .text {\n"
-        "fn read(in base:u64 @rdi,in index:u64 @rsi)->u64\n"
+        "fn read(in base:ptr<user,u64> @rdi,in index:u64 @rsi)->u64\n"
         "effects {reads_mem(user)}\nclobbers {rax} {\n"
         "load rax,[rdi+rsi*8+16]:ptr<user,u64>\nreturn rax\n}\n}\n";
     expect_valid(&image, "complex_address", complex_address, 34);

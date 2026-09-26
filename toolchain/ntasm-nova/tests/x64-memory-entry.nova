@@ -1,0 +1,4 @@
+module x64_memory_entry;import x64_fixed;
+export fn main(direction:u64,register:u64,width:u64,base:u64,index:u64,scale:u64,displacement:u64,segment:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    return x64_fixed.encode_mov_memory(direction,register,width,base,index,scale,displacement,segment,features,cpl,out);
+}

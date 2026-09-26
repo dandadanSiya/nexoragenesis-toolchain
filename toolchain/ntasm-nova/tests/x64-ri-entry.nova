@@ -1,0 +1,6 @@
+module x64_ri_entry;
+import x64_fixed;
+
+export fn main(name:buf<u8>,operand_count:u64,destination:u64,width:u64,immediate:u64,immediate_is_signed:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    return x64_fixed.encode_ri(name,operand_count,destination,width,immediate,immediate_is_signed,features,cpl,out);
+}

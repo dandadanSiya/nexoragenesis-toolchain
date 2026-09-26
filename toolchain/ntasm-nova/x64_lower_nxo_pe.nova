@@ -1,0 +1,67 @@
+module x64_lower_nxo_pe;
+import ntasm_ast;
+import ntasm_nxo;
+import ntasm_nxo_pe;
+import ntasm_nxo_link_pe;
+import x64_lower_nxo;
+
+fn failed(code:u64)->ntasm_nxo_pe.ConvertResult {
+    let empty:buf<u8>=alloc(runtime(),0);
+    return ntasm_nxo_pe.ConvertResult{code:code,bytes:empty};
+}
+
+// Compose the bounded AST producer with the existing NXO linker and PE writer.
+// Neither source nor definition bytes are mutated or owned by this function.
+export fn build(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64,
+                definition:buf<u8>)->ntasm_nxo_pe.ConvertResult {
+    let object:ntasm_nxo.WriteResult=
+        x64_lower_nxo.build_import_call_with_scalar_data(source,tree,features,cpl);
+    let left:buf<u8>=object.bytes;
+    if object.code!=0 {rt_free(runtime(),left);return failed(object.code);}
+    let result:ntasm_nxo_pe.ConvertResult=ntasm_nxo_link_pe.link_pe(left,definition);
+    rt_free(runtime(),left);
+    return result;
+}
+
+// Convert the bounded two-function local-call NXO directly to PE. The NXO
+// producer owns its result; the borrowed source remains untouched.
+export fn build_local_helper_call(source:buf<u8>,tree:ntasm_ast.Tree,
+                                  features:u64,cpl:u64)->ntasm_nxo_pe.ConvertResult {
+    let object:ntasm_nxo.WriteResult=
+        x64_lower_nxo.build_local_helper_call(source,tree,features,cpl);
+    let bytes:buf<u8>=object.bytes;
+    if object.code!=0 {rt_free(runtime(),bytes);return failed(object.code);}
+    let parsed:ntasm_nxo.ReadResult=ntasm_nxo.read(bytes);
+    if parsed.code!=0 {let fault:ntasm_nxo.Object=parsed.object;ntasm_nxo.release(fault);rt_free(runtime(),bytes);return failed(828);}
+    let result:ntasm_nxo_pe.ConvertResult=ntasm_nxo_pe.convert(parsed.object);
+    ntasm_nxo.release(parsed.object);
+    rt_free(runtime(),bytes);
+    return result;
+}
+
+export fn build_local_helper_call_with_scalar_data(source:buf<u8>,tree:ntasm_ast.Tree,
+                                                    features:u64,cpl:u64)->ntasm_nxo_pe.ConvertResult {
+    let object:ntasm_nxo.WriteResult=
+        x64_lower_nxo.build_local_helper_call_with_scalar_data(source,tree,features,cpl);
+    let bytes:buf<u8>=object.bytes;
+    if object.code!=0 {rt_free(runtime(),bytes);return failed(object.code);}
+    let parsed:ntasm_nxo.ReadResult=ntasm_nxo.read(bytes);
+    if parsed.code!=0 {let fault:ntasm_nxo.Object=parsed.object;ntasm_nxo.release(fault);rt_free(runtime(),bytes);return failed(828);}
+    let result:ntasm_nxo_pe.ConvertResult=ntasm_nxo_pe.convert(parsed.object);
+    ntasm_nxo.release(parsed.object);
+    rt_free(runtime(),bytes);
+    return result;
+}
+
+export fn build_local_helper_calls(source:buf<u8>,tree:ntasm_ast.Tree,
+                                   features:u64,cpl:u64)->ntasm_nxo_pe.ConvertResult {
+    let object:ntasm_nxo.WriteResult=x64_lower_nxo.build_local_helper_calls(source,tree,features,cpl);
+    let bytes:buf<u8>=object.bytes;
+    if object.code!=0 {rt_free(runtime(),bytes);return failed(object.code);}
+    let parsed:ntasm_nxo.ReadResult=ntasm_nxo.read(bytes);
+    if parsed.code!=0 {let fault:ntasm_nxo.Object=parsed.object;ntasm_nxo.release(fault);rt_free(runtime(),bytes);return failed(828);}
+    let result:ntasm_nxo_pe.ConvertResult=ntasm_nxo_pe.convert(parsed.object);
+    ntasm_nxo.release(parsed.object);
+    rt_free(runtime(),bytes);
+    return result;
+}

@@ -1,0 +1,733 @@
+module x64_lower_nxo;import ntasm_ast;import x64_lower_control;import x64_fixed;import ntasm_nxo;
+fn failed(code:u64)->ntasm_nxo.WriteResult{let empty:buf<u8>=alloc(runtime(),0);return ntasm_nxo.WriteResult{code:code,bytes:empty};}
+export fn build(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64)->ntasm_nxo.WriteResult {
+    if tree.node_count>1152921504606846975{return failed(800);}
+    let code_bytes:buf<u8>=alloc(runtime(),tree.node_count*16);let length:buf<u64>=alloc(runtime(),1);
+    let code:u64=x64_lower_control.lower_wide(source,tree,features,cpl,code_bytes,length);
+    if code!=0{rt_free(runtime(),length);rt_free(runtime(),code_bytes);return failed(code);}
+    let size:u64=length[0];let text:buf<u8>=alloc(runtime(),size);let mut i:u64=0;
+    while i<size{text[i]=code_bytes[i];i=i+1;}rt_free(runtime(),length);rt_free(runtime(),code_bytes);
+    let rdata:buf<u8>=alloc(runtime(),0);let data:buf<u8>=alloc(runtime(),0);
+    let symbols:buf<u64>=alloc(runtime(),8);let relocations:buf<u64>=alloc(runtime(),0);
+    let strings:buf<u8>=alloc(runtime(),6);strings[0]=109;strings[1]=97;strings[2]=105;strings[3]=110;strings[4]=118;strings[5]=48;
+    symbols[0]=0;symbols[1]=4;symbols[2]=1;symbols[3]=3;symbols[4]=0;symbols[5]=size;symbols[6]=4;symbols[7]=2;
+    let object:ntasm_nxo.Object=ntasm_nxo.Object{target:1,entry:1,text:text,rdata:rdata,data:data,symbols:symbols,relocations:relocations,strings:strings};
+    let result:ntasm_nxo.WriteResult=ntasm_nxo.emit(object);ntasm_nxo.release(object);return result;
+}
+
+fn word(source:buf<u8>,node:ntasm_ast.Node,text:buf<u8>)->bool {
+    if node.start>node.end||node.end>len(source)||node.end-node.start!=len(text){return false;}
+    let mut i:u64=0;while i<len(text){if source[node.start+i]!=text[i]{return false;}i=i+1;}return true;
+}
+fn section_of(source:buf<u8>,tree:ntasm_ast.Tree,item:ntasm_ast.Node)->u64 {
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let section:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if section.kind==17&&section.start<=item.start&&item.end<=section.end {
+            if section.first_child==0||section.first_child>tree.node_count{return 0;}
+            let dotted:ntasm_ast.Node=ntasm_ast.node_at(tree,section.first_child);
+            if dotted.kind!=93||dotted.first_child==0||dotted.first_child>tree.node_count{return 0;}
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,dotted.first_child);
+            let text_:buf<u8>="text";if word(source,name,text_){return 1;}
+            let ro:buf<u8>="rdata";if word(source,name,ro){return 2;}
+            let data_:buf<u8>="data";if word(source,name,data_){return 3;}
+            return 0;
+        }
+        id=id+1;
+    }
+    return 0;
+}
+fn data_width(source:buf<u8>,tree:ntasm_ast.Tree,item:ntasm_ast.Node)->u64 {
+    let name_id:u64=item.first_child;if name_id==0||name_id>tree.node_count{return 0;}
+    let name:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+    let type_id:u64=name.next_sibling;if type_id==0||type_id>tree.node_count{return 0;}
+    let type_:ntasm_ast.Node=ntasm_ast.node_at(tree,type_id);
+    let value_id:u64=type_.next_sibling;
+    if type_.kind!=36||type_.first_child==0||type_.first_child!=type_.last_child||
+       type_.first_child>tree.node_count||value_id==0||value_id>tree.node_count{return 0;}
+    let value:ntasm_ast.Node=ntasm_ast.node_at(tree,value_id);
+    if value.next_sibling!=0||value.kind!=94||value.start>=value.end||value.end>len(source)||
+       source[value.start]<48||source[value.start]>57{return 0;}
+    let type_name:ntasm_ast.Node=ntasm_ast.node_at(tree,type_.first_child);
+    let t8:buf<u8>="u8";if word(source,type_name,t8){if value.aux>255{return 0;}return 1;}
+    let t16:buf<u8>="u16";if word(source,type_name,t16){if value.aux>65535{return 0;}return 2;}
+    let t32:buf<u8>="u32";if word(source,type_name,t32){if value.aux>4294967295{return 0;}return 4;}
+    let t64:buf<u8>="u64";if word(source,type_name,t64){return 8;}
+    return 0;
+}
+fn before(source:buf<u8>,a:u64,al:u64,b:u64,bl:u64)->bool {
+    let mut i:u64=0;while i<al&&i<bl{
+        if source[a+i]!=source[b+i]{return source[a+i]<source[b+i];}i=i+1;
+    }
+    return al<bl;
+}
+fn target_of(source:buf<u8>,tree:ntasm_ast.Tree)->u64 {
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let node:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if node.kind==3 {
+            if node.first_child==0||node.first_child>tree.node_count{return 0;}
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,node.first_child);
+            let uefi:buf<u8>="x86_64-nexora-uefi";if word(source,name,uefi){return 1;}
+            let bare:buf<u8>="x86_64-nexora-none";if word(source,name,bare){return 2;}
+            return 0;
+        }
+        id=id+1;
+    }
+    return 0;
+}
+fn supported_shape(source:buf<u8>,tree:ntasm_ast.Tree)->bool {
+    let root:ntasm_ast.Node=ntasm_ast.node_at(tree,1);
+    if root.kind!=1{return false;}
+    let mut top:u64=root.first_child;
+    while top!=0 {
+        if top>tree.node_count{return false;}
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,top);
+        if item.kind!=2&&item.kind!=3&&item.kind!=17{return false;}
+        if item.kind==17 {
+            let sec:u64=section_of(source,tree,item);
+            if sec==0||item.first_child==0{return false;}
+            let header:ntasm_ast.Node=ntasm_ast.node_at(tree,item.first_child);
+            let mut decl:u64=header.next_sibling;
+            while decl!=0 {
+                if decl>tree.node_count{return false;}
+                let d:ntasm_ast.Node=ntasm_ast.node_at(tree,decl);
+                if (sec==1&&d.kind!=18)||(sec!=1&&d.kind!=24){return false;}
+                if d.kind==18 {
+                    let mut child:u64=d.first_child;let mut bodies:u64=0;
+                    while child!=0 {
+                        if child>tree.node_count{return false;}
+                        let part:ntasm_ast.Node=ntasm_ast.node_at(tree,child);
+                        if part.kind==36 {
+                            if part.first_child==0||part.first_child!=part.last_child||part.first_child>tree.node_count{return false;}
+                            let result_type:ntasm_ast.Node=ntasm_ast.node_at(tree,part.first_child);
+                            let u64_:buf<u8>="u64";if !word(source,result_type,u64_){return false;}
+                        }else if part.kind==20||part.kind==21 {
+                            if part.first_child!=0{return false;}
+                        }else if part.kind!=90&&part.kind!=25{return false;}
+                        if part.kind==25 {
+                            bodies=bodies+1;let mut statement:u64=part.first_child;
+                            while statement!=0 {
+                                if statement>tree.node_count{return false;}
+                                let line:ntasm_ast.Node=ntasm_ast.node_at(tree,statement);
+                                if line.kind!=32&&line.kind!=29{return false;}
+                                if line.kind==29 {
+                                    if line.next_sibling!=0||line.first_child==0||line.first_child>tree.node_count{return false;}
+                                    let value:ntasm_ast.Node=ntasm_ast.node_at(tree,line.first_child);
+                                    if value.kind!=94||value.aux!=0||value.start>=value.end||value.end>len(source)||source[value.start]!=48{return false;}
+                                }
+                                statement=line.next_sibling;
+                            }
+                        }
+                        child=part.next_sibling;
+                    }
+                    if bodies!=1{return false;}
+                }
+                decl=d.next_sibling;
+            }
+        }
+        top=item.next_sibling;
+    }
+    return true;
+}
+// Takes ownership of section buffers and flat unsorted symbol records.
+// Record words: source name start/length, section, flags, offset, size, value.
+// relocs are (one-based target record, .text immediate offset) pairs.
+fn empty_reloc_specs()->buf<u64> { let specs:buf<u64>=alloc(runtime(),0);return specs; }
+fn one_reloc_spec(record:u64,site:u64)->buf<u64> {
+    let specs:buf<u64>=alloc(runtime(),2);specs[0]=record;specs[1]=site;return specs;
+}
+fn emit_canonical(source:buf<u8>,target:u64,text:buf<u8>,ro:buf<u8>,data_:buf<u8>,
+                  records:buf<u64>,reloc_specs:buf<u64>)->ntasm_nxo.WriteResult {
+    let used:u64=len(records)/7;let mut string_size:u64=0;let mut i:u64=0;
+    while i<used {
+        let at:u64=i*7;let start:u64=records[at];let nlen:u64=records[at+1];
+        if start>len(source)||nlen==0||nlen>512||nlen>len(source)-start{
+            rt_free(runtime(),records);rt_free(runtime(),text);rt_free(runtime(),ro);rt_free(runtime(),data_);rt_free(runtime(),reloc_specs);
+            return failed(800);
+        }
+        string_size=string_size+nlen+2;i=i+1;
+    }
+    let reloc_count:u64=len(reloc_specs)/2;
+    if used==0||used>65536||len(records)%7!=0||string_size>67108864||
+       len(reloc_specs)%2!=0||reloc_count>1048576{
+        rt_free(runtime(),records);rt_free(runtime(),text);rt_free(runtime(),ro);rt_free(runtime(),data_);rt_free(runtime(),reloc_specs);
+        return failed(800);
+    }
+    i=0;while i<reloc_count {
+        let at:u64=i*2;let record:u64=reloc_specs[at];let site:u64=reloc_specs[at+1];
+        if record==0||record>used||site>len(text)||4>len(text)-site||
+           (i>0&&site<reloc_specs[at-1]+4){
+            rt_free(runtime(),records);rt_free(runtime(),text);rt_free(runtime(),ro);rt_free(runtime(),data_);rt_free(runtime(),reloc_specs);
+            return failed(800);
+        }
+        i=i+1;
+    }
+    let order:buf<u64>=alloc(runtime(),used);i=0;
+    while i<used {
+        let mut j:u64=i;
+        while j>0 {
+            let prev:u64=order[j-1]*7;let next:u64=i*7;
+            if !before(source,records[next],records[next+1],records[prev],records[prev+1]){break;}
+            order[j]=order[j-1];j=j-1;
+        }
+        order[j]=i;i=i+1;
+    }
+    let symbols:buf<u64>=alloc(runtime(),used*8);let strings:buf<u8>=alloc(runtime(),string_size);
+    let mut cursor:u64=0;let mut entry:u64=0;
+    i=0;while i<used {
+        let from:u64=order[i]*7;let to:u64=i*8;let nlen:u64=records[from+1];
+        symbols[to]=cursor;symbols[to+1]=nlen;symbols[to+2]=records[from+2];
+        symbols[to+3]=records[from+3];symbols[to+4]=records[from+4];symbols[to+5]=records[from+5];
+        symbols[to+6]=cursor+nlen;symbols[to+7]=2;
+        let mut j:u64=0;while j<nlen{strings[cursor+j]=source[records[from]+j];j=j+1;}
+        strings[cursor+nlen]=118;strings[cursor+nlen+1]=48;cursor=cursor+nlen+2;
+        if records[from+2]==1&&(records[from+3]&2)!=0{entry=i+1;}
+        i=i+1;
+    }
+    let relocations:buf<u64>=alloc(runtime(),reloc_count*5);i=0;
+    while i<reloc_count {
+        let spec:u64=i*2;let record_index:u64=reloc_specs[spec]-1;let mut target_index:u64=0;
+        let mut j:u64=0;while j<used{if order[j]==record_index{target_index=j+1;}j=j+1;}
+        if target_index==0{
+            rt_free(runtime(),order);rt_free(runtime(),records);rt_free(runtime(),reloc_specs);
+            rt_free(runtime(),relocations);rt_free(runtime(),symbols);rt_free(runtime(),strings);
+            rt_free(runtime(),text);rt_free(runtime(),ro);rt_free(runtime(),data_);return failed(800);
+        }
+        let at:u64=i*5;relocations[at]=1;relocations[at+1]=1;
+        relocations[at+2]=reloc_specs[spec+1];relocations[at+3]=target_index;relocations[at+4]=0;i=i+1;
+    }
+    rt_free(runtime(),order);rt_free(runtime(),records);rt_free(runtime(),reloc_specs);
+    let object:ntasm_nxo.Object=ntasm_nxo.Object{
+        target:target,entry:entry,text:text,rdata:ro,data:data_,
+        symbols:symbols,relocations:relocations,strings:strings
+    };
+    let result:ntasm_nxo.WriteResult=ntasm_nxo.emit(object);
+    ntasm_nxo.release(object);return result;
+}
+// Bounded AST producer: one text/main function, scalar literal data, no imports
+// or relocations. The existing build() fixture remains available unchanged.
+export fn build_scalar_data(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64)->ntasm_nxo.WriteResult {
+    if tree.ok==false||tree.node_count==0||tree.node_count>1152921504606846975{return failed(800);}
+    let target:u64=target_of(source,tree);if target==0||!supported_shape(source,tree){return failed(800);}
+    let mut text_sections:u64=0;let mut ro_sections:u64=0;let mut data_sections:u64=0;
+    let mut functions:u64=0;let mut count:u64=0;let mut ro_size:u64=0;let mut data_size:u64=0;
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if item.kind==17 {
+            let sec:u64=section_of(source,tree,item);
+            if sec==1{text_sections=text_sections+1;}else if sec==2{ro_sections=ro_sections+1;}
+            else if sec==3{data_sections=data_sections+1;}else{return failed(800);}
+        }else if item.kind==18 {
+            if section_of(source,tree,item)!=1||item.first_child==0||item.first_child>tree.node_count{return failed(800);}
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,item.first_child);
+            let main_:buf<u8>="main";if !word(source,name,main_){return failed(800);}
+            functions=functions+1;
+        }else if item.kind==24 {
+            let sec:u64=section_of(source,tree,item);let width:u64=data_width(source,tree,item);
+            if width==0||count>=64{return failed(800);}
+            if sec==2{ro_size=ro_size+width;}else if sec==3{data_size=data_size+width;}
+            else{return failed(800);}
+            count=count+1;
+        }else if item.kind==9{return failed(800);}
+        id=id+1;
+    }
+    if text_sections!=1||functions!=1||ro_sections>1||data_sections>1||
+       ro_size>67108864||data_size>67108864{return failed(800);}
+    let code_bytes:buf<u8>=alloc(runtime(),tree.node_count*16);
+    let length:buf<u64>=alloc(runtime(),1);
+    let code:u64=x64_lower_control.lower_wide(source,tree,features,cpl,code_bytes,length);
+    if code!=0{rt_free(runtime(),length);rt_free(runtime(),code_bytes);return failed(code);}
+    let text_size:u64=length[0];let text:buf<u8>=alloc(runtime(),text_size);
+    let mut i:u64=0;while i<text_size{text[i]=code_bytes[i];i=i+1;}
+    rt_free(runtime(),length);rt_free(runtime(),code_bytes);
+    let ro:buf<u8>=alloc(runtime(),ro_size);let data_:buf<u8>=alloc(runtime(),data_size);
+    // Record words: source name start/length, section, flags, offset, size, value.
+    let records:buf<u64>=alloc(runtime(),(count+1)*7);
+    let mut used:u64=0;let mut ro_at:u64=0;let mut data_at:u64=0;
+    id=1;
+    while id<=tree.node_count {
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if item.kind==18||item.kind==24 {
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,item.first_child);
+            let name_len:u64=name.end-name.start;
+            if name.start>name.end||name.end>len(source)||name_len==0||name_len>512{
+                rt_free(runtime(),records);rt_free(runtime(),ro);rt_free(runtime(),data_);rt_free(runtime(),text);return failed(800);
+            }
+            let sec:u64=section_of(source,tree,item);let at:u64=used*7;
+            records[at]=name.start;records[at+1]=name_len;records[at+2]=sec;
+            if item.kind==18 {
+                records[at+3]=3;records[at+4]=0;records[at+5]=text_size;records[at+6]=0;
+            }else {
+                let width:u64=data_width(source,tree,item);
+                let type_:ntasm_ast.Node=ntasm_ast.node_at(tree,ntasm_ast.node_at(tree,item.first_child).next_sibling);
+                let value:ntasm_ast.Node=ntasm_ast.node_at(tree,type_.next_sibling);
+                let mut flags:u64=4;if item.aux==1{flags=5;}records[at+3]=flags;
+                records[at+5]=width;records[at+6]=value.aux;
+                let mut offset:u64=0;if sec==2{offset=ro_at;ro_at=ro_at+width;}
+                else{offset=data_at;data_at=data_at+width;}
+                records[at+4]=offset;
+                i=0;while i<width{
+                    let byte:u8=u8((value.aux>>(i*8))&255);
+                    if sec==2{ro[offset+i]=byte;}else{data_[offset+i]=byte;}i=i+1;
+                }
+            }
+            used=used+1;
+        }
+        id=id+1;
+    }
+    let relocation_specs:buf<u64>=empty_reloc_specs();
+    return emit_canonical(source,target,text,ro,data_,records,relocation_specs);
+}
+
+fn same_span(source:buf<u8>,a:ntasm_ast.Node,b:ntasm_ast.Node)->bool {
+    if a.start>a.end||b.start>b.end||a.end>len(source)||b.end>len(source)||
+       a.end-a.start!=b.end-b.start{return false;}
+    let mut i:u64=0;while i<a.end-a.start{
+        if source[a.start+i]!=source[b.start+i]{return false;}i=i+1;
+    }
+    return true;
+}
+fn empty_u64_signature(source:buf<u8>,tree:ntasm_ast.Tree,decl:ntasm_ast.Node,imported:bool)->bool {
+    let mut child:u64=decl.first_child;if child==0||child>tree.node_count{return false;}
+    let first:ntasm_ast.Node=ntasm_ast.node_at(tree,child);
+    if imported {
+        if first.kind!=91||first.next_sibling==0{return false;}
+        child=first.next_sibling;
+    }
+    let name:ntasm_ast.Node=ntasm_ast.node_at(tree,child);
+    if name.kind!=90||name.next_sibling==0{return false;}
+    let result:ntasm_ast.Node=ntasm_ast.node_at(tree,name.next_sibling);
+    if result.kind!=36||result.first_child==0||result.first_child!=result.last_child||
+       result.first_child>tree.node_count||result.next_sibling==0{return false;}
+    let return_type:ntasm_ast.Node=ntasm_ast.node_at(tree,result.first_child);
+    let u64_:buf<u8>="u64";if !word(source,return_type,u64_){return false;}
+    let effects:ntasm_ast.Node=ntasm_ast.node_at(tree,result.next_sibling);
+    if effects.kind!=20||effects.first_child!=0||effects.next_sibling==0{return false;}
+    let clobbers:ntasm_ast.Node=ntasm_ast.node_at(tree,effects.next_sibling);
+    if clobbers.kind!=21||clobbers.first_child!=0{return false;}
+    if imported{return clobbers.next_sibling==0;}
+    if clobbers.next_sibling==0||clobbers.next_sibling>tree.node_count{return false;}
+    let body:ntasm_ast.Node=ntasm_ast.node_at(tree,clobbers.next_sibling);
+    return body.kind==25&&body.next_sibling==0;
+}
+// One imported zero-argument function call followed by a machine RET.
+// Emits a REL32 relocation at the four-byte immediate in E8 00 00 00 00.
+fn build_import_call_core(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64,with_data:bool)->ntasm_nxo.WriteResult {
+    if tree.ok==false||tree.node_count==0{return failed(800);}
+    let target:u64=target_of(source,tree);if target==0{return failed(800);}
+    let root:ntasm_ast.Node=ntasm_ast.node_at(tree,1);if root.kind!=1{return failed(800);}
+    let mut import_id:u64=0;let mut section_id:u64=0;
+    let mut ro_section_id:u64=0;let mut data_section_id:u64=0;let mut top:u64=root.first_child;
+    while top!=0 {
+        if top>tree.node_count{return failed(800);}
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,top);
+        if item.kind==9{if import_id!=0{return failed(800);}import_id=top;}
+        else if item.kind==17{
+            let sec:u64=section_of(source,tree,item);
+            if sec==1{if section_id!=0{return failed(800);}section_id=top;}
+            else if sec==2&&with_data{if ro_section_id!=0{return failed(800);}ro_section_id=top;}
+            else if sec==3&&with_data{if data_section_id!=0{return failed(800);}data_section_id=top;}
+            else{return failed(800);}
+        }
+        else if item.kind!=2&&item.kind!=3{return failed(800);}
+        top=item.next_sibling;
+    }
+    if import_id==0||section_id==0{return failed(800);}
+    let mut count:u64=0;let mut ro_size:u64=0;let mut data_size:u64=0;
+    let mut sec:u64=2;while sec<=3 {
+        let mut data_section:u64=ro_section_id;if sec==3{data_section=data_section_id;}
+        if data_section!=0 {
+            let section_:ntasm_ast.Node=ntasm_ast.node_at(tree,data_section);
+            let header_:ntasm_ast.Node=ntasm_ast.node_at(tree,section_.first_child);
+            let mut decl:u64=header_.next_sibling;
+            while decl!=0 {
+                if decl>tree.node_count||count>=64{return failed(800);}
+                let item:ntasm_ast.Node=ntasm_ast.node_at(tree,decl);
+                if item.kind!=24{return failed(800);}
+                let width:u64=data_width(source,tree,item);if width==0{return failed(800);}
+                if sec==2{ro_size=ro_size+width;}else{data_size=data_size+width;}
+                count=count+1;decl=item.next_sibling;
+            }
+        }
+        sec=sec+1;
+    }
+    if with_data&&count==0{return failed(800);}
+    let imported:ntasm_ast.Node=ntasm_ast.node_at(tree,import_id);
+    if !empty_u64_signature(source,tree,imported,true){return failed(800);}
+    let import_path:ntasm_ast.Node=ntasm_ast.node_at(tree,imported.first_child);
+    let alias:ntasm_ast.Node=ntasm_ast.node_at(tree,import_path.next_sibling);
+    let alias_len:u64=alias.end-alias.start;
+    if alias.start>alias.end||alias.end>len(source)||alias_len==0||alias_len>512{return failed(800);}
+    let section:ntasm_ast.Node=ntasm_ast.node_at(tree,section_id);
+    let header:ntasm_ast.Node=ntasm_ast.node_at(tree,section.first_child);
+    let fn_id:u64=header.next_sibling;if fn_id==0||fn_id>tree.node_count{return failed(800);}
+    let function:ntasm_ast.Node=ntasm_ast.node_at(tree,fn_id);
+    if function.kind!=18||function.next_sibling!=0||!empty_u64_signature(source,tree,function,false){return failed(800);}
+    let main_name:ntasm_ast.Node=ntasm_ast.node_at(tree,function.first_child);
+    let main_:buf<u8>="main";if !word(source,main_name,main_){return failed(800);}
+    let body_id:u64=function.last_child;let body:ntasm_ast.Node=ntasm_ast.node_at(tree,body_id);
+    let call_id:u64=body.first_child;if call_id==0||call_id>tree.node_count{return failed(800);}
+    let call:ntasm_ast.Node=ntasm_ast.node_at(tree,call_id);
+    if call.kind!=28||call.first_child==0||call.first_child>tree.node_count||call.next_sibling==0{return failed(800);}
+    let qualified:ntasm_ast.Node=ntasm_ast.node_at(tree,call.first_child);
+    if qualified.kind!=91||qualified.next_sibling!=0||qualified.first_child==0||
+       qualified.first_child!=qualified.last_child||qualified.first_child>tree.node_count{return failed(800);}
+    let called:ntasm_ast.Node=ntasm_ast.node_at(tree,qualified.first_child);
+    if !same_span(source,alias,called){return failed(800);}
+    let ret:ntasm_ast.Node=ntasm_ast.node_at(tree,call.next_sibling);
+    if ret.kind!=32||ret.next_sibling!=0||ret.first_child==0||ret.first_child>tree.node_count{return failed(800);}
+    let ret_name:ntasm_ast.Node=ntasm_ast.node_at(tree,ret.first_child);
+    let ret_word:buf<u8>="ret";
+    if !word(source,ret_name,ret_word)||ret_name.next_sibling!=0{return failed(800);}
+    let scratch:buf<u8>=alloc(runtime(),16);let call_word:buf<u8>="call";
+    let mut code:u64=x64_fixed.encode_control(call_word,1,4,0,0,1,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);return failed(code);}
+    let text:buf<u8>=alloc(runtime(),6);let mut i:u64=0;
+    while i<5{text[i]=scratch[1+i];i=i+1;}
+    code=x64_fixed.encode(ret_word,0,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);rt_free(runtime(),text);return failed(code);}
+    text[5]=scratch[1];rt_free(runtime(),scratch);
+    let records:buf<u64>=alloc(runtime(),(count+2)*7);
+    records[0]=alias.start;records[1]=alias_len;records[2]=0;records[3]=10;
+    records[4]=0;records[5]=0;records[6]=0;
+    records[7]=main_name.start;records[8]=4;records[9]=1;records[10]=3;
+    records[11]=0;records[12]=6;records[13]=0;
+    let ro:buf<u8>=alloc(runtime(),ro_size);let data_:buf<u8>=alloc(runtime(),data_size);
+    let mut used:u64=2;let mut ro_at:u64=0;let mut data_at:u64=0;let mut id:u64=1;
+    while id<=tree.node_count {
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if item.kind==24 {
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,item.first_child);
+            let type_:ntasm_ast.Node=ntasm_ast.node_at(tree,name.next_sibling);
+            let value:ntasm_ast.Node=ntasm_ast.node_at(tree,type_.next_sibling);
+            let width:u64=data_width(source,tree,item);let data_sec:u64=section_of(source,tree,item);
+            let at:u64=used*7;let mut flags:u64=4;if item.aux==1{flags=5;}
+            records[at]=name.start;records[at+1]=name.end-name.start;records[at+2]=data_sec;
+            records[at+3]=flags;records[at+5]=width;records[at+6]=value.aux;
+            let mut offset:u64=0;if data_sec==2{offset=ro_at;ro_at=ro_at+width;}
+            else{offset=data_at;data_at=data_at+width;}
+            records[at+4]=offset;
+            i=0;while i<width{
+                let byte:u8=u8((value.aux>>(i*8))&255);
+                if data_sec==2{ro[offset+i]=byte;}else{data_[offset+i]=byte;}i=i+1;
+            }
+            used=used+1;
+        }
+        id=id+1;
+    }
+    let relocation_specs:buf<u64>=one_reloc_spec(1,1);
+    return emit_canonical(source,target,text,ro,data_,records,relocation_specs);
+}
+export fn build_import_call(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64)->ntasm_nxo.WriteResult {
+    return build_import_call_core(source,tree,features,cpl,false);
+}
+export fn build_import_call_with_scalar_data(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64)->ntasm_nxo.WriteResult {
+    return build_import_call_core(source,tree,features,cpl,true);
+}
+
+fn only_ret(source:buf<u8>,tree:ntasm_ast.Tree,function:ntasm_ast.Node)->bool {
+    if function.last_child==0||function.last_child>tree.node_count{return false;}
+    let body:ntasm_ast.Node=ntasm_ast.node_at(tree,function.last_child);
+    if body.kind!=25||body.first_child==0||body.first_child>tree.node_count{return false;}
+    let ret:ntasm_ast.Node=ntasm_ast.node_at(tree,body.first_child);
+    if ret.kind!=32||ret.next_sibling!=0||ret.first_child==0||ret.first_child>tree.node_count{return false;}
+    let name:ntasm_ast.Node=ntasm_ast.node_at(tree,ret.first_child);
+    let ret_word:buf<u8>="ret";return word(source,name,ret_word)&&name.next_sibling==0;
+}
+fn call_then_ret(source:buf<u8>,tree:ntasm_ast.Tree,function:ntasm_ast.Node)->bool {
+    if function.last_child==0||function.last_child>tree.node_count{return false;}
+    let body:ntasm_ast.Node=ntasm_ast.node_at(tree,function.last_child);
+    if body.kind!=25||body.first_child==0||body.first_child>tree.node_count{return false;}
+    let call:ntasm_ast.Node=ntasm_ast.node_at(tree,body.first_child);
+    if call.kind!=28||call.first_child==0||call.first_child>tree.node_count||
+       call.next_sibling==0||call.next_sibling>tree.node_count{return false;}
+    let qualified:ntasm_ast.Node=ntasm_ast.node_at(tree,call.first_child);
+    if qualified.kind!=91||qualified.next_sibling!=0||qualified.first_child==0||
+       qualified.first_child!=qualified.last_child||qualified.first_child>tree.node_count{return false;}
+    let name:ntasm_ast.Node=ntasm_ast.node_at(tree,qualified.first_child);
+    let helper:buf<u8>="helper";if !word(source,name,helper){return false;}
+    let ret:ntasm_ast.Node=ntasm_ast.node_at(tree,call.next_sibling);
+    if ret.kind!=32||ret.next_sibling!=0||ret.first_child==0||ret.first_child>tree.node_count{return false;}
+    let ret_name:ntasm_ast.Node=ntasm_ast.node_at(tree,ret.first_child);
+    let ret_word:buf<u8>="ret";return word(source,ret_name,ret_word)&&ret_name.next_sibling==0;
+}
+fn local_helper_call_count(source:buf<u8>,tree:ntasm_ast.Tree,function:ntasm_ast.Node)->u64 {
+    if function.last_child==0||function.last_child>tree.node_count{return 0;}
+    let body:ntasm_ast.Node=ntasm_ast.node_at(tree,function.last_child);
+    if body.kind!=25||body.first_child==0||body.first_child>tree.node_count{return 0;}
+    let mut statement:u64=body.first_child;let mut count:u64=0;
+    while statement!=0&&statement<=tree.node_count {
+        let call:ntasm_ast.Node=ntasm_ast.node_at(tree,statement);
+        if call.kind!=28{break;}
+        if count>=64||call.first_child==0||call.first_child>tree.node_count||
+           call.next_sibling==0||call.next_sibling>tree.node_count{return 0;}
+        let qualified:ntasm_ast.Node=ntasm_ast.node_at(tree,call.first_child);
+        if qualified.kind!=91||qualified.next_sibling!=0||qualified.first_child==0||
+           qualified.first_child!=qualified.last_child||qualified.first_child>tree.node_count{return 0;}
+        let name:ntasm_ast.Node=ntasm_ast.node_at(tree,qualified.first_child);
+        let helper:buf<u8>="helper";if !word(source,name,helper){return 0;}
+        count=count+1;statement=call.next_sibling;
+    }
+    if count==0||statement==0||statement>tree.node_count{return 0;}
+    let ret:ntasm_ast.Node=ntasm_ast.node_at(tree,statement);
+    if ret.kind!=32||ret.next_sibling!=0||ret.first_child==0||ret.first_child>tree.node_count{return 0;}
+    let ret_name:ntasm_ast.Node=ntasm_ast.node_at(tree,ret.first_child);
+    let ret_word:buf<u8>="ret";if !word(source,ret_name,ret_word)||ret_name.next_sibling!=0{return 0;}
+    return count;
+}
+// Exactly two local functions. The one REL32 site moves with source order.
+export fn build_local_helper_call(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64)->ntasm_nxo.WriteResult {
+    if tree.ok==false||tree.node_count==0||target_of(source,tree)!=1{return failed(800);}
+    let root:ntasm_ast.Node=ntasm_ast.node_at(tree,1);if root.kind!=1{return failed(800);}
+    let mut section_id:u64=0;let mut top:u64=root.first_child;
+    while top!=0 {
+        if top>tree.node_count{return failed(800);}
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,top);
+        if item.kind==17 {
+            if section_id!=0||section_of(source,tree,item)!=1{return failed(800);}
+            section_id=top;
+        }else if item.kind!=2&&item.kind!=3{return failed(800);}
+        top=item.next_sibling;
+    }
+    if section_id==0{return failed(800);}
+    let section:ntasm_ast.Node=ntasm_ast.node_at(tree,section_id);
+    let header:ntasm_ast.Node=ntasm_ast.node_at(tree,section.first_child);
+    let first_id:u64=header.next_sibling;
+    if first_id==0||first_id>tree.node_count{return failed(800);}
+    let first:ntasm_ast.Node=ntasm_ast.node_at(tree,first_id);
+    let second_id:u64=first.next_sibling;
+    if first.kind!=18||second_id==0||second_id>tree.node_count{return failed(800);}
+    let second:ntasm_ast.Node=ntasm_ast.node_at(tree,second_id);
+    if second.kind!=18||second.next_sibling!=0||
+       !empty_u64_signature(source,tree,first,false)||
+       !empty_u64_signature(source,tree,second,false){return failed(800);}
+    let first_name:ntasm_ast.Node=ntasm_ast.node_at(tree,first.first_child);
+    let second_name:ntasm_ast.Node=ntasm_ast.node_at(tree,second.first_child);
+    let main_:buf<u8>="main";let helper_:buf<u8>="helper";
+    let mut main_fn:ntasm_ast.Node=first;let mut helper_fn:ntasm_ast.Node=second;
+    let mut main_name:ntasm_ast.Node=first_name;let mut helper_name:ntasm_ast.Node=second_name;
+    let mut helper_first:bool=false;
+    if word(source,first_name,helper_)&&word(source,second_name,main_){
+        helper_first=true;main_fn=second;helper_fn=first;
+        main_name=second_name;helper_name=first_name;
+    }else if !word(source,first_name,main_)||!word(source,second_name,helper_){return failed(800);}
+    if helper_fn.aux!=0||!call_then_ret(source,tree,main_fn)||!only_ret(source,tree,helper_fn){return failed(800);}
+    let scratch:buf<u8>=alloc(runtime(),16);let call_word:buf<u8>="call";let ret_word:buf<u8>="ret";
+    let mut code:u64=x64_fixed.encode_control(call_word,1,4,0,0,1,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);return failed(code);}
+    let text:buf<u8>=alloc(runtime(),7);let mut site:u64=1;
+    if helper_first{site=2;text[0]=195;}
+    let mut i:u64=0;while i<5{text[site-1+i]=scratch[1+i];i=i+1;}
+    code=x64_fixed.encode(ret_word,0,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);rt_free(runtime(),text);return failed(code);}
+    text[site+4]=scratch[1];if !helper_first{text[6]=scratch[1];}
+    rt_free(runtime(),scratch);
+    let mut main_offset:u64=0;let mut helper_offset:u64=6;
+    if helper_first{main_offset=1;helper_offset=0;}
+    let records:buf<u64>=alloc(runtime(),14);
+    records[0]=helper_name.start;records[1]=6;records[2]=1;records[3]=2;
+    records[4]=helper_offset;records[5]=1;records[6]=0;
+    records[7]=main_name.start;records[8]=4;records[9]=1;records[10]=3;
+    records[11]=main_offset;records[12]=6;records[13]=0;
+    let ro:buf<u8>=alloc(runtime(),0);let data_:buf<u8>=alloc(runtime(),0);
+    let relocation_specs:buf<u64>=one_reloc_spec(1,site);
+    return emit_canonical(source,1,text,ro,data_,records,relocation_specs);
+}
+
+// Bounded local-call stream: one to 64 direct helper calls, then RET.
+export fn build_local_helper_calls(source:buf<u8>,tree:ntasm_ast.Tree,
+                                   features:u64,cpl:u64)->ntasm_nxo.WriteResult {
+    if tree.ok==false||tree.node_count==0||target_of(source,tree)!=1{return failed(800);}
+    let root:ntasm_ast.Node=ntasm_ast.node_at(tree,1);if root.kind!=1{return failed(800);}
+    let mut section_id:u64=0;let mut top:u64=root.first_child;
+    while top!=0 {
+        if top>tree.node_count{return failed(800);}
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,top);
+        if item.kind==17 {
+            if section_id!=0||section_of(source,tree,item)!=1{return failed(800);}
+            section_id=top;
+        }else if item.kind!=2&&item.kind!=3{return failed(800);}
+        top=item.next_sibling;
+    }
+    if section_id==0{return failed(800);}
+    let section:ntasm_ast.Node=ntasm_ast.node_at(tree,section_id);
+    if section.first_child==0||section.first_child>tree.node_count{return failed(800);}
+    let header:ntasm_ast.Node=ntasm_ast.node_at(tree,section.first_child);
+    let first_id:u64=header.next_sibling;if first_id==0||first_id>tree.node_count{return failed(800);}
+    let first:ntasm_ast.Node=ntasm_ast.node_at(tree,first_id);let second_id:u64=first.next_sibling;
+    if first.kind!=18||second_id==0||second_id>tree.node_count{return failed(800);}
+    let second:ntasm_ast.Node=ntasm_ast.node_at(tree,second_id);
+    if second.kind!=18||second.next_sibling!=0||
+       !empty_u64_signature(source,tree,first,false)||!empty_u64_signature(source,tree,second,false){return failed(800);}
+    let first_name:ntasm_ast.Node=ntasm_ast.node_at(tree,first.first_child);
+    let second_name:ntasm_ast.Node=ntasm_ast.node_at(tree,second.first_child);
+    let main_:buf<u8>="main";let helper_:buf<u8>="helper";
+    let mut main_fn:ntasm_ast.Node=first;let mut helper_fn:ntasm_ast.Node=second;
+    let mut main_name:ntasm_ast.Node=first_name;let mut helper_name:ntasm_ast.Node=second_name;
+    let mut helper_first:bool=false;
+    if word(source,first_name,helper_)&&word(source,second_name,main_){
+        helper_first=true;main_fn=second;helper_fn=first;main_name=second_name;helper_name=first_name;
+    }else if !word(source,first_name,main_)||!word(source,second_name,helper_){return failed(800);}
+    if helper_fn.aux!=0||!only_ret(source,tree,helper_fn){return failed(800);}
+    let call_count:u64=local_helper_call_count(source,tree,main_fn);
+    if call_count==0{return failed(800);}
+    if call_count==1{return build_local_helper_call(source,tree,features,cpl);}
+    let text_size:u64=call_count*5+2;let text:buf<u8>=alloc(runtime(),text_size);
+    let mut call_at:u64=0;if helper_first{call_at=1;text[0]=195;}
+    let scratch:buf<u8>=alloc(runtime(),16);let call_word:buf<u8>="call";let ret_word:buf<u8>="ret";
+    let mut code:u64=x64_fixed.encode_control(call_word,1,4,0,0,1,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);rt_free(runtime(),text);return failed(code);}
+    let mut i:u64=0;
+    while i<call_count {
+        let mut j:u64=0;while j<5{text[call_at+i*5+j]=scratch[1+j];j=j+1;}
+        i=i+1;
+    }
+    code=x64_fixed.encode(ret_word,0,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);rt_free(runtime(),text);return failed(code);}
+    let main_ret:u64=call_at+call_count*5;text[main_ret]=scratch[1];
+    let helper_offset:u64=call_at+call_count*5+1;
+    if !helper_first{text[helper_offset]=scratch[1];}
+    rt_free(runtime(),scratch);
+    let mut main_offset:u64=0;if helper_first{main_offset=1;}
+    let main_size:u64=call_count*5+1;
+    let records:buf<u64>=alloc(runtime(),14);
+    records[0]=helper_name.start;records[1]=helper_name.end-helper_name.start;records[2]=1;records[3]=2;
+    records[4]=helper_offset;if helper_first{records[4]=0;}records[5]=1;records[6]=0;
+    records[7]=main_name.start;records[8]=main_name.end-main_name.start;records[9]=1;records[10]=3;
+    records[11]=main_offset;records[12]=main_size;records[13]=0;
+    let reloc_specs:buf<u64>=alloc(runtime(),call_count*2);i=0;
+    while i<call_count{reloc_specs[i*2]=1;reloc_specs[i*2+1]=call_at+i*5+1;i=i+1;}
+    let ro:buf<u8>=alloc(runtime(),0);let data_:buf<u8>=alloc(runtime(),0);
+    return emit_canonical(source,1,text,ro,data_,records,reloc_specs);
+}
+
+fn same_source_name(source:buf<u8>,a:ntasm_ast.Node,b:ntasm_ast.Node)->bool {
+    if a.start>a.end||b.start>b.end||a.end>len(source)||b.end>len(source)||
+       a.end-a.start!=b.end-b.start{return false;}
+    let mut i:u64=0;while i<a.end-a.start{
+        if source[a.start+i]!=source[b.start+i]{return false;}i=i+1;
+    }
+    return true;
+}
+
+// Local main/helper call plus literal scalar data. The instruction subset and
+// REL32 site match build_local_helper_call; data is carried in the same NXO.
+export fn build_local_helper_call_with_scalar_data(source:buf<u8>,tree:ntasm_ast.Tree,
+                                                    features:u64,cpl:u64)->ntasm_nxo.WriteResult {
+    if tree.ok==false||tree.node_count==0||target_of(source,tree)!=1{return failed(800);}
+    let root:ntasm_ast.Node=ntasm_ast.node_at(tree,1);if root.kind!=1{return failed(800);}
+    let mut text_section_id:u64=0;let mut ro_section_id:u64=0;let mut data_section_id:u64=0;
+    let mut data_count:u64=0;let mut ro_size:u64=0;let mut data_size:u64=0;let mut top:u64=root.first_child;
+    while top!=0 {
+        if top>tree.node_count{return failed(800);}
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,top);
+        if item.kind==17 {
+            let sec:u64=section_of(source,tree,item);
+            if sec==1{if text_section_id!=0{return failed(800);}text_section_id=top;}
+            else if sec==2{if ro_section_id!=0{return failed(800);}ro_section_id=top;}
+            else if sec==3{if data_section_id!=0{return failed(800);}data_section_id=top;}
+            else{return failed(800);}
+            if item.first_child==0||item.first_child>tree.node_count{return failed(800);}
+            let header:ntasm_ast.Node=ntasm_ast.node_at(tree,item.first_child);let mut decl:u64=header.next_sibling;
+            while decl!=0 {
+                if decl>tree.node_count{return failed(800);}
+                let declaration:ntasm_ast.Node=ntasm_ast.node_at(tree,decl);
+                if sec==1 {
+                    if declaration.kind!=18{return failed(800);}
+                }else {
+                    if declaration.kind!=24||data_count>=64{return failed(800);}
+                    let width:u64=data_width(source,tree,declaration);if width==0{return failed(800);}
+                    if sec==2{if width>67108864-ro_size{return failed(800);}ro_size=ro_size+width;}
+                    else{if width>67108864-data_size{return failed(800);}data_size=data_size+width;}
+                    data_count=data_count+1;
+                }
+                decl=declaration.next_sibling;
+            }
+        }else if item.kind!=2&&item.kind!=3{return failed(800);}
+        top=item.next_sibling;
+    }
+    if text_section_id==0||data_count==0{return failed(800);}
+    let text_section:ntasm_ast.Node=ntasm_ast.node_at(tree,text_section_id);
+    let text_header:ntasm_ast.Node=ntasm_ast.node_at(tree,text_section.first_child);
+    let first_id:u64=text_header.next_sibling;
+    if first_id==0||first_id>tree.node_count{return failed(800);}
+    let first:ntasm_ast.Node=ntasm_ast.node_at(tree,first_id);let second_id:u64=first.next_sibling;
+    if first.kind!=18||second_id==0||second_id>tree.node_count{return failed(800);}
+    let second:ntasm_ast.Node=ntasm_ast.node_at(tree,second_id);
+    if second.kind!=18||second.next_sibling!=0||
+       !empty_u64_signature(source,tree,first,false)||!empty_u64_signature(source,tree,second,false){return failed(800);}
+    let first_name:ntasm_ast.Node=ntasm_ast.node_at(tree,first.first_child);
+    let second_name:ntasm_ast.Node=ntasm_ast.node_at(tree,second.first_child);
+    let main_:buf<u8>="main";let helper_:buf<u8>="helper";
+    let mut main_fn:ntasm_ast.Node=first;let mut helper_fn:ntasm_ast.Node=second;
+    let mut main_name:ntasm_ast.Node=first_name;let mut helper_name:ntasm_ast.Node=second_name;
+    let mut helper_first:bool=false;
+    if word(source,first_name,helper_)&&word(source,second_name,main_){
+        helper_first=true;main_fn=second;helper_fn=first;main_name=second_name;helper_name=first_name;
+    }else if !word(source,first_name,main_)||!word(source,second_name,helper_){return failed(800);}
+    if helper_fn.aux!=0||!call_then_ret(source,tree,main_fn)||!only_ret(source,tree,helper_fn){return failed(800);}
+    // Reject duplicate data symbols (including collisions with main/helper)
+    // before allocating or emitting the object.
+    let mut id:u64=1;
+    while id<=tree.node_count {
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if item.kind==24 {
+            if item.first_child==0||item.first_child>tree.node_count{return failed(800);}
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,item.first_child);
+            if name.start>=name.end||name.end>len(source)||name.end-name.start>512||
+               same_source_name(source,name,main_name)||same_source_name(source,name,helper_name){return failed(800);}
+            let mut prior:u64=1;
+            while prior<id {
+                let previous:ntasm_ast.Node=ntasm_ast.node_at(tree,prior);
+                if previous.kind==24 {
+                    let previous_name:ntasm_ast.Node=ntasm_ast.node_at(tree,previous.first_child);
+                    if same_source_name(source,name,previous_name){return failed(800);}
+                }
+                prior=prior+1;
+            }
+        }
+        id=id+1;
+    }
+    let scratch:buf<u8>=alloc(runtime(),16);let call_word:buf<u8>="call";let ret_word:buf<u8>="ret";
+    let mut code:u64=x64_fixed.encode_control(call_word,1,4,0,0,1,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);return failed(code);}
+    let text:buf<u8>=alloc(runtime(),7);let mut site:u64=1;
+    if helper_first{site=2;text[0]=195;}
+    let mut i:u64=0;while i<5{text[site-1+i]=scratch[1+i];i=i+1;}
+    code=x64_fixed.encode(ret_word,0,features,cpl,scratch);
+    if code!=0{rt_free(runtime(),scratch);rt_free(runtime(),text);return failed(code);}
+    text[site+4]=scratch[1];if !helper_first{text[6]=scratch[1];}rt_free(runtime(),scratch);
+    let mut main_offset:u64=0;let mut helper_offset:u64=6;
+    if helper_first{main_offset=1;helper_offset=0;}
+    let records:buf<u64>=alloc(runtime(),(data_count+2)*7);
+    records[0]=helper_name.start;records[1]=helper_name.end-helper_name.start;records[2]=1;records[3]=2;
+    records[4]=helper_offset;records[5]=1;records[6]=0;
+    records[7]=main_name.start;records[8]=main_name.end-main_name.start;records[9]=1;records[10]=3;
+    records[11]=main_offset;records[12]=6;records[13]=0;
+    let ro:buf<u8>=alloc(runtime(),ro_size);let data_:buf<u8>=alloc(runtime(),data_size);
+    let mut used:u64=2;let mut ro_at:u64=0;let mut data_at:u64=0;id=1;
+    while id<=tree.node_count {
+        let item:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if item.kind==24 {
+            let name:ntasm_ast.Node=ntasm_ast.node_at(tree,item.first_child);
+            let type_:ntasm_ast.Node=ntasm_ast.node_at(tree,name.next_sibling);
+            let value:ntasm_ast.Node=ntasm_ast.node_at(tree,type_.next_sibling);
+            let width:u64=data_width(source,tree,item);let sec:u64=section_of(source,tree,item);
+            let at:u64=used*7;let mut flags:u64=4;if item.aux==1{flags=5;}
+            records[at]=name.start;records[at+1]=name.end-name.start;records[at+2]=sec;
+            records[at+3]=flags;records[at+5]=width;records[at+6]=value.aux;
+            let mut offset:u64=0;if sec==2{offset=ro_at;ro_at=ro_at+width;}
+            else{offset=data_at;data_at=data_at+width;}
+            records[at+4]=offset;i=0;
+            while i<width{let byte:u8=u8((value.aux>>(i*8))&255);
+                if sec==2{ro[offset+i]=byte;}else{data_[offset+i]=byte;}i=i+1;
+            }
+            used=used+1;
+        }
+        id=id+1;
+    }
+    let relocation_specs:buf<u64>=one_reloc_spec(1,site);
+    return emit_canonical(source,1,text,ro,data_,records,relocation_specs);
+}

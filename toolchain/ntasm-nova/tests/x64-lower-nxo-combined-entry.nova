@@ -1,0 +1,15 @@
+module x64_lower_nxo_combined_entry;
+import ntasm_ast;import ntasm_parser;import ntasm_nxo;import x64_lower_nxo;
+fn put64(out:buf<u8>,value:u64)->u64{let mut i:u64=0;while i<8{out[i]=u8((value>>(i*8))&255);i=i+1;}return 0;}
+export fn main(source:buf<u8>,out:buf<u8>)->u64 {
+    if len(out)<8{return 800;}
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false{ntasm_ast.release(tree);return 800;}
+    let result:ntasm_nxo.WriteResult=x64_lower_nxo.build_import_call_with_scalar_data(source,tree,1,3);
+    ntasm_ast.release(tree);
+    let bytes:buf<u8>=result.bytes;
+    if result.code!=0{rt_free(runtime(),bytes);return result.code;}
+    if len(out)<8+len(bytes){rt_free(runtime(),bytes);return 800;}
+    put64(out,len(bytes));let mut i:u64=0;while i<len(bytes){out[8+i]=bytes[i];i=i+1;}
+    rt_free(runtime(),bytes);return 0;
+}

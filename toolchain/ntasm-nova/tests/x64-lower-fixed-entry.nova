@@ -1,0 +1,7 @@
+module x64_lower_fixed_entry;import ntasm_ast;import ntasm_parser;import x64_lower_fixed;
+export fn main(source:buf<u8>,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<2{return 800;}let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false{ntasm_ast.release(tree);return 800;}
+    let code:u64=x64_lower_fixed.lower(source,tree,features,cpl,out);
+    ntasm_ast.release(tree);return code;
+}

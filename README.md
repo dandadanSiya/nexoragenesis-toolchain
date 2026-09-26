@@ -6,7 +6,7 @@ Chaîne NTASM/Nova pour produire des programmes exécutables.
 
 ## État de ce dépôt
 
-**Snapshot de recherche, pas encore une toolchain complète livrable.** Cette copie de publication est mise à jour le **19 septembre 2026**, avec le pipeline NTASM en Nova de 33 passes et les modules validés des campagnes des 13 et 19 septembre. Elle ne contient pas l’historique Git des originaux.
+**Snapshot de recherche, pas encore une toolchain complète livrable.** Cette copie de publication est mise à jour le **26 septembre 2026**, avec le pipeline NTASM en Nova et les modules validés jusqu'à la campagne du 25 septembre. Elle ne contient pas l’historique Git des originaux.
 
 Les deux catégories de preuve sont séparées : les anciens résultats concernent l’espace de travail original ; seuls les tests explicitement marqués « rejoué » ci-dessous concernent cette copie.
 
@@ -25,7 +25,7 @@ Lire l’exemple return42, puis suivre l’analyse et la liaison dans le bootstr
 
 ## Structure
 
-Éléments de premier niveau : `bootstrap`, `examples`, `toolchain`.
+Les sources sont réparties entre `bootstrap`, `examples`, `toolchain` et `os` ; `spec` et `docs` décrivent les contrats et les limites de livraison.
 
 La liste exhaustive des sources sélectionnées figure dans [PUBLICATION.json](PUBLICATION.json). Elle permet de vérifier ce qui est réellement distribué et les adaptations propres à cette copie.
 
@@ -35,8 +35,10 @@ La liste exhaustive des sources sélectionnées figure dans [PUBLICATION.json](P
 - Validation sémantique commune en Nova : [validate.nova](toolchain/ntasm-nova/validate.nova), comprenant 33 passes et les alias physiques x86_64.
 - Effets et clobbers déclarés, propagation aux appels, contrôles des accès mémoire et d'intrinsèques ; preuve aux appels d'un sous-ensemble des contrats, décrit dans la [spécification](spec/ntasm.md).
 - Contrôle de flot terminal, ABI nx64, types des arguments et retours, espaces de pointeurs, cibles, versions et fonctionnalités CPU.
-- Types des initialisations, constantes et conditions `if`. Les initialisations entières acceptent un niveau d'opération arithmétique ou binaire avec opérandes de type exact ; les expressions imbriquées non prises en charge restent refusées.
+- Expressions entières imbriquées, opérateurs unaires, portée lexicale et rejet des noms qualifiés invalides dans les initialisations, retours, arguments et conditions.
+- Syntaxe et typage de `!`, `&&` et `||`, avec précédence et profondeur bornée. Le court-circuit à l'exécution n'est pas encore démontré ; les expressions constantes ne sont pas encore évaluées et transmises aux octets de données.
 - Inspection des symboles et relocations NXO, fusion de deux objets et chaîne [NXO vers PE](toolchain/ntasm-nova/nxo_link_pe.nova).
+- Encodeur x64 écrit en Nova, labels en deux passes, adressage ModRM/SIB et API de longueur large. Producteurs NXO ciblés : données scalaires, imports REL32, deux fonctions locales et jusqu'à 64 appels au helper ; [conversion en PE](toolchain/ntasm-nova/x64_lower_nxo_pe.nova) comparée à l'oracle C. Les noms et formes admis restent bornés, les données émises ne sont pas encore référencées par le code.
 - Correction du bootstrap Nova pour passer un champ buffer aux fonctions et à `slice`.
 - Capacité du bootstrap Nova portée à 524 288 nœuds et 131 072 variables locales après reproduction de limites sur le pipeline composé ; la suite Nova v2 reste verte.
 
@@ -46,7 +48,7 @@ Ces composants ne constituent pas encore NTASM v0 complet. Restent notamment les
 
 ### Premier programme de démarrage
 
-[Stage 0 en NTASM](os/boot/stage0.ntasm) écrit `Hello World` dans debugcon sous QEMU/OVMF, puis termine la VM de test. La preuve d'exécution a été obtenue dans l'espace de travail original, avec une image UEFI de 3 072 octets ; les sources publiées ont été vérifiées à l'identique. Ce programme ne fournit pas encore d'affichage dans la console UEFI ni de noyau. Voir [sa portée et ses limites](os/boot/README.md). Le périmètre PolyForm des compilateurs n'est pas étendu au répertoire `os/` par cet ajout.
+[Stage 0 en NTASM](os/boot/stage0.ntasm) appelle la console UEFI pour afficher `Hello World`, conserve le témoin debugcon puis termine la VM de test. La preuve QEMU/OVMF du 20 septembre vient de l'espace de travail original, avec une image UEFI de 3 072 octets ; elle n'est pas revendiquée comme un nouveau boot de cette publication. Ce programme reste un pré-noyau. Voir [sa portée et ses limites](os/boot/README.md). Le périmètre PolyForm des compilateurs n'est pas étendu au répertoire `os/` par cet ajout.
 
 Compilateur C pour le bootstrap ; les autres étapes dépendent des outils et versions de la chaîne originale.
 
@@ -54,7 +56,7 @@ Compilateur C pour le bootstrap ; les autres étapes dépendent des outils et ve
 
 Les contrôles ciblés sont décrits dans [VALIDATION.md](VALIDATION.md), avec les commandes GCC utilisables depuis la racine de cette copie. Ils construisent des exécutables de test hôte ; aucune VM ni intervention sur un disque réel n'est nécessaire. Une construction complète de l'OS et le point fixe final restent hors de cette preuve.
 
-Les références relatives des sources JavaScript/HTML et les dépendances locales des manifestes Cargo ont fait l’objet de contrôles statiques ciblés, ainsi que la syntaxe Python et les manifestes JSON reconnus. Ce contrôle ne remplace ni un build intégral ni un parcours utilisateur.
+La validation publiée distingue les suites réellement rejouées dans cette copie des preuves historiques. Elle ne remplace ni un build intégral de l'OS ni l'auto-hébergement des compilateurs.
 
 ## Ce qui a été exclu ou adapté
 

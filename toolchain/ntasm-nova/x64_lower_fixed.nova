@@ -1,0 +1,222 @@
+module x64_lower_fixed;
+import ntasm_ast;import x64_fixed;import register_widths;
+
+fn simple_name_id(tree:ntasm_ast.Tree,expr_id:u64)->u64 {
+    if expr_id==0||expr_id>tree.node_count{return 0;}
+    let expression:ntasm_ast.Node=ntasm_ast.node_at(tree,expr_id);
+    if expression.kind!=35||expression.aux!=0||expression.first_child==0||expression.first_child!=expression.last_child{return 0;}
+    let qualified:ntasm_ast.Node=ntasm_ast.node_at(tree,expression.first_child);
+    if qualified.kind!=91||qualified.first_child==0||qualified.first_child!=qualified.last_child{return 0;}
+    return qualified.first_child;
+}
+
+fn same_name(name:buf<u8>,text:buf<u8>)->bool {
+    if len(name)!=len(text){return false;}let mut i:u64=0;
+    while i<len(text){if name[i]!=text[i]{return false;}i=i+1;}return true;
+}
+
+fn node_word(source:buf<u8>,node:ntasm_ast.Node,text:buf<u8>)->bool {
+    if node.start>node.end||node.end>len(source)||(node.end-node.start)!=len(text){return false;}
+    let mut i:u64=0;while i<len(text){if source[node.start+i]!=text[i]{return false;}i=i+1;}return true;
+}
+
+// Decode base/index/scale/displacement plus optional FS/GS. descriptor is
+// base0..15/RIP17,index0..15/NONE16,scale,displacement bits,segment0/1/2.
+fn memory_descriptor(source:buf<u8>,tree:ntasm_ast.Tree,memory_id:u64,descriptor:buf<u64>)->u64 {
+    if memory_id==0||memory_id>tree.node_count||len(descriptor)<5{return 409;}
+    let memory:ntasm_ast.Node=ntasm_ast.node_at(tree,memory_id);
+    if memory.kind!=34||memory.first_child==0||memory.last_child==0||memory.first_child==memory.last_child{return 409;}
+    let type_:ntasm_ast.Node=ntasm_ast.node_at(tree,memory.last_child);
+    if type_.kind!=36{return 409;}
+    let mut current_id:u64=memory.first_child;let mut segment:u64=0;
+    let current:ntasm_ast.Node=ntasm_ast.node_at(tree,current_id);
+    if current.kind==90 {
+        let fs:buf<u8>="fs";let gs:buf<u8>="gs";
+        if node_word(source,current,fs){segment=1;}else if node_word(source,current,gs){segment=2;}else{return 409;}
+        current_id=current.next_sibling;if current_id==0||current_id==memory.last_child{return 409;}
+    }
+    let qualified:ntasm_ast.Node=ntasm_ast.node_at(tree,current_id);
+    if qualified.kind!=91||qualified.first_child==0||qualified.first_child!=qualified.last_child{return 409;}
+    let base_node:ntasm_ast.Node=ntasm_ast.node_at(tree,qualified.first_child);
+    let rip:buf<u8>="rip";let mut base:u64=17;
+    if node_word(source,base_node,rip)==false {
+        let family:u64=register_widths.family(source,base_node.start,base_node.end);
+        if family==0{return 406;}base=family-1;
+    }
+    let mut index:u64=16;let mut scale:u64=1;let mut displacement:u64=0;
+    let mut next_id:u64=qualified.next_sibling;
+    if next_id!=memory.last_child {
+        if next_id==0||next_id>tree.node_count{return 409;}
+        let next:ntasm_ast.Node=ntasm_ast.node_at(tree,next_id);
+        if next.kind==91 {
+            if next.first_child==0||next.first_child!=next.last_child{return 409;}
+            let index_node:ntasm_ast.Node=ntasm_ast.node_at(tree,next.first_child);
+            let index_family:u64=register_widths.family(source,index_node.start,index_node.end);
+            if index_family==0{return 406;}index=index_family-1;next_id=next.next_sibling;
+            if next_id!=memory.last_child {
+                if next_id==0||next_id>tree.node_count{return 409;}
+                let literal:ntasm_ast.Node=ntasm_ast.node_at(tree,next_id);
+                if literal.kind!=94{return 409;}
+                let mut has_star:bool=false;let mut at:u64=next.end;
+                while at<literal.start&&at<len(source){if source[at]==42{has_star=true;}at=at+1;}
+                if has_star{scale=literal.aux;next_id=literal.next_sibling;}
+                if has_star==false||next_id!=memory.last_child {
+                    let displacement_node:ntasm_ast.Node=ntasm_ast.node_at(tree,next_id);
+                    if displacement_node.kind!=94||displacement_node.next_sibling!=memory.last_child{return 409;}
+                    let mut negative:bool=false;let mut from:u64=next.end;if has_star{from=literal.end;}
+                    while from<displacement_node.start&&from<len(source){if source[from]==45{negative=true;}from=from+1;}
+                    displacement=displacement_node.aux;
+                    if negative&&displacement!=0{displacement=18446744073709551615-displacement+1;}
+                }
+            }
+        } else if next.kind==94 {
+            if next.next_sibling!=memory.last_child{return 409;}
+            let mut negative:bool=false;let mut at:u64=qualified.end;
+            while at<next.start&&at<len(source){if source[at]==42{return 409;}if source[at]==45{negative=true;}at=at+1;}
+            displacement=next.aux;if negative&&displacement!=0{displacement=18446744073709551615-displacement+1;}
+        } else{return 409;}
+    }
+    descriptor[0]=base;descriptor[1]=index;descriptor[2]=scale;descriptor[3]=displacement;descriptor[4]=segment;return 0;
+}
+
+// Encode one non-label instruction AST node into out[0]=length,out[1..].
+// Branch labels remain the responsibility of the two-pass control lowerer.
+export fn encode_instruction(source:buf<u8>,tree:ntasm_ast.Tree,instruction_id:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if instruction_id==0||instruction_id>tree.node_count||len(out)<16{return 800;}
+    let instruction:ntasm_ast.Node=ntasm_ast.node_at(tree,instruction_id);
+    if instruction.kind!=32||instruction.aux!=0||instruction.first_child==0{return 409;}
+    let name_node:ntasm_ast.Node=ntasm_ast.node_at(tree,instruction.first_child);
+    if name_node.start>name_node.end||name_node.end>len(source){return 409;}
+    let name:buf<u8>=slice(source,name_node.start,name_node.end-name_node.start);
+    let first_id:u64=name_node.next_sibling;
+    if first_id==0{return x64_fixed.encode(name,0,features,cpl,out);}
+    if first_id>tree.node_count{return 409;}
+    let first:ntasm_ast.Node=ntasm_ast.node_at(tree,first_id);let second_id:u64=first.next_sibling;
+    if second_id==0||second_id>tree.node_count{return 409;}
+    let second:ntasm_ast.Node=ntasm_ast.node_at(tree,second_id);if second.next_sibling!=0{return 409;}
+    if first.kind==34||second.kind==34 {
+        let mut direction:u64=0;let mut register_expr_id:u64=0;let mut memory_id:u64=0;
+        let load:buf<u8>="load";let store:buf<u8>="store";let mov:buf<u8>="mov";
+        if second.kind==34&&first.kind!=34&&(same_name(name,load)||same_name(name,mov)){direction=0;register_expr_id=first_id;memory_id=second_id;}
+        else if first.kind==34&&second.kind!=34&&(same_name(name,store)||same_name(name,mov)){direction=1;register_expr_id=second_id;memory_id=first_id;}
+        else{return 409;}
+        let register_id:u64=simple_name_id(tree,register_expr_id);if register_id==0{return 409;}
+        let register:ntasm_ast.Node=ntasm_ast.node_at(tree,register_id);
+        let width:u64=register_widths.width(source,register.start,register.end);
+        let family:u64=register_widths.family(source,register.start,register.end);
+        if width==0||family==0{return 406;}
+        let descriptor:buf<u64>=alloc(runtime(),5);
+        let mut code:u64=memory_descriptor(source,tree,memory_id,descriptor);
+        if code==0{code=x64_fixed.encode_mov_memory(direction,family-1,width,descriptor[0],descriptor[1],descriptor[2],descriptor[3],descriptor[4],features,cpl,out);}
+        rt_free(runtime(),descriptor);return code;
+    }
+    let destination_id:u64=simple_name_id(tree,first_id);if destination_id==0{return 409;}
+    let destination:ntasm_ast.Node=ntasm_ast.node_at(tree,destination_id);
+    let width:u64=register_widths.width(source,destination.start,destination.end);
+    let family:u64=register_widths.family(source,destination.start,destination.end);
+    if width==0||family==0{return 406;}
+    let source_id:u64=simple_name_id(tree,second_id);
+    if source_id!=0 {
+        let source_register:ntasm_ast.Node=ntasm_ast.node_at(tree,source_id);
+        let source_width:u64=register_widths.width(source,source_register.start,source_register.end);
+        let source_family:u64=register_widths.family(source,source_register.start,source_register.end);
+        if source_width==0||source_family==0{return 406;}if source_width!=width{return 403;}
+        return x64_fixed.encode_rr(name,2,family-1,source_family-1,width,features,cpl,out);
+    }
+    if second.kind==94{return x64_fixed.encode_ri(name,2,family-1,width,second.aux,0,features,cpl,out);}
+    return 409;
+}
+
+// Lower fixed, GPR->GPR and GPR+unsigned-literal instruction nodes. The
+// encoded stream is transactional: out[0] is byte length and out[1..] bytes on
+// success; any failure leaves out untouched.
+export fn lower(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if tree.ok==false||tree.node_count==0||len(out)<2{return 800;}
+    let temporary:buf<u8>=alloc(runtime(),len(out));
+    let scratch:buf<u8>=alloc(runtime(),16);
+    let descriptor:buf<u64>=alloc(runtime(),5);
+    let mut total:u64=0;let mut code:u64=0;let mut id:u64=1;
+    while id<=tree.node_count&&code==0 {
+        let instruction:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if instruction.kind==32 {
+            let name_id:u64=instruction.first_child;
+            if instruction.aux!=0||name_id==0||name_id>tree.node_count{code=409;}
+            else {
+                let name_node:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                if name_node.start>name_node.end||name_node.end>len(source){code=409;}
+                else {
+                    let name:buf<u8>=slice(source,name_node.start,name_node.end-name_node.start);
+                    let first_id:u64=name_node.next_sibling;
+                    if first_id==0{code=x64_fixed.encode(name,0,features,cpl,scratch);}
+                    else if first_id>tree.node_count{code=409;}
+                    else {
+                        let first:ntasm_ast.Node=ntasm_ast.node_at(tree,first_id);
+                        let second_id:u64=first.next_sibling;
+                        if second_id==0||second_id>tree.node_count{code=409;}
+                        else {
+                            let second:ntasm_ast.Node=ntasm_ast.node_at(tree,second_id);
+                            if second.next_sibling!=0{code=409;}
+                            else {
+                                if first.kind==34||second.kind==34 {
+                                    let mut direction:u64=0;let mut register_expr_id:u64=0;let mut memory_id:u64=0;
+                                    let load:buf<u8>="load";let store:buf<u8>="store";let mov:buf<u8>="mov";
+                                    if second.kind==34&&first.kind!=34&&(same_name(name,load)||same_name(name,mov)) {
+                                        direction=0;register_expr_id=first_id;memory_id=second_id;
+                                    } else if first.kind==34&&second.kind!=34&&(same_name(name,store)||same_name(name,mov)) {
+                                        direction=1;register_expr_id=second_id;memory_id=first_id;
+                                    } else{code=409;}
+                                    if code==0 {
+                                        let register_id:u64=simple_name_id(tree,register_expr_id);
+                                        if register_id==0{code=409;}
+                                        else {
+                                            let register:ntasm_ast.Node=ntasm_ast.node_at(tree,register_id);
+                                            let width:u64=register_widths.width(source,register.start,register.end);
+                                            let family:u64=register_widths.family(source,register.start,register.end);
+                                            if width==0||family==0{code=406;}
+                                            else {
+                                                code=memory_descriptor(source,tree,memory_id,descriptor);
+                                                if code==0{code=x64_fixed.encode_mov_memory(direction,family-1,width,descriptor[0],descriptor[1],descriptor[2],descriptor[3],descriptor[4],features,cpl,scratch);}
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let destination_id:u64=simple_name_id(tree,first_id);
+                                    if destination_id==0{code=409;}
+                                    else {
+                                    let destination:ntasm_ast.Node=ntasm_ast.node_at(tree,destination_id);
+                                    let width:u64=register_widths.width(source,destination.start,destination.end);
+                                    let family:u64=register_widths.family(source,destination.start,destination.end);
+                                    if width==0||family==0{code=406;}
+                                    else {
+                                        let source_id:u64=simple_name_id(tree,second_id);
+                                        if source_id!=0 {
+                                            let source_register:ntasm_ast.Node=ntasm_ast.node_at(tree,source_id);
+                                            let source_width:u64=register_widths.width(source,source_register.start,source_register.end);
+                                            let source_family:u64=register_widths.family(source,source_register.start,source_register.end);
+                                            if source_width==0||source_family==0{code=406;}
+                                            else if source_width!=width{code=403;}
+                                            else{code=x64_fixed.encode_rr(name,2,family-1,source_family-1,width,features,cpl,scratch);}
+                                        } else if second.kind==94 {
+                                            code=x64_fixed.encode_ri(name,2,family-1,width,second.aux,0,features,cpl,scratch);
+                                        } else{code=409;}
+                                    }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if code==0 {
+                        let length:u64=scratch[0];
+                        if total+length>255||total+length+1>len(out){code=800;}
+                        else {let mut i:u64=0;while i<length{temporary[1+total+i]=scratch[1+i];i=i+1;}total=total+length;}
+                    }
+                }
+            }
+        }
+        id=id+1;
+    }
+    if code==0 {
+        out[0]=u8(total);let mut i:u64=0;while i<total{out[1+i]=temporary[1+i];i=i+1;}
+    }
+    rt_free(runtime(),descriptor);rt_free(runtime(),scratch);rt_free(runtime(),temporary);return code;
+}

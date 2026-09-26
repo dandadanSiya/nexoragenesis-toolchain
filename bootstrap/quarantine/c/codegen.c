@@ -900,6 +900,8 @@ static int machine_operand(Generator *g, NtFId id, const char *mnemonic,
               "machine operand must be register, typed memory or constant");
 }
 static int emit_machine_instruction(Generator *g, const NtFStmt *s) {
+  const char *machine_name =
+      !strcmp(s->name, "call_indirect") ? "call" : s->name;
   if (!strcmp(s->name, "mov") && s->expression) {
     NtFId source = EX(g->program, s->expression).next;
     uint64_t constant;
@@ -927,7 +929,7 @@ static int emit_machine_instruction(Generator *g, const NtFStmt *s) {
     if (count == 3)
       return fail(g, NTCG_E_ENCODE, s->span,
                   "instruction exceeds three operands");
-    if (!machine_operand(g, id, s->name, &operands[count]))
+    if (!machine_operand(g, id, machine_name, &operands[count]))
       return 0;
     const NtFExpr *x = &EX(g->program, id);
     if (x->kind == NTF_X_MEMORY && x->memory.symbol) {
@@ -943,7 +945,8 @@ static int emit_machine_instruction(Generator *g, const NtFStmt *s) {
   NtX64Context context = {g->program->modules[function->module - 1].features,
                           (function->effects.flags & NTF_F_PRIVILEGED) ? 0u
                                                                        : 3u};
-  NtX64Error error = nt_x64_encode(s->name, operands, count, context, &encoded);
+  NtX64Error error =
+      nt_x64_encode(machine_name, operands, count, context, &encoded);
   if (error)
     return fail(g, NTCG_E_ENCODE, s->span, "%s: %s", s->name,
                 nt_x64_error_string(error));

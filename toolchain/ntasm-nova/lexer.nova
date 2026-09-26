@@ -201,6 +201,8 @@ fn scan(source:buf<u8>,source_index:u64,tokens:buf<u64>,emit_tokens:bool)->Scan 
                 else if ch==62 && next==61 { kind=265;cursor=cursor+1;column=column+1; }
                 else if ch==60 && next==60 { kind=266;cursor=cursor+1;column=column+1; }
                 else if ch==62 && next==62 { kind=267;cursor=cursor+1;column=column+1; }
+                else if ch==38 && next==38 { kind=268;cursor=cursor+1;column=column+1; }
+                else if ch==124 && next==124 { kind=269;cursor=cursor+1;column=column+1; }
             }
             if ch<32 || ch>126 {
                 return failed(source_index,token_line,token_column,start,cursor,

@@ -1,0 +1,2 @@
+module x64_setcc_entry;import x64_fixed;
+export fn main(name:buf<u8>,operand_count:u64,destination:u64,width:u64,features:u64,cpl:u64,out:buf<u8>)->u64{return x64_fixed.encode_setcc(name,operand_count,destination,width,features,cpl,out);}

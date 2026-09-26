@@ -24,7 +24,9 @@ enum {
   TK_LE,
   TK_GE,
   TK_SHL,
-  TK_SHR
+  TK_SHR,
+  TK_LAND,
+  TK_LOR
 };
 
 typedef struct Allocation {
@@ -444,6 +446,12 @@ static void next(Parser *p) {
         advance(p);
       } else if (c == '>' && d == '>') {
         t.kind = TK_SHR;
+        advance(p);
+      } else if (c == '&' && d == '&') {
+        t.kind = TK_LAND;
+        advance(p);
+      } else if (c == '|' && d == '|') {
+        t.kind = TK_LOR;
         advance(p);
       }
     }
@@ -1197,69 +1205,77 @@ static NtFId unary(Parser *p) {
 }
 static int binary_op(int kind, NtFOp *op, unsigned *precedence) {
   switch (kind) {
+  case TK_LOR:
+    *op = NTF_OP_LOGICAL_OR;
+    *precedence = 1;
+    return 1;
+  case TK_LAND:
+    *op = NTF_OP_LOGICAL_AND;
+    *precedence = 2;
+    return 1;
   case '*':
     *op = NTF_OP_MUL;
-    *precedence = 7;
+    *precedence = 21;
     return 1;
   case '/':
     *op = NTF_OP_DIV;
-    *precedence = 7;
+    *precedence = 21;
     return 1;
   case '%':
     *op = NTF_OP_MOD;
-    *precedence = 7;
+    *precedence = 21;
     return 1;
   case '+':
     *op = NTF_OP_ADD;
-    *precedence = 6;
+    *precedence = 18;
     return 1;
   case '-':
     *op = NTF_OP_SUB;
-    *precedence = 6;
+    *precedence = 18;
     return 1;
   case TK_SHL:
     *op = NTF_OP_SHL;
-    *precedence = 5;
+    *precedence = 15;
     return 1;
   case TK_SHR:
     *op = NTF_OP_SHR;
-    *precedence = 5;
+    *precedence = 15;
     return 1;
   case '&':
     *op = NTF_OP_AND;
-    *precedence = 4;
+    *precedence = 12;
     return 1;
   case '^':
     *op = NTF_OP_XOR;
-    *precedence = 3;
+    *precedence = 9;
     return 1;
   case '|':
     *op = NTF_OP_OR;
-    *precedence = 2;
+    *precedence = 6;
     return 1;
   case TK_EQ:
     *op = NTF_OP_EQ;
-    *precedence = 1;
+    *precedence = 3;
     return 1;
   case TK_NE:
     *op = NTF_OP_NE;
-    *precedence = 1;
+    *precedence = 3;
     return 1;
   case '<':
     *op = NTF_OP_LT;
-    *precedence = 1;
+    *precedence = 3;
     return 1;
   case TK_LE:
     *op = NTF_OP_LE;
-    *precedence = 1;
+    *precedence = 3;
     return 1;
   case '>':
     *op = NTF_OP_GT;
-    *precedence = 1;
+    *precedence = 3;
     return 1;
   case TK_GE:
     *op = NTF_OP_GE;
-    *precedence = 1;
+    *precedence = 3;
     return 1;
   default:
     return 0;
@@ -1737,6 +1753,20 @@ static NtFId infer(NtFProgram *p, NtFId id, NtFId expected, NtFId owner) {
     return x->type;
   }
   case NTF_X_BINARY: {
+    if (x->op == NTF_OP_LOGICAL_AND || x->op == NTF_OP_LOGICAL_OR) {
+      NtFType boolean = {NTF_T_BOOL, NTF_SPACE_NONE, 0, 0, 1};
+      NtFId bool_type = intern_type(p, boolean, x->span);
+      NtFId left = infer(p, x->left, bool_type, owner);
+      NtFId right = infer(p, x->right, bool_type, owner);
+      if (!left || !right)
+        return 0;
+      if (expected && !type_equal(p, expected, bool_type)) {
+        diag(p, NTF_E_TYPE, x->span, "logical operators require bool operands");
+        return 0;
+      }
+      x->type = bool_type;
+      return x->type;
+    }
     int comparison = x->op >= NTF_OP_EQ && x->op <= NTF_OP_GE;
     NtFId left = infer(p, x->left, comparison ? 0 : expected, owner);
     NtFId right = infer(p, x->right, left, owner);
@@ -5428,8 +5458,10 @@ static int verify_statement(NtFProgram *p, NtFId id, NtFId owner) {
       }
       NtX64Effects facts;
       NtX64Context context = {p->modules[f->module - 1].features, 0};
+      const char *machine_name =
+          !strcmp(s->name, "call_indirect") ? "call" : s->name;
       NtX64Error error =
-          nt_x64_effects(s->name, operands, operand_count, context, &facts);
+          nt_x64_effects(machine_name, operands, operand_count, context, &facts);
       if (error) {
         unsigned code = error == NT_X64_FEATURE     ? NTF_E_TARGET
                         : error == NT_X64_PRIVILEGE ? NTF_E_CONTRACT
@@ -5440,8 +5472,12 @@ static int verify_statement(NtFProgram *p, NtFId id, NtFId owner) {
         diag(p, code, s->span, "%s: %s", s->name, nt_x64_error_string(error));
         return 0;
       }
-      if (facts.stack_read || facts.stack_write ||
-          (facts.registers_written & (BIT(4) | BIT(5)))) {
+      /* A returning indirect call balances its implicit stack write with the
+       * callee RET, exactly like the typed call path. Other raw stack effects
+       * still require the unavailable general stack proof. */
+      if (strcmp(s->name, "call_indirect") &&
+          (facts.stack_read || facts.stack_write ||
+           (facts.registers_written & (BIT(4) | BIT(5))))) {
         diag(p, NTF_E_CONTRACT, s->span,
              "%s requires unavailable stack/frame balance proof", s->name);
         return 0;
@@ -5452,9 +5488,12 @@ static int verify_statement(NtFProgram *p, NtFId id, NtFId owner) {
         return 0;
       }
       f = &FN(p, owner);
+      uint64_t effective_writes = facts.registers_written;
+      if (!strcmp(s->name, "call_indirect"))
+        effective_writes &= ~BIT(4); /* balanced CALL/RET stack motion */
       f->inferred_effects.flags |= facts.effects;
-      f->write_footprint |= facts.registers_written;
-      f->inferred_clobbers |= facts.registers_written;
+      f->write_footprint |= effective_writes;
+      f->inferred_clobbers |= effective_writes;
       s->flags_read = facts.flags_read;
       s->flags_written = facts.flags_written;
       s->flags_undefined = facts.flags_undefined;

@@ -203,12 +203,14 @@ fn primary(p:Parser)->u64 {
     error(p,9);return 0;
 }
 fn precedence(kind:u64)->u64 {
+    if kind==269{return 1;}
+    if kind==268{return 2;}
     if kind==262 || kind==263 || kind==264 || kind==265 ||
-       kind==60 || kind==62 { return 1; }
-    if (kind==124) { return 2; }if (kind==94) { return 3; }
-    if (kind==38) { return 4; }if (kind==266 || kind==267) { return 5; }
-    if (kind==43 || kind==45) { return 6; }
-    if (kind==42 || kind==47 || kind==37) { return 7; }
+       kind==60 || kind==62 { return 3; }
+    if (kind==124) { return 6; }if (kind==94) { return 9; }
+    if (kind==38) { return 12; }if (kind==266 || kind==267) { return 15; }
+    if (kind==43 || kind==45) { return 18; }
+    if (kind==42 || kind==47 || kind==37) { return 21; }
     return 0;
 }
 fn parse_expression(p:Parser,min:u64)->u64 {
@@ -216,14 +218,14 @@ fn parse_expression(p:Parser,min:u64)->u64 {
     let kind:u64=tk(p);
     if (kind==43 || kind==45 || kind==126 || kind==33) {
         step(p);left=node(p,35,begin);aux(p,left,kind);
-        attach(p,left,parse_expression(p,8));finish(p,left);
+        attach(p,left,parse_expression(p,22));finish(p,left);
     } else { left=primary(p); }
     let mut used_comparison:bool=false;
     while (p.code==0) {
         let operation:u64=tk(p);let rank:u64=precedence(operation);
         if (rank==0 || rank<(min)) { break; }
-        if (rank==1 && used_comparison==true) { break; }
-        if (rank==1) { used_comparison=true; }
+        if (rank==3 && used_comparison==true) { break; }
+        if (rank==3) { used_comparison=true; }
         step(p);let parent:u64=node(p,35,begin);aux(p,parent,operation);
         attach(p,parent,left);attach(p,parent,parse_expression(p,rank+1));
         left=finish(p,parent);

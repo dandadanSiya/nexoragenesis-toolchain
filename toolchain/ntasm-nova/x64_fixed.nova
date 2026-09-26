@@ -1,0 +1,481 @@
+module x64_fixed;
+
+fn same(name:buf<u8>,text:buf<u8>)->bool {
+    if len(name)!=len(text) { return false; }
+    let mut i:u64=0;
+    while i<len(text) {
+        if name[i]!=text[i] { return false; }
+        i=i+1;
+    }
+    return true;
+}
+
+// Encode the fixed zero-operand forms of the x86_64 oracle. Output is
+// transactional: out[0] is length and out[1..3] are instruction bytes only on
+// success. Diagnostics match the native encoder:401 mnemonic,402 operand
+// count,404 features,405 privilege. 800 is an invalid output buffer.
+export fn encode(name:buf<u8>,operand_count:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<4 { return 800; }
+    if cpl>3 { return 405; }
+
+    let mut packed:u64=0;
+    let mut length:u64=0;
+    let mut required:u64=0;
+    let mut maximum_cpl:u64=0;
+
+    let nop:buf<u8>="nop";
+    let pause:buf<u8>="pause";
+    let ud2:buf<u8>="ud2";
+    let cpuid:buf<u8>="cpuid";
+    let cbw:buf<u8>="cbw";
+    let cwde:buf<u8>="cwde";
+    let cdqe:buf<u8>="cdqe";
+    let cwd:buf<u8>="cwd";
+    let cdq:buf<u8>="cdq";
+    let cqo:buf<u8>="cqo";
+    let pushfq:buf<u8>="pushfq";
+    let popfq:buf<u8>="popfq";
+    let rdtsc:buf<u8>="rdtsc";
+    let lfence:buf<u8>="lfence";
+    let sfence:buf<u8>="sfence";
+    let mfence:buf<u8>="mfence";
+    let cli:buf<u8>="cli";
+    let sti:buf<u8>="sti";
+    let hlt:buf<u8>="hlt";
+    let swapgs:buf<u8>="swapgs";
+    let rdmsr:buf<u8>="rdmsr";
+    let wrmsr:buf<u8>="wrmsr";
+    let syscall:buf<u8>="syscall";
+    let sysretq:buf<u8>="sysretq";
+    let iretq:buf<u8>="iretq";
+    let ret:buf<u8>="ret";
+    let return_:buf<u8>="return";
+
+    if same(name,nop) { packed=144;length=1;required=1;maximum_cpl=3; }
+    else if same(name,pause) { packed=37107;length=2;required=1;maximum_cpl=3; }
+    else if same(name,ud2) { packed=2831;length=2;required=1;maximum_cpl=3; }
+    else if same(name,cpuid) { packed=41487;length=2;required=1;maximum_cpl=3; }
+    else if same(name,cbw) { packed=39014;length=2;required=1;maximum_cpl=3; }
+    else if same(name,cwde) { packed=152;length=1;required=1;maximum_cpl=3; }
+    else if same(name,cdqe) { packed=38984;length=2;required=1;maximum_cpl=3; }
+    else if same(name,cwd) { packed=39270;length=2;required=1;maximum_cpl=3; }
+    else if same(name,cdq) { packed=153;length=1;required=1;maximum_cpl=3; }
+    else if same(name,cqo) { packed=39240;length=2;required=1;maximum_cpl=3; }
+    else if same(name,pushfq) { packed=156;length=1;required=1;maximum_cpl=3; }
+    else if same(name,popfq) { packed=157;length=1;required=1;maximum_cpl=0; }
+    else if same(name,rdtsc) { packed=12559;length=2;required=17;maximum_cpl=0; }
+    else if same(name,lfence) { packed=15248911;length=3;required=9;maximum_cpl=3; }
+    else if same(name,sfence) { packed=16297487;length=3;required=9;maximum_cpl=3; }
+    else if same(name,mfence) { packed=15773199;length=3;required=9;maximum_cpl=3; }
+    else if same(name,cli) { packed=250;length=1;required=1;maximum_cpl=0; }
+    else if same(name,sti) { packed=251;length=1;required=1;maximum_cpl=0; }
+    else if same(name,hlt) { packed=244;length=1;required=1;maximum_cpl=0; }
+    else if same(name,swapgs) { packed=16253199;length=3;required=1;maximum_cpl=0; }
+    else if same(name,rdmsr) { packed=12815;length=2;required=3;maximum_cpl=0; }
+    else if same(name,wrmsr) { packed=12303;length=2;required=3;maximum_cpl=0; }
+    else if same(name,syscall) { packed=1295;length=2;required=5;maximum_cpl=3; }
+    else if same(name,sysretq) { packed=462664;length=3;required=5;maximum_cpl=0; }
+    else if same(name,iretq) { packed=53064;length=2;required=1;maximum_cpl=0; }
+    else if same(name,ret) { packed=195;length=1;required=1;maximum_cpl=3; }
+    else if same(name,return_) { packed=195;length=1;required=1;maximum_cpl=3; }
+    else { return 401; }
+
+    if operand_count!=0 { return 402; }
+    if (features&required)!=required { return 404; }
+    if cpl>maximum_cpl { return 405; }
+
+    out[0]=u8(length);
+    out[1]=u8(packed&255);
+    out[2]=u8((packed>>8)&255);
+    out[3]=u8((packed>>16)&255);
+    return 0;
+}
+
+// Encode the register-to-register form of mov/add/or/adc/sbb/and/sub/xor/cmp.
+// Register numbers are the architectural GPR families0..15. Both operands use
+// the same explicit width. out[0] is length and out[1..4] are bytes on success.
+export fn encode_rr(name:buf<u8>,operand_count:u64,destination:u64,source:u64,width:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<5 { return 800; }
+    if cpl>3 { return 405; }
+
+    let mov:buf<u8>="mov";
+    let add:buf<u8>="add";
+    let or_:buf<u8>="or";
+    let adc:buf<u8>="adc";
+    let sbb:buf<u8>="sbb";
+    let and_:buf<u8>="and";
+    let sub:buf<u8>="sub";
+    let xor_:buf<u8>="xor";
+    let cmp:buf<u8>="cmp";
+
+    let mut group:u64=9;
+    if same(name,mov) { group=8; }
+    else if same(name,add) { group=0; }
+    else if same(name,or_) { group=1; }
+    else if same(name,adc) { group=2; }
+    else if same(name,sbb) { group=3; }
+    else if same(name,and_) { group=4; }
+    else if same(name,sub) { group=5; }
+    else if same(name,xor_) { group=6; }
+    else if same(name,cmp) { group=7; }
+    else { return 401; }
+
+    if operand_count!=2 { return 402; }
+    if (features&1)!=1 { return 404; }
+    if width!=8&&width!=16&&width!=32&&width!=64 { return 403; }
+    if destination>15||source>15 { return 406; }
+
+    let mut opcode:u64=0;
+    if group==8 {
+        if width==8 { opcode=136; } else { opcode=137; }
+    } else {
+        opcode=group*8;
+        if width!=8 { opcode=opcode+1; }
+    }
+
+    let mut rex:u64=0;
+    if width==64 { rex=rex|8; }
+    if source>=8 { rex=rex|4; }
+    if destination>=8 { rex=rex|1; }
+    if width==8&&(source>=4||destination>=4) { rex=rex|64; }
+
+    let mut length:u64=2;
+    if width==16 { length=length+1; }
+    if rex!=0 { length=length+1; }
+
+    out[0]=u8(length);
+    out[1]=0;out[2]=0;out[3]=0;out[4]=0;
+    let mut at:u64=1;
+    if width==16 { out[at]=102;at=at+1; }
+    if rex!=0 { out[at]=u8(64|rex);at=at+1; }
+    out[at]=u8(opcode);at=at+1;
+    out[at]=u8(192|((source&7)<<3)|(destination&7));
+    return 0;
+}
+
+fn immediate_fits(value:u64,is_signed:u64,width:u64,sign_extended:bool)->bool {
+    if width==64 { return true; }
+    if is_signed==1 {
+        let maximum:u64=(1<<(width-1))-1;
+        let minimum:u64=18446744073709551615-maximum;
+        return value<=maximum||value>=minimum;
+    }
+    let mut maximum:u64=0;
+    if sign_extended { maximum=(1<<(width-1))-1; }
+    else { maximum=(1<<width)-1; }
+    return value<=maximum;
+}
+
+// Encode mov or the eight arithmetic groups with a GPR destination and an
+// immediate source. Immediate signedness carries the full u64 two's-complement
+// convention of the native oracle. Output is transactional and uses out[0] as
+// length followed by up to15 instruction bytes.
+export fn encode_ri(name:buf<u8>,operand_count:u64,destination:u64,width:u64,immediate:u64,immediate_is_signed:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<16 { return 800; }
+    if cpl>3 { return 405; }
+
+    let mov:buf<u8>="mov";
+    let add:buf<u8>="add";
+    let or_:buf<u8>="or";
+    let adc:buf<u8>="adc";
+    let sbb:buf<u8>="sbb";
+    let and_:buf<u8>="and";
+    let sub:buf<u8>="sub";
+    let xor_:buf<u8>="xor";
+    let cmp:buf<u8>="cmp";
+
+    let mut group:u64=9;
+    if same(name,mov) { group=8; }
+    else if same(name,add) { group=0; }
+    else if same(name,or_) { group=1; }
+    else if same(name,adc) { group=2; }
+    else if same(name,sbb) { group=3; }
+    else if same(name,and_) { group=4; }
+    else if same(name,sub) { group=5; }
+    else if same(name,xor_) { group=6; }
+    else if same(name,cmp) { group=7; }
+    else { return 401; }
+
+    if operand_count!=2 { return 402; }
+    if (features&1)!=1 { return 404; }
+    if width!=8&&width!=16&&width!=32&&width!=64 { return 403; }
+    if destination>15 { return 406; }
+    if immediate_is_signed>1 { return 412; }
+
+    let mut opcode:u64=0;
+    let mut digit:u64=0;
+    let mut immediate_bytes:u64=0;
+    let mut accumulator:bool=false;
+    let mut compact:bool=false;
+
+    if group==8 {
+        if immediate_fits(immediate,immediate_is_signed,width,false)==false { return 407; }
+        if width==8 { opcode=176; } else { opcode=184; }
+        opcode=opcode+(destination&7);
+        immediate_bytes=width/8;
+    } else {
+        if width==64 {
+            if immediate_fits(immediate,immediate_is_signed,32,true)==false { return 407; }
+        } else if immediate_fits(immediate,immediate_is_signed,width,false)==false { return 407; }
+        compact=immediate_fits(immediate,immediate_is_signed,8,true);
+        accumulator=destination==0&&(width==8||compact==false);
+        if accumulator {
+            opcode=group*8;
+            if width==8 { opcode=opcode+4;immediate_bytes=1; }
+            else {
+                opcode=opcode+5;
+                if width==16 { immediate_bytes=2; } else { immediate_bytes=4; }
+            }
+        } else {
+            if width==8 { opcode=128;immediate_bytes=1; }
+            else if compact { opcode=131;immediate_bytes=1; }
+            else {
+                opcode=129;
+                if width==16 { immediate_bytes=2; } else { immediate_bytes=4; }
+            }
+            digit=group;
+        }
+    }
+
+    let mut rex:u64=0;
+    if width==64 { rex=rex|8; }
+    if destination>=8 { rex=rex|1; }
+    if width==8&&destination>=4 { rex=rex|64; }
+    if accumulator { rex=0;if width==64 { rex=8; } }
+
+    let mut length:u64=1+immediate_bytes;
+    if accumulator==false&&group!=8 { length=length+1; }
+    if width==16 { length=length+1; }
+    if rex!=0 { length=length+1; }
+
+    out[0]=u8(length);
+    let mut clear:u64=1;
+    while clear<16 { out[clear]=0;clear=clear+1; }
+    let mut at:u64=1;
+    if width==16 { out[at]=102;at=at+1; }
+    if rex!=0 { out[at]=u8(64|rex);at=at+1; }
+    out[at]=u8(opcode);at=at+1;
+    if accumulator==false&&group!=8 {
+        out[at]=u8(192|((digit&7)<<3)|(destination&7));at=at+1;
+    }
+    let mut i:u64=0;
+    while i<immediate_bytes {
+        out[at+i]=u8((immediate>>(i*8))&255);
+        i=i+1;
+    }
+    return 0;
+}
+
+// Encode inc/dec/not/neg with one GPR operand.
+export fn encode_unary(name:buf<u8>,operand_count:u64,destination:u64,width:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<5 { return 800; }
+    if cpl>3 { return 405; }
+    let inc:buf<u8>="inc";let dec:buf<u8>="dec";
+    let not_:buf<u8>="not";let neg:buf<u8>="neg";
+    let mut digit:u64=4;
+    if same(name,inc){digit=0;}else if same(name,dec){digit=1;}
+    else if same(name,not_){digit=2;}else if same(name,neg){digit=3;}
+    else{return 401;}
+    if operand_count!=1{return 402;}
+    if (features&1)!=1{return 404;}
+    if width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+    if destination>15{return 406;}
+    let mut opcode:u64=0;
+    if digit<2{if width==8{opcode=254;}else{opcode=255;}}
+    else{if width==8{opcode=246;}else{opcode=247;}}
+    let mut rex:u64=0;if width==64{rex=8;}if destination>=8{rex=rex|1;}
+    if width==8&&destination>=4{rex=rex|64;}
+    let mut length:u64=2;if width==16{length=length+1;}if rex!=0{length=length+1;}
+    out[0]=u8(length);out[1]=0;out[2]=0;out[3]=0;out[4]=0;
+    let mut at:u64=1;if width==16{out[at]=102;at=at+1;}
+    if rex!=0{out[at]=u8(64|rex);at=at+1;}
+    out[at]=u8(opcode);at=at+1;
+    out[at]=u8(192|((digit&7)<<3)|(destination&7));return 0;
+}
+
+// Encode the immediate-count forms of rol/ror/shl/shr/sar for one GPR.
+export fn encode_shift_imm(name:buf<u8>,operand_count:u64,destination:u64,width:u64,amount:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<6{return 800;}if cpl>3{return 405;}
+    let rol:buf<u8>="rol";let ror:buf<u8>="ror";let shl:buf<u8>="shl";
+    let shr:buf<u8>="shr";let sar:buf<u8>="sar";let mut digit:u64=8;
+    if same(name,rol){digit=0;}else if same(name,ror){digit=1;}
+    else if same(name,shl){digit=4;}else if same(name,shr){digit=5;}
+    else if same(name,sar){digit=7;}else{return 401;}
+    if operand_count!=2{return 402;}if (features&1)!=1{return 404;}
+    if width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+    if destination>15{return 406;}if amount>255{return 407;}
+    let single:bool=amount==1;let mut opcode:u64=0;
+    if width==8{if single{opcode=208;}else{opcode=192;}}
+    else{if single{opcode=209;}else{opcode=193;}}
+    let mut rex:u64=0;if width==64{rex=8;}if destination>=8{rex=rex|1;}
+    if width==8&&destination>=4{rex=rex|64;}
+    let mut length:u64=2;if single==false{length=length+1;}
+    if width==16{length=length+1;}if rex!=0{length=length+1;}
+    out[0]=u8(length);out[1]=0;out[2]=0;out[3]=0;out[4]=0;out[5]=0;
+    let mut at:u64=1;if width==16{out[at]=102;at=at+1;}
+    if rex!=0{out[at]=u8(64|rex);at=at+1;}
+    out[at]=u8(opcode);at=at+1;out[at]=u8(192|((digit&7)<<3)|(destination&7));at=at+1;
+    if single==false{out[at]=u8(amount);}return 0;
+}
+
+// Encode call/jmp with REL32(kind4) or indirect GPR64(kind1).
+export fn encode_control(name:buf<u8>,operand_count:u64,kind:u64,width:u64,value:u64,is_signed:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<6{return 800;}if cpl>3{return 405;}
+    let call:buf<u8>="call";let jmp:buf<u8>="jmp";let mut call_:bool=false;
+    if same(name,call){call_=true;}else if same(name,jmp){call_=false;}else{return 401;}
+    if operand_count!=1{return 402;}if (features&1)!=1{return 404;}
+    if kind==4 {
+        if is_signed>1{return 412;}
+        if width!=0&&width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+        if width!=0&&immediate_fits(value,is_signed,width,false)==false{return 407;}
+        if immediate_fits(value,is_signed,32,true)==false{return 407;}
+        out[0]=5;if call_{out[1]=232;}else{out[1]=233;}
+        out[2]=u8(value&255);out[3]=u8((value>>8)&255);
+        out[4]=u8((value>>16)&255);out[5]=u8((value>>24)&255);return 0;
+    }
+    if kind==1 {
+        if width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+        if value>15{return 406;}if width!=64{return 403;}
+        let mut at:u64=1;let mut length:u64=2;
+        if value>=8{out[at]=65;at=at+1;length=3;}
+        out[0]=u8(length);out[at]=255;at=at+1;
+        let mut digit:u64=4;if call_{digit=2;}
+        out[at]=u8(192|(digit<<3)|(value&7));
+        let mut clear:u64=at+1;while clear<6{out[clear]=0;clear=clear+1;}return 0;
+    }
+    return 409;
+}
+
+// Encode push/pop for GPR64(kind1), plus push immediate(kind2).
+export fn encode_stack(name:buf<u8>,operand_count:u64,kind:u64,width:u64,value:u64,is_signed:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<6{return 800;}if cpl>3{return 405;}
+    let push:buf<u8>="push";let pop:buf<u8>="pop";let mut pushing:bool=false;
+    if same(name,push){pushing=true;}else if same(name,pop){pushing=false;}else{return 401;}
+    if operand_count!=1{return 402;}if (features&1)!=1{return 404;}
+    if kind==1 {
+        if width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+        if value>15{return 406;}if width!=64{return 403;}
+        let mut at:u64=1;let mut length:u64=1;
+        if value>=8{out[at]=65;at=at+1;length=2;}
+        out[0]=u8(length);
+        if pushing{out[at]=u8(80+(value&7));}else{out[at]=u8(88+(value&7));}
+        let mut clear:u64=at+1;while clear<6{out[clear]=0;clear=clear+1;}return 0;
+    }
+    if kind==2 {
+        if is_signed>1{return 412;}
+        if width!=0&&width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+        if width!=0&&immediate_fits(value,is_signed,width,false)==false{return 407;}
+        if pushing==false{return 409;}
+        if immediate_fits(value,is_signed,8,true){out[0]=2;out[1]=106;out[2]=u8(value);out[3]=0;out[4]=0;out[5]=0;return 0;}
+        if immediate_fits(value,is_signed,32,true)==false{return 407;}
+        out[0]=5;out[1]=104;out[2]=u8(value&255);out[3]=u8((value>>8)&255);
+        out[4]=u8((value>>16)&255);out[5]=u8((value>>24)&255);return 0;
+    }
+    return 409;
+}
+
+// Encode the sixteen conditional near branches with a REL32 operand(kind4).
+export fn encode_jcc(name:buf<u8>,operand_count:u64,kind:u64,width:u64,displacement:u64,is_signed:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<7{return 800;}if cpl>3{return 405;}
+    let jo:buf<u8>="jo";let jno:buf<u8>="jno";let jb:buf<u8>="jb";let jae:buf<u8>="jae";
+    let je:buf<u8>="je";let jne:buf<u8>="jne";let jbe:buf<u8>="jbe";let ja:buf<u8>="ja";
+    let js:buf<u8>="js";let jns:buf<u8>="jns";let jp:buf<u8>="jp";let jnp:buf<u8>="jnp";
+    let jl:buf<u8>="jl";let jge:buf<u8>="jge";let jle:buf<u8>="jle";let jg:buf<u8>="jg";
+    let mut condition:u64=16;
+    if same(name,jo){condition=0;}else if same(name,jno){condition=1;}
+    else if same(name,jb){condition=2;}else if same(name,jae){condition=3;}
+    else if same(name,je){condition=4;}else if same(name,jne){condition=5;}
+    else if same(name,jbe){condition=6;}else if same(name,ja){condition=7;}
+    else if same(name,js){condition=8;}else if same(name,jns){condition=9;}
+    else if same(name,jp){condition=10;}else if same(name,jnp){condition=11;}
+    else if same(name,jl){condition=12;}else if same(name,jge){condition=13;}
+    else if same(name,jle){condition=14;}else if same(name,jg){condition=15;}
+    else{return 401;}
+    if operand_count!=1{return 402;}if (features&1)!=1{return 404;}
+    if kind==4 {
+        if is_signed>1{return 412;}
+        if width!=0&&width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+        if width!=0&&immediate_fits(displacement,is_signed,width,false)==false{return 407;}
+        if immediate_fits(displacement,is_signed,32,true)==false{return 407;}
+    } else if kind==1 {
+        if width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+        if displacement>15{return 406;}return 409;
+    } else{return 409;}
+    out[0]=6;out[1]=15;out[2]=u8(128+condition);out[3]=u8(displacement&255);
+    out[4]=u8((displacement>>8)&255);out[5]=u8((displacement>>16)&255);
+    out[6]=u8((displacement>>24)&255);return 0;
+}
+
+// Encode mov register<->memory. direction0 loads into register, direction1
+// stores the register. base16 means no base,17 RIP; index16 means none.
+export fn encode_mov_memory(direction:u64,register:u64,width:u64,base:u64,index:u64,scale:u64,displacement:u64,segment:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<16{return 800;}if cpl>3{return 405;}
+    if direction>1{return 412;}if (features&1)!=1{return 404;}
+    if width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+    if register>15{return 406;}
+    if base>17||index>16||index==4{return 411;}
+    if scale!=1&&scale!=2&&scale!=4&&scale!=8{return 411;}
+    if index==16&&scale!=1{return 411;}
+    if base==17&&index!=16{return 411;}
+    if displacement>2147483647&&displacement<18446744071562067968{return 411;}
+    if segment>2{return 410;}
+
+    let mut rex:u64=0;if width==64{rex=8;}if register>=8{rex=rex|4;}
+    if base>=8&&base<=15{rex=rex|1;}if index>=8&&index<=15{rex=rex|2;}
+    if width==8&&register>=4{rex=rex|64;}
+    let mut opcode:u64=137;if width==8{opcode=136;}
+    if direction==0{if width==8{opcode=138;}else{opcode=139;}}
+
+    let mut mod:u64=0;let mut displacement_bytes:u64=0;let mut sib:bool=false;
+    if base==17{displacement_bytes=4;}
+    else {
+        if base==16{displacement_bytes=4;}
+        else if displacement==0&&(base&7)!=5{mod=0;}
+        else if displacement<=127||displacement>=18446744073709551488{mod=1;displacement_bytes=1;}
+        else{mod=2;displacement_bytes=4;}
+        sib=index!=16||base==16||(base&7)==4;
+    }
+    let mut length:u64=2+displacement_bytes;
+    if segment!=0{length=length+1;}if width==16{length=length+1;}
+    if rex!=0{length=length+1;}if sib{length=length+1;}
+
+    out[0]=u8(length);let mut clear:u64=1;while clear<16{out[clear]=0;clear=clear+1;}
+    let mut at:u64=1;if segment==1{out[at]=100;at=at+1;}else if segment==2{out[at]=101;at=at+1;}
+    if width==16{out[at]=102;at=at+1;}if rex!=0{out[at]=u8(64|rex);at=at+1;}
+    out[at]=u8(opcode);at=at+1;
+    if base==17{out[at]=u8(((register&7)<<3)|5);at=at+1;}
+    else {
+        let mut field:u64=base&7;if sib{field=4;}
+        out[at]=u8((mod<<6)|((register&7)<<3)|field);at=at+1;
+        if sib {
+            let mut scale_bits:u64=0;if scale==2{scale_bits=1;}else if scale==4{scale_bits=2;}else if scale==8{scale_bits=3;}
+            let mut index_bits:u64=index&7;if index==16{index_bits=4;}
+            let mut base_bits:u64=base&7;if base==16{base_bits=5;}
+            out[at]=u8((scale_bits<<6)|(index_bits<<3)|base_bits);at=at+1;
+        }
+    }
+    let mut i:u64=0;while i<displacement_bytes{out[at+i]=u8((displacement>>(i*8))&255);i=i+1;}
+    return 0;
+}
+
+// Encode the sixteen setcc forms to one low8 GPR.
+export fn encode_setcc(name:buf<u8>,operand_count:u64,destination:u64,width:u64,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<5{return 800;}if cpl>3{return 405;}
+    let sete:buf<u8>="sete";let setne:buf<u8>="setne";let setb:buf<u8>="setb";let setae:buf<u8>="setae";
+    let setbe:buf<u8>="setbe";let seta:buf<u8>="seta";let sets:buf<u8>="sets";let setns:buf<u8>="setns";
+    let setp:buf<u8>="setp";let setnp:buf<u8>="setnp";let setl:buf<u8>="setl";let setge:buf<u8>="setge";
+    let setle:buf<u8>="setle";let setg:buf<u8>="setg";let seto:buf<u8>="seto";let setno:buf<u8>="setno";
+    let mut cc:u64=16;
+    if same(name,sete){cc=4;}else if same(name,setne){cc=5;}else if same(name,setb){cc=2;}else if same(name,setae){cc=3;}
+    else if same(name,setbe){cc=6;}else if same(name,seta){cc=7;}else if same(name,sets){cc=8;}else if same(name,setns){cc=9;}
+    else if same(name,setp){cc=10;}else if same(name,setnp){cc=11;}else if same(name,setl){cc=12;}else if same(name,setge){cc=13;}
+    else if same(name,setle){cc=14;}else if same(name,setg){cc=15;}else if same(name,seto){cc=0;}else if same(name,setno){cc=1;}
+    else{return 401;}
+    if operand_count!=1{return 402;}if (features&1)!=1{return 404;}
+    if width!=8&&width!=16&&width!=32&&width!=64{return 403;}
+    if destination>15{return 406;}if width!=8{return 403;}
+    let mut rex:u64=0;if destination>=8{rex=1;}if destination>=4{rex=rex|64;}
+    let mut at:u64=1;let mut length:u64=3;if rex!=0{out[at]=u8(64|rex);at=at+1;length=4;}
+    out[0]=u8(length);out[at]=15;out[at+1]=u8(144+cc);out[at+2]=u8(192|(destination&7));
+    let mut clear:u64=at+3;while clear<5{out[clear]=0;clear=clear+1;}return 0;
+}

@@ -1,0 +1,25 @@
+module x64_lower_nxo_local_entry;
+import ntasm_ast;import ntasm_parser;import ntasm_nxo;import ntasm_nxo_pe;import ntasm_pe;import x64_lower_nxo;
+export fn main(source:buf<u8>,out:buf<u8>)->u64 {
+    if len(out)<16{return 800;}
+    let tree:ntasm_ast.Tree=ntasm_parser.parse(source,1);
+    if tree.ok==false{ntasm_ast.release(tree);return 800;}
+    let written:ntasm_nxo.WriteResult=x64_lower_nxo.build_local_helper_call(source,tree,1,3);
+    ntasm_ast.release(tree);
+    let object_bytes:buf<u8>=written.bytes;
+    if written.code!=0{rt_free(runtime(),object_bytes);return written.code;}
+    let readback:ntasm_nxo.ReadResult=ntasm_nxo.read(object_bytes);
+    if readback.code!=0{rt_free(runtime(),object_bytes);return readback.code;}
+    let object:ntasm_nxo.Object=readback.object;
+    let converted:ntasm_nxo_pe.ConvertResult=ntasm_nxo_pe.convert(object);
+    ntasm_nxo.release(object);
+    let pe_bytes:buf<u8>=converted.bytes;
+    if converted.code!=0{rt_free(runtime(),object_bytes);rt_free(runtime(),pe_bytes);return converted.code;}
+    let nxo_size:u64=len(object_bytes);let pe_size:u64=len(pe_bytes);
+    if nxo_size+pe_size>len(out)-16{
+        rt_free(runtime(),object_bytes);rt_free(runtime(),pe_bytes);return 800;
+    }
+    ntasm_pe.put64(out,0,nxo_size);ntasm_pe.put64(out,8,pe_size);
+    ntasm_pe.copy(out,16,object_bytes);ntasm_pe.copy(out,16+nxo_size,pe_bytes);
+    rt_free(runtime(),object_bytes);rt_free(runtime(),pe_bytes);return 0;
+}

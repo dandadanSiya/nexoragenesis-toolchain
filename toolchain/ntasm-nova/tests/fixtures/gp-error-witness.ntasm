@@ -1,0 +1,28 @@
+module gp_witness
+target x86_64-nexora-uefi
+stub_table faults kind interrupt {
+stub 13 {
+handler advance_saved_rip_2
+entry_abi nx64-interrupt-same-cpl-error-v0
+exit_abi nx64-iretq-same-cpl-error-v0
+exit iretq
+frame x86_64.frame.error.same_cpl
+bindings {}
+hardware_error_code true
+save {rax}
+clobbers {}
+stack_align 0
+swapgs never
+interrupts preserve
+section .text
+visibility export
+symbol isr13
+}
+}
+section .text {
+export fn main()->u64
+effects {}
+clobbers {} {
+return 0
+}
+}

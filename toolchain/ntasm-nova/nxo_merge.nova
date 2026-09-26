@@ -60,14 +60,12 @@ export fn merge(left:buf<u8>,right:buf<u8>)->ntasm_nxo.WriteResult {
     }
     let lt:u64=len(lo.text);let lr_:u64=len(lo.rdata);let ld:u64=len(lo.data);
     let rt:u64=len(ro.text);let rr_:u64=len(ro.rdata);let rd:u64=len(ro.data);
-    // Right-section bases: internal alignment when the right section is
-    // non-empty, otherwise the plain left size (no padding introduced).
-    let mut textBase:u64=lt;
-    if rt>0{textBase=ntasm_pe.align(lt,16);}
-    let mut rdataBase:u64=lr_;
-    if rr_>0{rdataBase=ntasm_pe.align(lr_,8);}
-    let mut dataBase:u64=ld;
-    if rd>0{dataBase=ntasm_pe.align(ld,8);}
+    // Match the C linker exactly: every input receives an aligned base for
+    // every section, including an empty right section. The resulting trailing
+    // padding is observable in the merged object and later PE layout.
+    let textBase:u64=ntasm_pe.align(lt,16);
+    let rdataBase:u64=ntasm_pe.align(lr_,16);
+    let dataBase:u64=ntasm_pe.align(ld,16);
     // Sizes are each capped at 64MiB by validate, so the sums cannot overflow;
     // only the 64MiB merged limit can trip.
     if textBase+rt>67108864 || rdataBase+rr_>67108864 || dataBase+rd>67108864 {

@@ -1,0 +1,76 @@
+module x64_lower_control;
+import ntasm_ast;import x64_fixed;import x64_lower_fixed;
+
+fn same(source:buf<u8>,a_start:u64,a_end:u64,b_start:u64,b_end:u64)->bool {
+    if a_start>a_end||b_start>b_end||a_end>len(source)||b_end>len(source)||(a_end-a_start)!=(b_end-b_start){return false;}
+    let mut i:u64=0;while i<(a_end-a_start){if source[a_start+i]!=source[b_start+i]{return false;}i=i+1;}return true;
+}
+fn same_name(name:buf<u8>,text:buf<u8>)->bool {if len(name)!=len(text){return false;}let mut i:u64=0;while i<len(text){if name[i]!=text[i]{return false;}i=i+1;}return true;}
+fn simple_name_id(tree:ntasm_ast.Tree,expr_id:u64)->u64 {if expr_id==0||expr_id>tree.node_count{return 0;}let e:ntasm_ast.Node=ntasm_ast.node_at(tree,expr_id);if e.kind!=35||e.aux!=0||e.first_child==0||e.first_child!=e.last_child{return 0;}let q:ntasm_ast.Node=ntasm_ast.node_at(tree,e.first_child);if q.kind!=91||q.first_child==0||q.first_child!=q.last_child{return 0;}return q.first_child;}
+fn jcc(name:buf<u8>)->bool {let a:buf<u8>="jo";if same_name(name,a){return true;}let b:buf<u8>="jno";if same_name(name,b){return true;}let c:buf<u8>="jb";if same_name(name,c){return true;}let d:buf<u8>="jae";if same_name(name,d){return true;}let e:buf<u8>="je";if same_name(name,e){return true;}let f:buf<u8>="jne";if same_name(name,f){return true;}let g:buf<u8>="jbe";if same_name(name,g){return true;}let h:buf<u8>="ja";if same_name(name,h){return true;}let i:buf<u8>="js";if same_name(name,i){return true;}let k:buf<u8>="jns";if same_name(name,k){return true;}let l:buf<u8>="jp";if same_name(name,l){return true;}let m:buf<u8>="jnp";if same_name(name,m){return true;}let n:buf<u8>="jl";if same_name(name,n){return true;}let o:buf<u8>="jge";if same_name(name,o){return true;}let p:buf<u8>="jle";if same_name(name,p){return true;}let q:buf<u8>="jg";return same_name(name,q);}
+
+// Two-pass lowering for labels plus fixed instructions and jmp/Jcc REL32.
+// Bridge diagnostics:820 duplicate label,821 unresolved label. Output remains
+// untouched on every failure. At most64 labels per call.
+export fn lower_wide(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64,out:buf<u8>,length_out:buf<u64>)->u64 {
+    if tree.ok==false||tree.node_count==0||len(length_out)<1{return 800;}
+    let labels:buf<u64>=alloc(runtime(),192);let scratch:buf<u8>=alloc(runtime(),16);
+    let temporary:buf<u8>=alloc(runtime(),len(out));let mut label_count:u64=0;
+    let mut offset:u64=0;let mut code:u64=0;let mut id:u64=1;
+    // Pass1 records label byte offsets and validates instruction shapes.
+    while id<=tree.node_count&&code==0 {
+        let statement:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if statement.kind==32 {
+            let name_id:u64=statement.first_child;
+            if name_id==0||name_id>tree.node_count{code=409;}
+            else {
+                let name_node:ntasm_ast.Node=ntasm_ast.node_at(tree,name_id);
+                if statement.aux==1 {
+                    if name_node.next_sibling!=0{code=409;}
+                    else if label_count>=64{code=201;}
+                    else {let mut i:u64=0;while i<label_count&&code==0{if same(source,labels[i*3],labels[i*3+1],name_node.start,name_node.end){code=820;}i=i+1;}if code==0{labels[label_count*3]=name_node.start;labels[label_count*3+1]=name_node.end;labels[label_count*3+2]=offset;label_count=label_count+1;}}
+                } else if statement.aux!=0{code=409;}
+                else {
+                    let name:buf<u8>=slice(source,name_node.start,name_node.end-name_node.start);
+                    let first_id:u64=name_node.next_sibling;let jmp_:buf<u8>="jmp";
+                    if same_name(name,jmp_)||jcc(name) {
+                        if first_id==0||first_id>tree.node_count{code=409;}else{let first:ntasm_ast.Node=ntasm_ast.node_at(tree,first_id);if first.next_sibling!=0||simple_name_id(tree,first_id)==0{code=409;}else if same_name(name,jmp_){offset=offset+5;}else{offset=offset+6;}}
+                    } else {code=x64_lower_fixed.encode_instruction(source,tree,id,features,cpl,scratch);if code==0{offset=offset+scratch[0];}}
+                    if code==0&&offset>len(out){code=800;}
+                }
+            }
+        }
+        id=id+1;
+    }
+    // Pass2 resolves branch targets and emits into temporary storage.
+    id=1;offset=0;
+    while id<=tree.node_count&&code==0 {
+        let statement:ntasm_ast.Node=ntasm_ast.node_at(tree,id);
+        if statement.kind==32&&statement.aux==0 {
+            let name_node:ntasm_ast.Node=ntasm_ast.node_at(tree,statement.first_child);
+            let name:buf<u8>=slice(source,name_node.start,name_node.end-name_node.start);
+            let first_id:u64=name_node.next_sibling;let jmp_:buf<u8>="jmp";
+            if same_name(name,jmp_)||jcc(name) {
+                let target_id:u64=simple_name_id(tree,first_id);let target:ntasm_ast.Node=ntasm_ast.node_at(tree,target_id);
+                let mut found:bool=false;let mut target_offset:u64=0;let mut i:u64=0;
+                while i<label_count {if same(source,labels[i*3],labels[i*3+1],target.start,target.end){found=true;target_offset=labels[i*3+2];}i=i+1;}
+                if found==false{code=821;}
+                else {let mut length:u64=6;if same_name(name,jmp_){length=5;}let next:u64=offset+length;let mut displacement:u64=0;if target_offset>=next{displacement=target_offset-next;}else{let distance:u64=next-target_offset;displacement=18446744073709551615-distance+1;}if same_name(name,jmp_){code=x64_fixed.encode_control(name,1,4,0,displacement,1,features,cpl,scratch);}else{code=x64_fixed.encode_jcc(name,1,4,0,displacement,1,features,cpl,scratch);}}
+            } else{code=x64_lower_fixed.encode_instruction(source,tree,id,features,cpl,scratch);}
+            if code==0{let length:u64=scratch[0];let mut i:u64=0;while i<length{temporary[offset+i]=scratch[1+i];i=i+1;}offset=offset+length;}
+        }
+        id=id+1;
+    }
+    if code==0{length_out[0]=offset;let mut i:u64=0;while i<offset{out[i]=temporary[i];i=i+1;}}
+    rt_free(runtime(),temporary);rt_free(runtime(),scratch);rt_free(runtime(),labels);return code;
+}
+
+// Legacy one-byte length envelope for existing callers.
+export fn lower(source:buf<u8>,tree:ntasm_ast.Tree,features:u64,cpl:u64,out:buf<u8>)->u64 {
+    if len(out)<2{return 800;}
+    let mut capacity:u64=len(out)-1;if capacity>255{capacity=255;}
+    let bytes:buf<u8>=alloc(runtime(),capacity);let size:buf<u64>=alloc(runtime(),1);
+    let code:u64=lower_wide(source,tree,features,cpl,bytes,size);
+    if code==0{out[0]=u8(size[0]);let mut i:u64=0;while i<size[0]{out[1+i]=bytes[i];i=i+1;}}
+    rt_free(runtime(),size);rt_free(runtime(),bytes);return code;
+}

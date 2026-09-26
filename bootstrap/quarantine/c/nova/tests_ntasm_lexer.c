@@ -7,7 +7,7 @@
 #include <string.h>
 
 enum { TK_EOF = 256, TK_NAME, TK_INT, TK_STRING, TK_NL, TK_ARROW,
-       TK_EQ, TK_NE, TK_LE, TK_GE, TK_SHL, TK_SHR };
+       TK_EQ, TK_NE, TK_LE, TK_GE, TK_SHL, TK_SHR, TK_LAND, TK_LOR };
 typedef struct {
   uint64_t kind, value, source, line, column, start, end, text_start,
       text_length;
@@ -183,6 +183,8 @@ static int reference_lex(const unsigned char *s, size_t n, uint64_t source,
         else if (c == '>' && d == '=') t.kind = TK_GE;
         else if (c == '<' && d == '<') t.kind = TK_SHL;
         else if (c == '>' && d == '>') t.kind = TK_SHR;
+        else if (c == '&' && d == '&') t.kind = TK_LAND;
+        else if (c == '|' && d == '|') t.kind = TK_LOR;
         if (t.kind >= TK_ARROW)
           advance(s, &cursor, &line, &column);
       }
@@ -343,9 +345,9 @@ int main(void) {
     static const unsigned char empty[] = "";
     static const unsigned char ordinary[] =
         "_Name9 0 42 0x2A 18_446_744_073_709_551_615 -> == != <= >= << "
-        ">>\n\"A\\n\\x42\\0\\\"\\\\\" // tail\r\nnext";
+        ">> && || & |\n\"A\\n\\x42\\0\\\"\\\\\" // tail\r\nnext";
     static const unsigned char punctuation[] =
-        "(){}[]:;,.+-*/%&|^~!<>=@$\n";
+        "(){}[]:;,.+-*/%&&||&|^~!<>=@$\n";
     static const unsigned char isolated_cr[] = {'a', '\r', 'b'};
     static const unsigned char bad_string_byte[] = {'"', 'a', '\n'};
     static const unsigned char invalid_byte[] = {0x80};
@@ -366,7 +368,7 @@ int main(void) {
     parity_case(&image, "unterminated", (const unsigned char *)"\"abc", 4);
     parity_case(&image, "invalid_byte", invalid_byte, sizeof invalid_byte);
     size_t fixture_length = 0;
-    char *fixture = load("out/c-bootstrap/a6/gp-error-witness.ntasm",
+    char *fixture = load("toolchain/ntasm-nova/tests/fixtures/gp-error-witness.ntasm",
                          &fixture_length);
     CHECK(fixture != NULL, "real NTASM fixture loads");
     if (fixture)
